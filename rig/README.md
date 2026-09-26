@@ -143,7 +143,7 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 | `bringup` | 2 | A mines, B connects and syncs: B is on A's chain at height 3 or more (`same_chain`), the peer sets match the topology, and a live netem change is accepted by `tc` |
 | `poscontrol` | 2 | two miners that never peer (the bring-up re-dial is off; checked: neither lists a connected peer) end up on different chains, and `same_chain` reports `DIFF` with both ids read (run it before trusting a "no divergence" result) |
 | `floor` | 2 | a sole-peer follower fully syncs, and a restarted node keeps its chain |
-| `mining` | 1 | `mine`, quiescence, `start_mining` / `stop_mining` |
+| `mining` | 1 | **experimental** (see below): `mine`, quiescence, `start_mining` / `stop_mining` |
 | `netsplit` | 2 | `partition` freezes the follower while the miner climbs; `heal` lets it catch up; `crash`, then `revive` while cut from the miner: the follower's height comes back from its own disk (at least the height at the crash, no peer connected), and a second `heal` re-syncs it past that |
 | `mixed` | 2 | two jars on one network (`PEERYARD_JAR` mines, `PEERYARD_JAR_B` follows): the follower fully syncs the other version's chain; both appVersions are printed |
 | `magic` | 2 | isolation: B runs the devnet default magic `[2,2,4,4]` (a per-node `conf` override) next to A on the rig's `peer` magic `[112,101,101,114]`. Checked from the node logs: each node dials the other (a node that did not is restarted; it re-seeds its peers from its config), and both ends abort every such connection just after the handshake; at the end neither lists a connected peer and the chains differ |
@@ -174,11 +174,14 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 
 `rig/examples/experimental.txt` lists the examples whose FAIL `run-suite.sh` reports as `FAIL (experimental)` and does
 not count against the suite. Each has a measured pass rate below 100% and an open investigation; a PASS is still a
-PASS, and an example leaves the list when it passes reliably on the reference node.
+PASS, and an example leaves the list when it passes reliably on the reference node. In the three-repeat sweep on GitHub
+runners (2026-09-26), every example not listed here passed 3 of 3 (`bootstrap-modes` after its pruning read was made to
+retry).
 
 | example | development host | GitHub runner (ubuntu-24.04, 2 vCPU) | status |
 |---|---|---|---|
 | `matrix-fork-deep` | 5 of 5 converged (2026-09-25, Matrix stack with `004`) | 2 of 4 (2026-09-26: `LIGHTER_FORK_NOT_SWITCHING` after the heal in the two that failed) | a node-side cause on the `weak-blocks` line is under investigation and will be reported upstream |
+| `mining` | passes every sweep | 5 of 7 (2026-09-26: twice a sole node produced no block in its 240 s window; no node log was kept for those two, `run-suite.sh` now keeps them) | cause unknown; the next failure on a runner carries its logs |
 | `corruption` | 1 of 1 (2026-09-26 sweep) | 0 of 4 (2026-09-26: the same injury's outcome differed from the development host's every time) | under investigation; the injuries and their outcomes are printed per run |
 
 ## Seen to fail

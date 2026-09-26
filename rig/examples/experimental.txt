@@ -3,3 +3,4 @@
 # (section "Experimental examples"); it leaves the list when it passes reliably on the reference node.
 matrix-fork-deep
 corruption
+mining

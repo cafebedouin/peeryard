@@ -55,6 +55,14 @@ while IFS=$'\t' read -r name marker to envs needs; do
       124) why="TIMEOUT after ${to}s" ;; *) why="exit $rc" ;; esac
     if [[ -n "$exp" ]]; then echo "rig $name: FAIL$exp ($why; not counted; see $OUT/rig_$name.txt)"
     else echo "rig $name: FAIL ($why; see $OUT/rig_$name.txt)"; failed=$((failed + 1)); fi
+    # keep the node logs of a run that did not PASS beside its output (the rig's scratch is not deleted, but a CI
+    # artifact carries only --out): <OUT>/logs_<name>/<node>.log and the rig's probe.log
+    sc="$(grep -m1 -o '^\[rig\] scratch: .*' "$OUT/rig_$name.txt" | cut -d' ' -f3)"
+    if [[ -n "$sc" && -d "$sc" ]]; then mkdir -p "$OUT/logs_$name"
+      for l in "$sc"/rt_*/ergo.log "$sc"/rt_*/*.log "$sc"/probe.log; do [[ -f "$l" ]] || continue
+        n="$(basename "$(dirname "$l")")"; n="${n#rt_}"; cp "$l" "$OUT/logs_$name/${n}_$(basename "$l")"; done
+      echo "  node logs kept: $OUT/logs_$name/"
+    fi
   fi
 done < "$HERE/examples/suite.tsv"
 [[ $failed -eq 0 ]]

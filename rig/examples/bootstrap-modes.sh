@@ -39,8 +39,15 @@ echo "[modes] settled=$settled  A=$ah B=$(full_height B) C=$(full_height C)  sam
 # 3) pruning visible on C: the old full block at height 5 is served by the full node A but not by the pruned C,
 # while C keeps its header. A served full block always carries >= 1 (coinbase) transaction, so a count < 1 from C
 # means the block sections are gone.
-hdr5=$(header_at A 5); a_block=$(rest A "/blocks/$hdr5" | jq -r '.blockTransactions.transactions | length' 2>/dev/null)
-c_hdr5=$(header_at C 5); c_block=$(rest C "/blocks/$c_hdr5" | jq -r '.blockTransactions.transactions | length' 2>/dev/null)
+# the pruned node drops old block sections some time after applying newer blocks (not at once), so re-read for up to
+# 90 s; A's answer is read every time too, so a PASS still needs the full node to serve the block
+hdr5=$(header_at A 5); end=$((SECONDS+90))
+while :; do
+  a_block=$(rest A "/blocks/$hdr5" | jq -r '.blockTransactions.transactions | length' 2>/dev/null)
+  c_hdr5=$(header_at C 5); c_block=$(rest C "/blocks/$c_hdr5" | jq -r '.blockTransactions.transactions | length' 2>/dev/null)
+  { [ "${a_block:-0}" -ge 1 ] && [ "${c_block:-0}" -lt 1 ]; } && break
+  [ $SECONDS -ge $end ] && break; sleep 5
+done
 echo "[modes] block 5 header on C: $([ -n "$c_hdr5" ] && echo yes || echo no); full-block transactions served: A(full)=${a_block:-none} C(pruned)=${c_block:-none}"
 pruned=no; [ -n "$c_hdr5" ] && [ "${a_block:-0}" -ge 1 ] && [ "${c_block:-0}" -lt 1 ] && pruned=yes
 

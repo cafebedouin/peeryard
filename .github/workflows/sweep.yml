@@ -11,6 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       repeats: { description: 'runs per example', default: '1' }
+      examples: { description: 'space-separated example names (default: every example in rig/examples/suite.tsv)', default: '' }
   push:
     branches: [ 'ci/sweep' ]
 permissions:
@@ -64,7 +65,8 @@ jobs:
         with: { name: reference-jars, path: jars/, retention-days: 14 }
       - id: list
         run: |
-          echo "examples=$(awk -F'\t' '!/^#/ && NF == 5 { print $1 }' rig/examples/suite.tsv | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ inputs.examples }}" ]; then echo "examples=$(tr ' ' '\n' <<< "${{ inputs.examples }}" | grep . | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          else echo "examples=$(awk -F'\t' '!/^#/ && NF == 5 { print $1 }' rig/examples/suite.tsv | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"; fi
           echo "repeats=$(seq 1 "${{ inputs.repeats || '1' }}" | jq -sc .)" >> "$GITHUB_OUTPUT"
 
   example:

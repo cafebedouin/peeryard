@@ -178,8 +178,8 @@ PASS, and an example leaves the list when it passes reliably on the reference no
 
 | example | development host | GitHub runner (ubuntu-24.04, 2 vCPU) | status |
 |---|---|---|---|
-| `matrix-fork-deep` | 5 of 5 converged (2026-09-25, Matrix stack with `004`) | 0 of 1 (2026-09-26: `LIGHTER_FORK_NOT_SWITCHING` after the heal) | a node-side cause on the `weak-blocks` line is under investigation and will be reported upstream |
-| `corruption` | 1 of 1 (2026-09-26 sweep) | 0 of 1 (2026-09-26: one injury's outcome differed from the development host's) | under investigation; the injuries and their outcomes are printed per run |
+| `matrix-fork-deep` | 5 of 5 converged (2026-09-25, Matrix stack with `004`) | 2 of 4 (2026-09-26: `LIGHTER_FORK_NOT_SWITCHING` after the heal in the two that failed) | a node-side cause on the `weak-blocks` line is under investigation and will be reported upstream |
+| `corruption` | 1 of 1 (2026-09-26 sweep) | 0 of 4 (2026-09-26: the same injury's outcome differed from the development host's every time) | under investigation; the injuries and their outcomes are printed per run |
 
 ## Seen to fail
 

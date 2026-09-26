@@ -1,0 +1,98 @@
+# Exported by ci/export-workflows.sh (same steps, paths from this repository's root); if this repository is the
+# source, edit here.
+# A/A calibration of peeryard's rate-based diffrun scenarios on GitHub-hosted runners (an A/A rate is a per-host
+# number, so it is measured on a runner class anyone can re-run). The released reference jar (ergo 6.0.6, sha256
+# pinned below) runs in BOTH roles, so every run observes the release; each shard is its
+# own runner, so the pooled runs are observations of the runner class, not of one machine. The sequential stop rule is
+# removed for calibration (a fixed number of pairs per shard). The pool job reports each rate with an exact 95%
+# interval (diffrun/aa_pool.py). Runs on push to ci/aa or by hand.
+name: peeryard A/A calibration
+on:
+  workflow_dispatch:
+  push:
+    branches: [ 'ci/aa' ]
+permissions:
+  contents: read
+jobs:
+  aa:
+    name: ${{ matrix.scenario }} shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { scenario: fork-convergence, shard: 1, pairs: 4 }
+          - { scenario: fork-convergence, shard: 2, pairs: 4 }
+          - { scenario: fork-convergence, shard: 3, pairs: 4 }
+          - { scenario: fork-convergence, shard: 4, pairs: 4 }
+          - { scenario: fork-convergence, shard: 5, pairs: 4 }
+          - { scenario: sibling-fork, shard: 1, pairs: 2 }
+          - { scenario: sibling-fork, shard: 2, pairs: 2 }
+          - { scenario: sibling-fork, shard: 3, pairs: 2 }
+          - { scenario: sibling-fork, shard: 4, pairs: 2 }
+          - { scenario: sibling-fork, shard: 5, pairs: 2 }
+    env:
+      JAR: ${{ github.workspace }}/.cache/ergo-6.0.6.jar
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          sudo apt-get install -y -qq jq iproute2 >/dev/null
+          unshare -Urmn true && echo "userns ok"
+          { uname -r; nproc; free -m | head -2; } | tee host.txt
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Reference jar (release, sha256-pinned)
+        run: |
+          mkdir -p .cache
+          curl -sSL -o "$JAR" https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
+          echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $JAR" | sha256sum -c
+          bash diffrun/register.sh "$JAR" 6.0.6
+      - name: A/A manifest (fixed pairs, no stop rule)
+        run: |
+          s=${{ matrix.scenario }}
+          jq --argjson n ${{ matrix.pairs }} 'del(.stop_when, .max_n) | .n = $n' "diffrun/scenarios/$s.json" > "diffrun/scenarios/aa-$s.json"
+          jq -c '{n, stop_when, precheck}' "diffrun/scenarios/aa-$s.json"
+      - name: Run (the release in both roles)
+        run: |
+          s=${{ matrix.scenario }}; o="$RUNNER_TEMP/out/$s"
+          bash diffrun/run.sh "diffrun/scenarios/aa-$s.json" --base "$JAR" --candidate "$JAR" --out "$o" || echo "run.sh exit $?"
+          mkdir -p "upload"; cp host.txt upload/
+          [ -f "$o/verdict.json" ] || { echo "no verdict for $s"; exit 1; }
+          cp "$o/verdict.json" "$o/table.txt" upload/; cat upload/table.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          cp "$o"/logab_*.txt upload/ 2>/dev/null || true   # base vs candidate logs (A/A: chance differences)
+          # a run that is not VALID keeps its evidence: the scenario's own reason line, its stdout, and node log tails
+          for m in "$o"/runs/*/metadata.json; do
+            [ "$(jq -r .class "$m")" = VALID ] && continue
+            r="$(dirname "$m")"; t="upload/runs/$(basename "$r")"; mkdir -p "$t"
+            cp "$m" "$t/"; cp "$r"/stdout.txt "$r"/stderr.txt "$t/" 2>/dev/null || true
+            for l in $(find "$r" -name 'node_*.log' 2>/dev/null); do tail -n 400 "$l" > "$t/$(basename "$l").tail"; done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aa-${{ matrix.scenario }}-${{ matrix.shard }}
+          path: upload/
+          retention-days: 30
+  pool:
+    needs: aa
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: shards }
+      - name: Pooled A/A rates
+        run: |
+          {
+            echo '```'
+            python3 diffrun/aa_pool.py --when 'switched==true' --when 'switched==false' shards/aa-fork-convergence-*/verdict.json || true
+            python3 diffrun/aa_pool.py --when 'E_total>0' --when 'D_confirmed==0' --when 'D_total==0' shards/aa-sibling-fork-*/verdict.json || true
+            echo '```'
+          } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
+          cat pooled.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: aa-pooled, path: pooled.txt, retention-days: 90 }

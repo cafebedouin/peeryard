@@ -1,0 +1,10 @@
+scenario txload (public)   verdict: SUPPORTS   [the base showed the effect and the candidate did not]   [A/A control: the same jar in both roles; not evidence about a change]
+n=1 (manifest 1)   min_valid_runs=1
+
+role       valid  void  inconcl  pass   expect
+base       1      0     0        true   {"all":{"key":"confirmed","op":"==","value":10}}
+candidate  1      0     0        true   {"all":{"key":"confirmed","op":"==","value":10}}
+
+run            class                            metrics
+base-1         VALID                            {"accepted":10,"confirmed":10,"txs_in_blocks":17,"unresponsive_after":0}
+candidate-1    VALID                            {"accepted":10,"confirmed":10,"txs_in_blocks":17,"unresponsive_after":0}

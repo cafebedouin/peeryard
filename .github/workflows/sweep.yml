@@ -1,0 +1,163 @@
+# Exported by ci/export-workflows.sh (same steps, paths from this repository's root); if this repository is the
+# source, edit here.
+# The publication sweep of peeryard on GitHub-hosted runners (a development machine discovers; the runs a claim rests
+# on are made where anyone can re-run them). One job builds the reference nodes from patches (release line, the sibling-fork set, Matrix);
+# then one job per rig example and repeat runs it through rig/run-suite.sh (the list is rig/examples/suite.tsv, and a
+# PASS needs the example's marker and the rig's exit status 0); the two diffrun scenarios run one pair each per repeat;
+# a summary job tabulates. The Rust examples report SKIP here: their node binaries are not built on the runner.
+# Runs by hand (input: repeats) or on push to ci/sweep.
+name: peeryard sweep
+on:
+  workflow_dispatch:
+    inputs:
+      repeats: { description: 'runs per example', default: '1' }
+  push:
+    branches: [ 'ci/sweep' ]
+permissions:
+  contents: read
+env:
+  RELEASE_SHA256: 21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      examples: ${{ steps.list.outputs.examples }}
+      repeats: ${{ steps.list.outputs.repeats }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
+      - name: Cache the built jars (keyed by the patch stacks and the build script)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/diffrun/builds
+          key: peeryard-stacks-${{ hashFiles('patches/**', 'diffrun/build.sh') }}
+      - name: ergo clone (the release tag and the weak-blocks commit)
+        run: |
+          git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
+          git -C "$HOME/ergo-clone" fetch -q origin weak-blocks
+          git -C "$HOME/ergo-clone" cat-file -e 'a1bd938effb7f5acabfe5230a5ef20fe0d50ae62^{commit}'
+      - name: Cache the sigma-state snapshot the weak-blocks line depends on
+        uses: actions/cache@v4
+        with:
+          path: ~/.ivy2/local/org.scorexfoundation
+          key: sigma-snapshot-${{ hashFiles('patches/ergo-matrix/patches.json', 'patches/sigma-snapshot.sh') }}
+      - name: sigma-state snapshot (weak-blocks pins a -SNAPSHOT that is on no public repository)
+        run: |
+          export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
+          bash patches/sigma-snapshot.sh "$(jq -r .base patches/ergo-matrix/patches.json)" \
+            || echo "::warning::sigma-state snapshot not published; the Matrix stack will not build and Matrix examples are skipped"
+      - name: Build the reference nodes
+        run: |
+          export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
+          out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
+          put(){ cp "$2" "$out/$1.jar"; cp "$2.json" "$out/$1.jar.json"; cp "$2.stack.json" "$out/$1.stack.json" 2>/dev/null || true; }
+          put reference "$(bash patches/stack.sh --build ergo | tail -1)"
+          put sibling-fork "$(bash patches/stack.sh --build --for sibling-fork ergo | tail -1)"
+          # the Matrix stack is optional: a build failure is a warning here, and the Matrix examples are then SKIPped
+          if m="$(bash patches/stack.sh --build ergo-matrix | tail -1)" && [ -f "$m" ]; then put matrix "$m"
+          else echo "::warning::Matrix stack did not build (last line: $m); Matrix examples will be skipped"; fi
+          { echo '```'; sha256sum "$out"/*.jar; for s in "$out"/*.stack.json; do echo "$(basename "$s"): $(jq -c '[.patches[].id]' "$s")"; done; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: reference-jars, path: jars/, retention-days: 14 }
+      - id: list
+        run: |
+          echo "examples=$(awk -F'\t' '!/^#/ && NF == 5 { print $1 }' rig/examples/suite.tsv | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "repeats=$(seq 1 "${{ inputs.repeats || '1' }}" | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  example:
+    needs: build
+    name: ${{ matrix.example }} (${{ matrix.repeat }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        example: ${{ fromJSON(needs.build.outputs.examples) }}
+        repeat: ${{ fromJSON(needs.build.outputs.repeats) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          sudo apt-get install -y -qq jq iproute2 >/dev/null
+          unshare -Urmn true && echo "userns ok"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: reference-jars, path: jars }
+      - name: Release jar (the follower in `mixed`)
+        run: |
+          curl -sSL -o release.jar https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
+          echo "$RELEASE_SHA256  release.jar" | sha256sum -c
+      - name: Run the example
+        run: |
+          set -o pipefail
+          [ -f jars/matrix.jar ] && export PEERYARD_MATRIX_JAR="$PWD/jars/matrix.jar"   # unset -> run-suite SKIPs Matrix examples
+          PEERYARD_JAR="$PWD/jars/reference.jar" PEERYARD_JAR_RELEASE="$PWD/release.jar" \
+            bash rig/run-suite.sh --out out ${{ matrix.example }} | tee result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: example-${{ matrix.example }}-${{ matrix.repeat }}
+          path: |
+            result.txt
+            out/
+          retention-days: 14
+
+  diffrun:
+    needs: build
+    name: diffrun ${{ matrix.scenario }} (${{ matrix.repeat }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [ fork-convergence, sibling-fork ]
+        repeat: ${{ fromJSON(needs.build.outputs.repeats) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          sudo apt-get install -y -qq jq iproute2 >/dev/null
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: reference-jars, path: jars }
+      - name: One pair, the scenario's node in both roles
+        run: |
+          s=${{ matrix.scenario }}; j="$PWD/jars/reference.jar"; [ "$s" = sibling-fork ] && j="$PWD/jars/sibling-fork.jar"
+          # the jars carry their build sidecars (<jar>.json, copied by the build job); run.sh reads them, no registration
+          jq 'del(.max_n, .stop_when) | .n = 1 | .min_valid_runs = 1' "diffrun/scenarios/$s.json" > "diffrun/scenarios/$s.onepair.json"
+          bash diffrun/run.sh "diffrun/scenarios/$s.onepair.json" --base "$j" --candidate "$j" --out "$RUNNER_TEMP/o" || echo "run.sh exit $?"
+          mkdir -p up; if [ -f "$RUNNER_TEMP/o/verdict.json" ]; then cp "$RUNNER_TEMP/o/verdict.json" up/
+            echo "diffrun $s: $(jq -r '[.runs[] | .class] | join("/")' up/verdict.json) runs, $(jq -c '[.runs[] | .metrics]' up/verdict.json)" | tee up/result.txt
+          else echo "diffrun $s: NO VERDICT" | tee up/result.txt; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: 'diffrun-${{ matrix.scenario }}-${{ matrix.repeat }}', path: up/, retention-days: 14 }
+
+  summary:
+    needs: [ example, diffrun ]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: all }
+      - name: Tabulate
+        run: |
+          {
+            echo '```'
+            for d in all/example-*; do n=${d#all/example-}; printf '%-34s %s\n' "$n" "$(grep -h '^rig ' "$d/result.txt" 2>/dev/null | cut -c1-160 || echo 'no result')"; done
+            for d in all/diffrun-*; do cat "$d/result.txt" 2>/dev/null; done
+            echo '```'
+            echo "PASS $(grep -h ': PASS (' all/example-*/result.txt 2>/dev/null | wc -l), FAIL $(grep -h ': FAIL (' all/example-*/result.txt 2>/dev/null | wc -l), SKIP $(grep -h ': SKIP (' all/example-*/result.txt 2>/dev/null | wc -l)"
+          } | tee summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: sweep-summary, path: summary.txt, retention-days: 90 }

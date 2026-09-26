@@ -1,0 +1,10 @@
+scenario bootstrap-modes (public)   verdict: SUPPORTS   [the base showed the effect and the candidate did not]   [A/A control: the same jar in both roles; not evidence about a change]
+n=1 (manifest 1)   min_valid_runs=1
+
+role       valid  void  inconcl  pass   expect
+base       1      0     0        true   {"all":{"key":"state_agree","op":"==","value":true}}
+candidate  1      0     0        true   {"all":{"key":"state_agree","op":"==","value":true}}
+
+run            class                            metrics
+base-1         VALID                            {"settled":true,"state_agree":true,"pruned_visible":true,"height":148,"unresponsive_after":0}
+candidate-1    VALID                            {"settled":true,"state_agree":true,"pruned_visible":true,"height":150,"unresponsive_after":0}

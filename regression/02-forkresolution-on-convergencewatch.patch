@@ -1,0 +1,86 @@
+diff --git a/src/it/scala/org/ergoplatform/it/ForkResolutionSpec.scala b/src/it/scala/org/ergoplatform/it/ForkResolutionSpec.scala
+index fbe8273e6..f951c464d 100644
+--- a/src/it/scala/org/ergoplatform/it/ForkResolutionSpec.scala
++++ b/src/it/scala/org/ergoplatform/it/ForkResolutionSpec.scala
+@@ -5,6 +5,7 @@ import cats.implicits._
+ import com.typesafe.config.Config
+ import org.ergoplatform.it.container.Docker.{ExtraConfig, noExtraConfig}
+ import org.ergoplatform.it.container.{IntegrationSuite, Node}
++import org.ergoplatform.it.util.{ConvergenceObservations, ConvergenceWatch, NodeSample}
+ import org.scalatest.concurrent.Eventually
+ import org.scalatest.flatspec.AnyFlatSpec
+ import org.scalatest.matchers.should.Matchers
+@@ -22,6 +23,8 @@ class ForkResolutionSpec extends AnyFlatSpec with Matchers with IntegrationSuite
+   val forkLength: Int = 5
+   val syncLength: Int = 15
+ 
++  protected def totalTimeout: FiniteDuration = 15.minutes
++
+   val localVolumes: Seq[String] = (1 to nodesQty).map(localVolume)
+   val remoteVolume = "/app"
+ 
+@@ -76,33 +79,54 @@ class ForkResolutionSpec extends AnyFlatSpec with Matchers with IntegrationSuite
+ 
+     val nodes: List[Node] = startNodesWithBinds(minerConfig +: onlineSyncNodesConfig)
+ 
++    // One budget for the whole scenario (as before); each wait names its phase, so a timeout reports which
++    // phase expired, a cause and every node's last state (ConvergenceDiagnosis) instead of a bare timeout.
++    val deadline = totalTimeout.fromNow
++
++    def allReach(nodes: List[Node], height: Int, phase: String, expectPeers: Boolean = true): Future[Seq[NodeSample]] = {
++      val watch = new ConvergenceWatch(docker, nodes, expectPeers = expectPeers)
++      watch.until(deadline, 500.millis)(_.forall(_.fullHeight.exists(_ >= height)))(
++        s"$phase: not every node reached full height $height before the ${totalTimeout} budget ran out"
++      ).andThen { case _ => watch.close() }
++    }
++
++    def agreeAt(nodes: List[Node], height: Int, phase: String): Future[Seq[String]] = {
++      val watch = new ConvergenceWatch(docker, nodes)
++      @volatile var lastIds = Seq.empty[String]
++      watch.untilWith(deadline, 500.millis) { _ =>
++        Future.traverse(nodes)(_.headerIdsByHeight(height))
++          .map { ids => lastIds = ids.map(_.headOption.map(_.take(8)).getOrElse("-")); ids }
++      }(ConvergenceObservations.selectedHeadersAgree)(
++        s"$phase: nodes did not agree on the header at height $height before the ${totalTimeout} budget ran out; " +
++          s"selected ids: ${nodes.map(_.nodeName).zip(lastIds).map { case (n, id) => s"$n=$id" }.mkString(", ")}"
++      ).map(_.map(_.head)).andThen { case _ => watch.close() }
++    }
++
+     val result = Async.async {
+       val initMaxHeight = Async.await(Future.traverse(nodes)(_.fullHeight).map(_.max))
+-      Async.await(Future.traverse(nodes)(_.waitForHeight(initMaxHeight + commonChainLength, 100.millis)))
++      Async.await(allReach(nodes, initMaxHeight + commonChainLength, "Phase 1 (common chain)"))
+       val isolatedNodes = Async.await {
+         nodes.foreach(node => docker.stopNode(node.containerId))
+         clearPeerDatabases()
+         Future.successful(startNodesWithBinds(minerConfig +: offlineMiningNodesConfig, isolatedPeersConfig))
+       }
+       val forkHeight = initMaxHeight + commonChainLength + forkLength
+-      Async.await(Future.traverse(isolatedNodes)(_.waitForHeight(forkHeight, 100.millis)))
++      // nodes are isolated on purpose here, so 0 peers is not a cause
++      Async.await(allReach(isolatedNodes, forkHeight, "Phase 2 (isolated mining)", expectPeers = false))
+       val regularNodes = Async.await {
+         isolatedNodes.foreach(node => docker.stopNode(node.containerId))
+         clearPeerDatabases()
+         Future.successful(startNodesWithBinds(minerConfig +: onlineSyncNodesConfig))
+       }
+-      Async.await(Future.traverse(regularNodes)(_.waitForHeight(forkHeight + syncLength, 100.millis)))
+-      val sample = Async.await(regularNodes.head.headerIdsByHeight(forkHeight)).headOption.value
+-      val headers = Async.await(Future.traverse(regularNodes) { node =>
+-        node.waitFor[Seq[String]](_.headerIdsByHeight(forkHeight), _.headOption.contains(sample), 100.millis)
+-      })
++      Async.await(allReach(regularNodes, forkHeight + syncLength, "Phase 3 (sync after reconnect)"))
++      val headers = Async.await(agreeAt(regularNodes, forkHeight, "Phase 4 (agreement at the fork height)"))
+ 
+       log.debug(s"Headers at height $forkHeight: ${headers.mkString(",")}")
+-      val headerIdsAtSameHeight = headers.map(_.headOption.value)
+-      headerIdsAtSameHeight should contain only sample
++      headers.distinct should have size 1
+     }
+ 
+-    Await.result(result, 15.minutes)
++    // a little past the shared deadline, so the phase message wins over a bare timeout
++    Await.result(result, totalTimeout + 30.seconds)
+   }
+ 
+ }

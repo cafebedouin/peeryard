@@ -1,0 +1,94 @@
+# patches/: node fixes peeryard carries until they land upstream
+
+A pull-request review does not use this stack: it builds base and candidate on the PR's own merge base (`AGENTS.md`).
+The stack is the reference node the example suite runs on.
+
+Some peeryard scenarios trip over known defects in the released node: a follower that never switches to the
+heavier chain, a bootstrap that stalls. A scenario that fails for a known, already-diagnosed reason tests nothing
+new, so peeryard carries the fix as a patch, builds its **reference node** from the release plus those patches,
+and proposes each fix upstream. When upstream merges a fix and a release ships it, the patch leaves the stack.
+
+The release's own behaviour stays visible: every patch names the scenarios that need it, and a scenario can
+always be run on the unpatched release jar (`--base` / `--candidate`, or `PEERYARD_JAR` for the rig).
+
+## Lifecycle
+
+One folder per upstream repository or line: `ergo/` (ergoplatform/ergo releases), `ergo-matrix/` (ergoplatform/ergo
+`weak-blocks`, checked against the branch head), `ergo-node-rust/` (mwaddip/ergo-node-rust),
+`arkadianet/` (arkadianet/ergo). Each holds `patches.json` (the repo, the base release, the clone variable, how to
+build, the list) and one upstream-shaped change per `.patch` file, checked and applied in id order (a patch may
+build on an earlier one).
+
+| status | meaning | in the stack? |
+|---|---|---|
+| `candidate` | written, not yet witnessed on a network run | no |
+| `proposed` | witnessed; the upstream PR is being prepared or has been opened | yes |
+| `under-review` | the upstream PR is open and has had a response | yes |
+| `merged-unreleased` | upstream merged it; no release carries it yet | yes |
+| `merged-in-<tag>` | upstream shipped it in `<tag>`; kept in the list for the record | no |
+| `withdrawn` | a maintainer's response showed it wrong or unnecessary | no |
+
+Each entry records the upstream PR, the scenarios that need it, the witness, and a `responses` log. A PR is
+opened against the branch the upstream maintainers name (for ergoplatform/ergo, the current release branch rather
+than `master`; `review/GUIDE.md` rule 11a). A changed PR
+means the patch is re-exported and the scenarios that need it are re-run.
+
+**One stack for every test; `only_for` is a temporary exception.** A patch may carry `only_for: [<scenario>]` when it
+is needed by that scenario and breaks another. The default stack leaves it out, and `stack.sh --for <scenario>` builds
+that scenario's own set; the sweep does this per diffrun scenario. Today: `ergo/003` (#2313) is `only_for:
+sibling-fork`, because on the combined stack a miner that holds a competing header whose body never arrives stops
+mining (its own block is stored off the best header chain, so the candidate generator's solved block is never
+cleared), which wedges `fork-convergence`. The goal is no exceptions (one reference node), and then no patches at all
+as fixes land upstream: each exception is reported upstream and removed as soon as the upstream change stops breaking
+the other scenarios.
+
+## Commands (from the peeryard root)
+
+```
+DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/check.sh ergo [<release tag>]   # still needed? collides? landed?
+DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/stack.sh [--build] ergo [<base>]  # combined diff, or the reference jar
+DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/stack.sh --build --for sibling-fork ergo   # a scenario's own set
+PEERYARD_ERGO_NODE_RUST_CLONE=<clone> bash patches/check.sh ergo-node-rust
+PEERYARD_ARKADIANET_CLONE=<clone> bash patches/check.sh arkadianet
+```
+
+`check.sh` compares every patch with the newest release (or the tag given): **NEEDED** (it applies: keep it),
+**CONTAINED** (it reverse-applies: it has landed, remove it), **COLLIDES** (neither: the release changed those
+lines, so rebase or re-derive it), and the upstream PR's state. Each patch is checked on top of the stacked patches before it, which
+also catches two patches that collide with each other; it exits 1 when the stack needs an edit.
+`ci/release-watch.yml.example` runs it on every new release.
+
+`sigma-snapshot.sh <ergo commit>` is for the `ergo-matrix/` folder: the `weak-blocks` line pins `sigma-state` to a
+`-SNAPSHOT` that is on no public repository, so on a fresh machine `sbt assembly` fails to resolve it. The script reads
+the version from the commit's `build.sbt` and, if `~/.ivy2/local` lacks it, builds it from the sigmastate-interpreter
+commit the version names (`sbt sigma/publishLocal`, JDK 8, about 3-4 minutes cold). Run it once before
+`stack.sh --build ergo-matrix`; the sweep workflow does.
+
+`stack.sh` applies the stacked patches in id order to a scratch worktree of the base and writes one combined diff;
+for ergo, `--build` hands that diff to `diffrun/build.sh`, which caches the jar by the diff's sha256, and leaves
+`<jar>.stack.json` beside it naming the patches, so `review/provenance.sh` can say "reference node v6.0.6+001". For the Rust
+nodes, apply the combined diff to a checkout of the base and `cargo build --release`.
+
+## Current list
+
+Run `patches/check.sh` for the live view; this table is `patches.json` as of the last edit (titles, PRs and statuses come from there):
+The witness column of `patches.json` summarises runs whose captures are not in this repository (`audits/` is local by
+design); a patch of ours is the upstream commit as exported, with its author and co-author trailers.
+
+| repo | id | patch | origin | upstream | status | needed by |
+|---|---|---|---|---|---|---|
+| ergo | 001 | Key V2 sync summaries by selected tip and requested mode | A. Shannon (production diff only) | ergoplatform/ergo#2511 | under-review | `diffrun fork-convergence`, `diffrun sibling-fork` |
+| ergo | 002 | MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors | ours | ergoplatform/ergo#2573 | proposed | `rig reorg-mempool` |
+| ergo | 003 | Prevent bestFullBlock/bestHeader divergence on sibling forks | jozanek (production diff only) | ergoplatform/ergo#2313 | under-review, `only_for` sibling-fork | `diffrun sibling-fork` |
+| ergo | 005 | Do not scan below minimal full block height for block sections near the tip | ours | ergoplatform/ergo#2581 | proposed | `rig nipopow-bootstrap` |
+| ergo | 006 | Check a header's age against its parent's own height, not the height index | ours | ergoplatform/ergo#2580 | proposed | `diffrun fork-convergence (loaded hosts)` |
+| ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | proposed | none (a fix the stack carries) |
+| ergo | 008 | Drop a requested copy of a modifier already in history instead of penalizing the sender | ours | ergoplatform/ergo#2592 | proposed | none (a fix the stack carries) |
+| ergo | 009 | Log a cached copy of a stored modifier as a duplicate, not as permanently invalid | ours | ergoplatform/ergo#2593 | proposed | none (a fix the stack carries) |
+| ergo-node-rust | 001 | feat(config): add a private devnet network ([proxy] network = "devnet") | ours | mwaddip/ergo-node-rust#28 | proposed | `rig ergo-node-rust-follow`, `rig ergo-node-rust-follow-magic` |
+| ergo-node-rust | 002 | feat(p2p): [proxy] magic overrides the devnet's wire magic | ours (on 001) | mwaddip/ergo-node-rust#29 | proposed | `rig ergo-node-rust-follow-magic` |
+| arkadianet | 001 | [chain] devnet_magic overrides the devnet's wire magic | ours | arkadianet/ergo#362 | merged-in-v0.9.0 | `rig arkadianet-mine-magic` |
+| ergo-matrix | 001 | Full-block route matches only /blocks/{id}, so the input-block transaction routes are reachable | A. Shannon (hunk only) | ergoplatform/ergo#2505 | under-review | `rig matrix-tx` |
+| ergo-matrix | 002 | Relay a received input block by id to eligible sub-block peers (receive-side guard + relay) | ours | ergoplatform/ergo#2566 | proposed | `rig matrix-latency` |
+| ergo-matrix | 003 | Key V2 sync summaries by selected tip and requested mode (#2511, as patches/ergo/001) | A. Shannon (production diff only) | ergoplatform/ergo#2511 | under-review | `rig matrix-fork` |
+| ergo-matrix | 004 | Full V2 sync summaries also carry the genesis header, so a peer always finds a common point | A. Shannon (hunk only) | ergoplatform/ergo#2529 | under-review | `rig matrix-fork (deep-fork runs)` |

@@ -1,0 +1,37 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "mine_poll": "45s",
+      "knownPeers": [],
+      "conf": {
+        "ergo.node.mempoolCapacity": 20,
+        "ergo.node.mempoolSorting": "\"bySize\""
+      }
+    },
+    {
+      "name": "B",
+      "mining": false,
+      "knownPeers": [
+        "A"
+      ],
+      "conf": {
+        "ergo.node.mempoolCapacity": 20,
+        "ergo.node.mempoolSorting": "\"bySize\"",
+        "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\""
+      }
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    }
+  ],
+  "chain": {
+    "preset": "current",
+    "minerRewardDelay": 3
+  }
+}

@@ -1,0 +1,101 @@
+# Example: the full public-tier diffrun on a GitHub-hosted runner. Assumes the peeryard tree is the repository
+# root (adjust the paths if it lives under peeryard/). It has been run on a GitHub-hosted ubuntu-24.04 runner;
+# see diffrun/README.md for what a hosted run does and does not establish. In the PR mode the base is the
+# upstream-built release jar and the candidate is built on the runner, so the pair differs in toolchain as well
+# as in the patch; to remove the toolchain difference, build the base with `bash diffrun/build.sh "$BASE_TAG"`
+# (no patch) instead of downloading it.
+name: peeryard-diffrun-hosted
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "ergoplatform/ergo pull request number whose production diff becomes the candidate (ignored when candidate_tag is set)"
+        required: false
+        default: "2511"
+      candidate_tag:
+        description: "an ergo release tag to use as the candidate instead of a PR (downloaded, not built): release-vs-release"
+        required: false
+        default: ""
+      base_tag:
+        description: "ergo release tag (base jar downloaded from the GitHub release; candidate built on it)"
+        required: true
+        default: "v6.0.6"
+      scenarios:
+        description: "space-separated manifests under diffrun/scenarios/"
+        required: true
+        default: "fork-convergence.json sibling-fork.json"
+permissions:
+  contents: read
+jobs:
+  diffrun:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      BASE_TAG: ${{ inputs.base_tag }}
+      PR: ${{ inputs.pr }}
+      CAND_TAG: ${{ inputs.candidate_tag }}
+      SCENARIOS: ${{ inputs.scenarios }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          unshare -Urmn true && echo "userns ok"
+          nproc; free -m | head -2; df -h / | tail -1
+      - name: Lint public-tier scenarios
+        run: bash diffrun/lint.sh
+      - uses: actions/setup-java@v4
+        id: java8
+        with: { distribution: temurin, java-version: "8" }
+      - uses: sbt/setup-sbt@v1
+      - name: Base jar (release) and candidate (built from the PR's production diff)
+        env:
+          DIFFRUN_ERGO_CLONE: ${{ runner.temp }}/ergo
+          DIFFRUN_CACHE: ${{ runner.temp }}/diffrun-cache
+          JAVA8_HOME: ${{ steps.java8.outputs.path }}
+        run: |
+          set -e
+          VER="${BASE_TAG#v}"
+          mkdir -p "$RUNNER_TEMP/jars"
+          curl -sSL -o "$RUNNER_TEMP/jars/base.jar" "https://github.com/ergoplatform/ergo/releases/download/${BASE_TAG}/ergo-${VER}.jar"
+          sha256sum "$RUNNER_TEMP/jars/base.jar"
+          bash diffrun/register.sh "$RUNNER_TEMP/jars/base.jar" "$VER"
+          if [ -n "$CAND_TAG" ]; then
+            CVER="${CAND_TAG#v}"
+            curl -sSL -o "$RUNNER_TEMP/jars/cand.jar" "https://github.com/ergoplatform/ergo/releases/download/${CAND_TAG}/ergo-${CVER}.jar"
+            sha256sum "$RUNNER_TEMP/jars/cand.jar"; bash diffrun/register.sh "$RUNNER_TEMP/jars/cand.jar" "$CVER"
+            echo "CAND_JAR=$RUNNER_TEMP/jars/cand.jar" >> "$GITHUB_ENV"; echo "BASE_JAR=$RUNNER_TEMP/jars/base.jar" >> "$GITHUB_ENV"
+            echo "release-vs-release: $BASE_TAG -> $CAND_TAG"; exit 0
+          fi
+          git clone -q https://github.com/ergoplatform/ergo.git "$DIFFRUN_ERGO_CLONE"
+          git -C "$DIFFRUN_ERGO_CLONE" fetch -q origin "pull/${PR}/head:pr-${PR}" --tags
+          # the PR's own diff is master...pr-N (merge-base with master to the head), applied onto the base tag; a tag...pr-N
+          # range would also carry whatever landed on master between the tag and the PR's branch point
+          bash diffrun/build.sh --dry-run "$BASE_TAG" "master...pr-${PR}" -- src/main ergo-core/src/main ergo-wallet/src/main avldb/src/main > "$RUNNER_TEMP/candidate.patch"
+          echo "candidate patch: $(grep -c '^diff --git' "$RUNNER_TEMP/candidate.patch") files"
+          CAND="$(bash diffrun/build.sh "$BASE_TAG" "master...pr-${PR}" -- src/main ergo-core/src/main ergo-wallet/src/main avldb/src/main)"
+          echo "CAND_JAR=$CAND" >> "$GITHUB_ENV"; echo "BASE_JAR=$RUNNER_TEMP/jars/base.jar" >> "$GITHUB_ENV"
+          jq . "$CAND.json"
+      - name: Run scenarios
+        run: |
+          mkdir -p upload
+          for m in $SCENARIOS; do
+            name="${m%.json}"
+            bash diffrun/run.sh "diffrun/scenarios/$m" --base "$BASE_JAR" --candidate "$CAND_JAR" --out "$RUNNER_TEMP/out/$name" || echo "run.sh exit $? for $name"
+            if [ -f "$RUNNER_TEMP/out/$name/verdict.json" ]; then
+              mkdir -p "upload/$name"; cp "$RUNNER_TEMP/out/$name/verdict.json" "$RUNNER_TEMP/out/$name/table.txt" "upload/$name/"
+              cat "upload/$name/table.txt" >> "$GITHUB_STEP_SUMMARY"; cat "upload/$name/table.txt"
+            else
+              echo "no verdict for $name" >> "$RUNNER_TEMP/missing"
+            fi
+          done
+          # a runner error or a refused run leaves no verdict; that fails the job instead of passing quietly
+          [ ! -f "$RUNNER_TEMP/missing" ] || { cat "$RUNNER_TEMP/missing"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diffrun-verdicts
+          path: |
+            upload/*/verdict.json
+            upload/*/table.txt

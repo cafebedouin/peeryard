@@ -1,0 +1,194 @@
+diff --git a/src/it/scala/org/ergoplatform/it/BestChainConsistencyUnderDelaySpec.scala b/src/it/scala/org/ergoplatform/it/BestChainConsistencyUnderDelaySpec.scala
+new file mode 100644
+index 000000000..05af5174e
+--- /dev/null
++++ b/src/it/scala/org/ergoplatform/it/BestChainConsistencyUnderDelaySpec.scala
+@@ -0,0 +1,188 @@
++package org.ergoplatform.it
++
++import com.typesafe.config.Config
++import org.ergoplatform.it.container.Docker.ExtraConfig
++import org.ergoplatform.it.container.{IntegrationSuite, Node}
++import org.ergoplatform.it.util.{ConvergenceDiagnosis, ConvergenceWatch, NodeSample}
++import org.scalatest.flatspec.AnyFlatSpec
++
++import scala.concurrent.duration._
++import scala.concurrent.{Await, Future}
++import scala.util.Try
++
++/**
++  * Regression detector for issue #525: a node's best full block and best header on different forks at the
++  * same height (`fullHeight == headersHeight` with `bestFullHeaderId != bestHeaderId` in `/info`).
++  *
++  * Two sides, each a miner and a follower, with every edge across the cut delayed by `crossDelay` (a
++  * helper container applies `tc netem` in the node's network namespace; see [[container.LinkControl]]).
++  * Unequal miner polling lets forks resolve; the delay makes equal-height sibling blocks frequent. For
++  * `window`, every node is sampled about every `samplingInterval`; an episode is the same inconsistent
++  * (node, height, ids) seen in two consecutive samples. Any episode fails the test.
++  *
++  * This is a detector, not a measurement: the defect is a race, so a build without a fix fails most runs,
++  * not every run. A pass says only that no episode was sampled while the race was exercised.
++  *
++  * Issue #525 is OPEN in the released node: this spec FAILS on v6.0.6 and current master by design. It is
++  * meant to land together with, or after, a fix such as the `isInBestChain` guard that pull request #2313
++  * adds to `FullBlockProcessor.processBetterChain`; until then it documents the defect rather than guarding
++  * against its return.
++  *
++  * A pass is reported only if the race ran: at least `minSiblingHeights` heights with more than one block
++  * occurred (union over nodes; per-node counts are logged). Otherwise, and when link delay cannot be applied
++  * or does not measure as configured, the test is CANCELED with the reason — except under `CI` (env), where
++  * every such cancel is a FAIL with the same text, so a missing kernel module cannot hide the test.
++  * Every failure names one cause; see [[util.ConvergenceDiagnosis]].
++  */
++class BestChainConsistencyUnderDelaySpec extends AnyFlatSpec with IntegrationSuite {
++
++  protected def crossDelay: FiniteDuration = 500.millis
++  protected def minerAPolling: Int = 2000
++  protected def minerCPolling: Int = 2500
++  protected def window: FiniteDuration = 120.seconds
++  protected def samplingInterval: FiniteDuration = 250.millis
++  protected def minBlocks: Int = 20
++  protected def minSiblingHeights: Int = 3
++  protected def startupTimeout: FiniteDuration = 3.minutes
++  /** Under CI a cancel is a fail: a green skip would hide the test. */
++  protected def strict: Boolean = sys.env.contains("CI")
++
++  // every node knows all nodes started before it, so both followers reach both miners
++  private val meshConfig: ExtraConfig = (docker, _) => Some(knownPeersConfig(docker.nodes.map(_.nodeInfo)))
++
++  protected def minerAConfig: Config = internalMinerPollingIntervalConfig(minerAPolling)
++    .withFallback(nodeSeedConfigs.head)
++  protected def minerCConfig: Config = internalMinerPollingIntervalConfig(minerCPolling)
++    .withFallback(onlineGeneratingPeerConfig).withFallback(nodeSeedConfigs(1))
++  protected def followerConfigs: List[Config] =
++    nodeSeedConfigs.slice(2, 4).map(nonGeneratingPeerConfig.withFallback)
++
++  private case class Violation(node: String, height: Int, fullId: String, headerId: String, atMillis: Long)
++
++  /** Cancel, or fail with the same text under `strict`. */
++  private def giveUp(reason: String): Nothing =
++    if (strict) fail(s"$reason (CI: a cancel would hide the test)") else cancel(reason)
++
++  it should "keep best full block and best header on one fork while sibling blocks are mined" in {
++    val nodes: List[Node] = (minerAConfig +: minerCConfig +: followerConfigs)
++      .map(_.withFallback(allowLocalConfig))
++      .map(cfg => docker.startDevNetNode(cfg, meshConfig).get)
++    val watch = new ConvergenceWatch(docker, nodes)
++
++    try runScenario(nodes, watch)
++    catch {
++      case verdict: org.scalatest.exceptions.TestFailedException => throw verdict
++      case verdict: org.scalatest.exceptions.TestCanceledException => throw verdict
++      case diagnosed: java.util.concurrent.TimeoutException if diagnosed.getMessage.contains("CAUSE ") =>
++        fail(diagnosed.getMessage)
++      case scala.util.control.NonFatal(error) =>
++        // not a statement about the node: the test machinery itself broke
++        fail(watch.report(s"HARNESS_ERROR: ${error.getClass.getName}: ${error.getMessage}"), error)
++    } finally watch.close()
++  }
++
++  private def runScenario(nodes: List[Node], watch: ConvergenceWatch): Unit = {
++    val List(minerA, minerC, nearA, nearC) = nodes
++    val sideA = Seq(minerA, nearA)
++    val sideC = Seq(minerC, nearC)
++
++    Await.result(watch.until(startupTimeout.fromNow)(_.forall(_.answered))("Not every node's REST API came up"),
++      startupTimeout + 10.seconds)
++
++    // every edge across the cut is delayed, both directions; edges within a side are not
++    val crossEdges = for (a <- sideA; c <- sideC; (from, to) <- Seq((a, c), (c, a))) yield (from, to)
++    crossEdges.foreach { case (from, to) =>
++      docker.setLinkDelay(from, to, crossDelay).left.foreach { error =>
++        giveUp(s"NETEM_UNAVAILABLE: no link delay ${from.nodeName} -> ${to.nodeName}, so the race cannot be staged " +
++          s"(host needs sch_netem, sch_prio, cls_u32: `sudo modprobe sch_netem sch_prio cls_u32`). tc said: $error")
++      }
++    }
++    // one round trip per cross edge must show both directions' delay
++    val expectedRoundTrip = 2 * crossDelay.toMillis - 100
++    val measured = for (a <- sideA; c <- sideC) yield (a, c, docker.connectMillis(a, c))
++    measured.foreach { case (a, c, ms) =>
++      log.info(s"Connect ${a.nodeName} -> ${c.nodeName}: $ms ms (expected >= $expectedRoundTrip)")
++    }
++    measured.collectFirst { case (a, c, ms) if !ms.exists(_ >= expectedRoundTrip) => (a, c, ms) }.foreach {
++      case (a, c, ms) =>
++        giveUp(s"DELAY_NOT_EFFECTIVE: ${crossDelay.toMillis} ms each way configured on every cross edge, but the " +
++          s"connect ${a.nodeName} -> ${c.nodeName} measured $ms ms (expected >= $expectedRoundTrip)")
++    }
++
++    val started = Await.result(
++      watch.until(startupTimeout.fromNow)(_.forall(n => n.fullHeight.exists(_ >= 2) && n.peers.exists(_ >= 1)))(
++        "Nodes did not all reach height 2 with a peer"), startupTimeout + 10.seconds)
++    val startHeight = started.flatMap(_.fullHeight).min
++
++    // the window: sample fast; an episode needs the same inconsistent state in two consecutive samples
++    var pending = Map.empty[(String, Int, String, String), Violation]
++    var violations = Vector.empty[Violation]
++    var knownAtHeight = Map.empty[(String, Int), Future[String]]
++    val windowEnd = window.fromNow
++    while (windowEnd.hasTimeLeft()) {
++      val round = Await.result(watch.sample(2.seconds, withContainerState = false), 10.seconds)
++      val seen = round.filter(_.bestChainInconsistent).map { n =>
++        val key = (n.name, n.fullHeight.get, n.bestFullId.get, n.bestHeaderId.get)
++        key -> Violation(n.name, n.fullHeight.get, n.bestFullId.get, n.bestHeaderId.get, n.atMillis)
++      }.toMap
++      seen.foreach { case (key, v) =>
++        if (pending.contains(key)) {
++          if (!knownAtHeight.contains((v.node, v.height))) {
++            // confirmed episode: log it (the timestamp lines up with the node logs) and ask, without
++            // blocking the sampling loop, which block ids this node knows at that height
++            log.warn(s"Inconsistent best chain confirmed: ${round.find(_.name == v.node).map(_.render).getOrElse(v.node)}")
++            knownAtHeight += ((v.node, v.height) -> nodes.find(_.nodeName == v.node).get
++              .headerIdsByHeight(v.height).map(_.map(_.take(8)).mkString(",")).recover { case _ => "not answered" })
++          }
++          violations :+= v
++        }
++      }
++      pending = seen
++      Thread.sleep(samplingInterval.toMillis)
++    }
++    Await.result(watch.sample(), 15.seconds) // one round with container states, for the diagnosis
++
++    // a node that left the network explains whatever else was seen, so it is named first
++    val diagnosis = ConvergenceDiagnosis.diagnose(watch.history)
++    val infrastructure = Set(ConvergenceDiagnosis.NodeDown, ConvergenceDiagnosis.NodeUnresponsive,
++      ConvergenceDiagnosis.NoPeers, ConvergenceDiagnosis.NodeLagging)
++    if (infrastructure.contains(diagnosis.cause)) {
++      fail(watch.report(s"The window ended with a node out of the network (${violations.size} inconsistent samples before that)"))
++    }
++
++    if (violations.nonEmpty) {
++      val episodes = violations.groupBy(v => (v.node, v.height, v.fullId, v.headerId)).toSeq.sortBy(_._2.head.atMillis)
++      val detail = episodes.take(5).map { case ((node, height, full, header), samples) =>
++        val known = knownAtHeight.get((node, height)).flatMap(f => Try(Await.result(f, 5.seconds)).toOption).getOrElse("-")
++        s"$node h=$height full=${full.take(8)} header=${header.take(8)} for ${samples.size + 1} samples (ids known there: $known)"
++      }.mkString("; ")
++      fail(watch.report(s"${ConvergenceDiagnosis.BestChainInconsistent} (#525): ${episodes.size} episodes, " +
++        s"${violations.size + episodes.size} samples, with the full block and the header on different forks at one height. " +
++        s"Episodes: $detail. Issue #525 reproduced; a fix (e.g. the isInBestChain guard proposed in PR #2313) is absent or broken."))
++    }
++
++    // no episode: was that because the node is right, or because nothing happened?
++    val last: Seq[NodeSample] = watch.history.last
++    val endHeights = last.flatMap(_.fullHeight)
++    if (endHeights.isEmpty) fail(watch.report("No node reported a height in the final round"))
++    val endHeight = endHeights.min
++    val mined = endHeight - startHeight
++    if (mined < minBlocks) fail(watch.report(s"Only $mined blocks in ${window.toSeconds} s, at least $minBlocks expected"))
++
++    // one height at a time: the REST client allows 10 connections per host
++    val idsByHeight = (startHeight to endHeight).toList.map { h =>
++      val perNode = Await.result(Future.traverse(nodes)(_.headerIdsByHeight(h)), 30.seconds)
++      (h, perNode.flatten.distinct, nodes.map(_.nodeName).zip(perNode.map(_.distinct.size)))
++    }
++    val siblingHeights = idsByHeight.collect { case (h, ids, _) if ids.size > 1 => h }
++    val perNode = nodes.map(_.nodeName).map(n => s"$n=${idsByHeight.count(_._3.exists { case (m, k) => m == n && k > 1 })}")
++    val exercise = s"$mined blocks, ${siblingHeights.size} heights with sibling blocks across the network " +
++      s"(${siblingHeights.take(10).mkString(",")}), per node: ${perNode.mkString(" ")}"
++    log.info(s"Race exercise: $exercise")
++
++    if (siblingHeights.size < minSiblingHeights) {
++      giveUp(s"RACE_NOT_EXERCISED: no inconsistency seen, but only ${siblingHeights.size} sibling heights occurred " +
++        s"(at least $minSiblingHeights needed for the pass to mean anything): $exercise")
++    }
++  }
++}

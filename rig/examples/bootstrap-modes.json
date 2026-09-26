@@ -1,0 +1,12 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "A", "mining": true, "mine_poll": "500ms", "knownPeers": [] },
+    { "name": "B", "mining": false, "knownPeers": ["A"], "conf": { "ergo.node.stateType": "digest" } },
+    { "name": "C", "mining": false, "knownPeers": ["A"], "conf": { "ergo.node.blocksToKeep": 20 } }
+  ],
+  "links": [
+    { "a": "A", "b": "B", "delay_ms": 0 },
+    { "a": "A", "b": "C", "delay_ms": 0 }
+  ]
+}

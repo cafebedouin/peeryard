@@ -1,0 +1,32 @@
+# stack_order.py --roots output, ergoplatform/ergo weak-blocks at 90a129733, 2026-09-23
+base 90a12973320a  PRs 11  surface 31722 lines; hunk-lines 31532, unique exact hunks 6223 (~25309 duplicated under exact matching); 10 do not merge cleanly into base
+
+shared-text blocks (a block = hunks with the same owner-set; projected reduction = lines x (owners-1), textual only)
+  lines  reduc  in     carrier  files
+   1788  16092  10PRs  #2369    AutolykosSolution.scala, CandidateGenerator.scala, CandidateGeneratorPropSpec.scala, CandidateGeneratorSpec.scala +10  [#2366, #2367, #2368, #2369, #2370, #2500, #2502, #2503…]
+    527   2635   6PRs  #2366    BlockDownloadSchedulingSpecification.scala, ErgoHistoryReader.scala, ErgoNodeViewSynchronizer.scala, ErgoNodeViewSynchronizerSpecification.scala +3  [#2366, #2367, #2368, #2503, #2504, #2505]
+    255   1785   8PRs  #2500    ConvergenceObservations.scala, ConvergenceObservationsSpec.scala  [#2366, #2367, #2368, #2500, #2502, #2503, #2504, #2505]
+    309   1236   5PRs  #2366    DeepRollBackIsolationSpec.scala, DeepRollBackSpec.scala, ErgoNodeViewHolder.scala, HeaderBodyCacheWakeupSpec.scala  [#2366, #2368, #2503, #2504, #2505]
+    488    488   2PRs  #2502    ErgoMemPool.scala, ErgoNodeViewHolder.scala, InputBlockProcessorSpecification.scala, InputBlocksProcessor.scala +2  [#2502, #2505]
+     53    424   9PRs  #2369    ErgoNodeTransactionGenerators.scala, FundedBoxHolderGeneratorsSpec.scala  [#2367, #2368, #2369, #2370, #2500, #2502, #2503, #2504…]
+     36    288   9PRs  #2370    AutolykosPowSchemeSpec.scala  [#2366, #2367, #2368, #2370, #2500, #2502, #2503, #2504…]
+    270    270   2PRs  #2502    ForkResolutionDiagnosticsSpec.scala, ForkResolutionSpec.scala  [#2367, #2502]
+    230    230   2PRs  #2500    UtxoStateNodesSyncSpec.scala, UtxoSyncFailureDiagnostics.scala, UtxoSyncFailureDiagnosticsSpec.scala  [#2500, #2503]
+     26    182   8PRs  #2370    MempoolBlockClearingSpec.scala  [#2367, #2368, #2370, #2500, #2502, #2503, #2504, #2505]
+    120    120   2PRs  #2504    CandidateGenerator.scala, MatrixCandidateCacheSpec.scala  [#2504, #2505]
+      2     16   9PRs  #2369    CandidateGeneratorSpec.scala  [#2366, #2368, #2369, #2370, #2500, #2502, #2503, #2504…]
+
+per PR: own changed lines vs textual overlap with other PRs (exact hunk matching)
+  #2505  own   882   shared  3604 [conflict]
+  #2503  own   297   shared  3226 [conflict]
+  #2504  own     0   shared  3116 [conflict]
+  #2368  own    73   shared  2996 [conflict]
+  #2367  own    82   shared  2955 [conflict]
+  #2502  own    69   shared  2918 [conflict]
+  #2366  own    53   shared  2917 [conflict]
+  #2500  own   158   shared  2390 [conflict]
+  #2370  own   103   shared  1905 [conflict]
+  #2369  own    40   shared  1843 [conflict]
+  #2506  own   362   shared     0
+
+=> smallest carrier of the largest shared text: #2369 (1788 lines shared by 10 PRs; least other baggage). Landing that text once would remove ~1788 lines from each other carrier's review. Triage, not merge-order authority: the carrier is not the text's origin.

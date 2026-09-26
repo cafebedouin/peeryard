@@ -1,0 +1,59 @@
+# reviews.yaml: the kinds of review this frame can run. One entry per kind: the question it answers, the
+# command, what the machine needs, what the report must carry, status. A kind is added here and as a recipe,
+# not by changing the driver. A request in a pull request (a fenced block with the info string `review-request`
+# and the keys `kinds`, `areas`, `question`, or `kinds: none` to opt out; honoured only from the author or a
+# maintainer) narrows a run to the kinds it names; searching a repository for such requests is planned, not
+# implemented: today the person names the PR or lets pick.sh choose.
+#
+# Base: every build is against the PR's own merge base with its base branch (pick.sh prints it as
+# merges@<sha>; pass that sha to build.sh as <base-ref>), never a release tag the PR was not written on.
+# One network at a time: wrap every node run in `review/with-lock.sh -- <command>`; agents queue there.
+# Jars are passed by their cached or registered path (the sidecar sits beside it); a `readlink -f` target has no sidecar.
+smoke:
+  question: does the scenario still complete on the candidate (one pair, no cited verdict)?
+  command: bash diffrun/run.sh diffrun/scenarios/<name>-smoke.json --base <base.jar> --candidate <cand.jar> --out <dir>
+  needs: [unprivileged user namespaces, sch_netem, jq, curl, unzip, Java runtime, JDK 8 + sbt to build the candidate]
+  report: [the verdict line, unresponsive_after per role, the run card]
+  status: implemented (fork-convergence-smoke, sibling-fork-smoke)
+scenario:
+  question: does the candidate change the behaviour the scenario measures (a full paired verdict)?
+  command: bash diffrun/run.sh diffrun/scenarios/<name>.json --base <base.jar> --candidate <cand.jar> --out <dir>
+  needs: [as smoke; 1.5-2.5 h for fork-convergence]
+  report: [verdict, table.txt, per-role counts, what a SUPPORTS rests on (the base rate), the run card]
+  status: implemented (fork-convergence, sibling-fork)
+interop:
+  question: do the release jar and the candidate jar stay on one chain and one state root, each mining in turn?
+  command: bash diffrun/run.sh diffrun/scenarios/interop.json --base <base.jar> --candidate <cand.jar> --out <dir>
+  needs: [as smoke]
+  report: [follow_ab, follow_ba, both appVersions]
+  status: implemented
+txload:
+  question: are real payments accepted, confirmed and included in blocks on the candidate as on the base?
+  command: bash diffrun/run.sh diffrun/scenarios/txload.json --base <base.jar> --candidate <cand.jar> --out <dir>
+  needs: [as smoke]
+  report: [accepted, confirmed, txs_in_blocks per role]
+  status: implemented
+hunk-isolation:
+  question: which files or hunks of the pull request carry the measured effect?
+  command: DIFFRUN_ERGO_CLONE=<clone> bash diffrun/build.sh <base> <base>...pr-N -- <pathspec>   # then a scenario per part
+  needs: [JDK 8 + sbt, a clone with the pull head fetched]
+  report: [the parts built (patch sha256 per part), one verdict per part]
+  status: implemented (build.sh); the per-part run is the scenario kind
+read-review:
+  question: does the change hold under a careful read of one area (network, sync, mining, wallet-state, proofs, ci)?
+  command: none; the model reads the diff and the code it touches, and writes findings labelled read (file:line), never above Possible bug
+  needs: [the clone]
+  report: [findings in the inline form; what was not read]
+  status: implemented as a discipline, not a script
+revert-check:
+  question: does each new test fail with the production change reverted and pass with it?
+  command: DIFFRUN_ERGO_CLONE=<clone> bash review/revert-check.sh --pr <N> [--base <ref>] --out <dir>
+  needs: [JDK 8 + sbt, the clone; ~10-20 min per PR (two worktrees compiled)]
+  report: [per test class: with / without / verdict (fails-without/passes-with, passes-both, fails-both, compile-error-without); the RESULT_JSON line]
+  status: implemented (unit tests under src/test only; src/it never runs here)
+bootstrap-modes:
+  question: do a digest-mode follower and a pruning follower settle on the candidate miner's chain and state root, with pruning visible?
+  command: bash diffrun/run.sh diffrun/scenarios/bootstrap-modes.json --base <base.jar> --candidate <cand.jar> --out <dir>
+  needs: [as smoke]
+  report: [settled, state_agree, pruned_visible, height per role]
+  status: implemented (on the rig template)

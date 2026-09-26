@@ -1,0 +1,155 @@
+{
+  "repo": "ergoplatform/ergo",
+  "base": "v6.0.6",
+  "stack_statuses": [
+    "proposed",
+    "under-review",
+    "merged-unreleased"
+  ],
+  "patches": [
+    {
+      "id": "001",
+      "file": "001-pr2511-v2-sync-summaries.patch",
+      "title": "Key V2 sync summaries by selected tip and requested mode",
+      "origin": "upstream PR by A. Shannon (not ours); production diff only",
+      "upstream_pr": 2511,
+      "upstream_head": "a6b8f86065",
+      "status": "under-review",
+      "added": "2026-09-24",
+      "fixes": "a follower that never switches to the heavier chain after a partition heals",
+      "needed_by": [
+        "diffrun fork-convergence",
+        "diffrun sibling-fork"
+      ],
+      "witness": "fork-convergence A/A on the reference host, 2026-09-25: 23 of 23 valid runs switched, warn_S 0, 1 inconclusive of 24 (prefix race); the release in the same session (a separate measurement from the shipped calibration example, examples/fork-convergence-aa-6.0.6, which is 8 of 16): 6 of 16 switched, warn_S in exactly the 10 that did not",
+      "responses": []
+    },
+    {
+      "id": "002",
+      "file": "002-rebroadcast-parents-first.patch",
+      "title": "MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors",
+      "origin": "ours",
+      "upstream_pr": 2573,
+      "upstream_head": "183894bac4",
+      "status": "proposed",
+      "added": "2026-09-24",
+      "fixes": "a transaction announced before its unconfirmed parent is declined by the receiving peer and not requested again for 20 minutes; after a rollback, a chain of wallet payments returns to the pool and reaches the next miner out of order, so most of the chain stays unconfirmed",
+      "needed_by": [
+        "rig reorg-mempool"
+      ],
+      "witness": "v2 (bounded iterative walk): unit MempoolAuditorSpec 4/4, change mutated out -> the 2 new tests fail; network reorg-mempool on v6.0.6 + v2: 10 of 10 in both valid runs (2 further runs inconclusive: no rebroadcast round, the payments absent from the sender pool after the rollback, independent of the patch). v1: 10 of 10 in 2 runs.",
+      "responses": [
+        "2026-09-25: filed as issue #2572 + PR #2573 (v6.0.7)"
+      ]
+    },
+    {
+      "id": "003",
+      "file": "003-pr2313-sibling-fork-divergence.patch",
+      "title": "Prevent bestFullBlock/bestHeader divergence on sibling forks",
+      "origin": "upstream PR by jozanek (not ours); production diff only",
+      "upstream_pr": 2313,
+      "upstream_head": "f8283834c8",
+      "status": "under-review",
+      "added": "2026-09-24",
+      "fixes": "a node's best full block and best header on different forks at the same height (issue #525)",
+      "needed_by": [
+        "diffrun sibling-fork"
+      ],
+      "witness": "sibling-fork A/A on the reference host, 2026-09-25: 0 of 16 valid runs with confirmed divergence, E_total 0, agreement in all; the release in the same session: 15 of 16 runs with confirmed divergence",
+      "responses": [
+        "2026-09-25: only_for sibling-fork (temporary): on the combined stack it wedges fork-convergence in 7 of 24 runs (a miner holding a competing header whose body never arrives does not apply its own block); reported on #2313"
+      ],
+      "only_for": [
+        "sibling-fork"
+      ]
+    },
+    {
+      "id": "005",
+      "file": "005-scan-floor-near-tip.patch",
+      "title": "Do not scan below minimal full block height for block sections near the tip",
+      "origin": "ours",
+      "upstream_pr": 2581,
+      "upstream_head": "8d04a0c851",
+      "status": "proposed",
+      "added": "2026-09-24",
+      "fixes": "a NiPoPoW + UTXO-snapshot node stops downloading blocks when more headers arrive before the snapshot than one scan covers: the near-tip scan starts 100 below the best full block, inside the proof's sparse prefix",
+      "needed_by": [
+        "rig nipopow-bootstrap"
+      ],
+      "witness": "unit: UtxoBootstrapToDownloadSpecification 'near the tip, block sections are downloaded after snapshot applied on NiPoPoW-bootstrapped history' fails on v6.0.6, passes with the fix; network: sweep iteration 2 stall + forced-lead A/B (base stalled 2 of 3, with the fix 2 of 2 passed)",
+      "route": "also offered as a commit on ergoplatform/ergo#2424 (a-shannon), which covers the far-from-tip branch",
+      "responses": [
+        "2026-09-26: filed as issue #2579 + PR #2581 (v6.0.7)"
+      ]
+    },
+    {
+      "id": "006",
+      "file": "006-hdrtooold-parent-height.patch",
+      "title": "Check a header's age against its parent's own height, not the height index",
+      "origin": "ours",
+      "upstream_pr": 2580,
+      "upstream_head": "4736407d8",
+      "status": "proposed",
+      "added": "2026-09-26",
+      "fixes": "a valid header validated while its parent's indexes are unwritten (HistoryStorage.insert writes objects first) is rejected as invalid, its sender penalized, and it is not requested again (seen at 2 CPUs: a follower stuck at height 2)",
+      "needed_by": [
+        "diffrun fork-convergence (loaded hosts)"
+      ],
+      "witness": "unit HeaderParentWriteGapSpecification fails on v6.0.7 (MalformedModifierError hdrTooOld ... None), passes with the fix; history specs 56/56; network: 1 of 12 runs at 2 CPUs on the release",
+      "responses": [
+        "2026-09-26: filed as issue #2578 + PR #2580 (v6.0.7)",
+        "2026-09-26: third commit (guard test for the age check) pushed"
+      ]
+    },
+    {
+      "id": "007",
+      "file": "007-utxo-no-adproofs-request.patch",
+      "title": "Do not request announced ADProofs on a node that stores the UTXO set",
+      "origin": "ours",
+      "upstream_pr": 2585,
+      "upstream_head": "a653416790",
+      "status": "proposed",
+      "added": "2026-09-26",
+      "fixes": "a UTXO node downloads, through announcements, the ADProofs it regenerates itself (93% of ADProofs + transaction bytes on mainnet over 30 blocks)",
+      "needed_by": [],
+      "witness": "unit ErgoNodeViewSynchronizerSpecification 'a node that stores the UTXO set does not request announced ADProofs' fails on v6.0.7, passes with the fix; whole spec 32/32; relay witness 4/4",
+      "responses": [
+        "2026-09-26: filed as issue #2584 + PR #2585 (v6.0.7)"
+      ]
+    },
+    {
+      "id": "008",
+      "file": "008-duplicate-not-invalid.patch",
+      "title": "Drop a requested copy of a modifier already in history instead of penalizing the sender",
+      "origin": "ours",
+      "upstream_pr": 2592,
+      "upstream_head": "3d6c3db979",
+      "status": "proposed",
+      "added": "2026-09-26",
+      "fixes": "a reply for a modifier the node already applied is judged invalid and the answering peer penalized (seen on weak-blocks: 5 of 12 Matrix devnet runs)",
+      "needed_by": [],
+      "witness": "unit ErgoNodeViewSynchronizerSpecification 'a requested header/extension that is already in history is not judged invalid' fail on v6.0.7 (peer penalized), pass with the fix; whole spec 33/33; composes with #2571 (merged, 4/4)",
+      "responses": [
+        "2026-09-26: filed as issue #2589 + PR #2592 (v6.0.7)"
+      ]
+    },
+    {
+      "id": "009",
+      "file": "009-cache-duplicate-debug.patch",
+      "title": "Log a cached copy of a stored modifier as a duplicate, not as permanently invalid",
+      "origin": "ours",
+      "upstream_pr": 2593,
+      "upstream_head": "4ea8e18e4d",
+      "status": "proposed",
+      "added": "2026-09-26",
+      "fixes": "the modifiers cache logs a second copy of a stored modifier as permanently invalid (WARN + stack trace); removal unchanged",
+      "needed_by": [],
+      "witness": "unit ErgoModifiersCacheSpec (stored header + stored proofs copies) fails on v6.0.7 with both warnings, passes with the fix; with VerifyADHistorySpecification 21/21 x3",
+      "responses": [
+        "2026-09-26: filed as issue #2590 + PR #2593 (v6.0.7)"
+      ]
+    }
+  ],
+  "clone_env": "DIFFRUN_ERGO_CLONE",
+  "build": "diffrun/build.sh"
+}

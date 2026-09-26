@@ -1,0 +1,16 @@
+{
+  "name": "precheck-replay",
+  "description": "Test scenario for the precheck gate: no nodes; the seq-replay script under a stub precheck that passes, fails or hangs per jar.",
+  "script": "test/seq-replay.sh",
+  "precheck": "test/precheck-stub.sh",
+  "precheck_timeout_seconds": 3,
+  "tier": "public",
+  "env": { "SCEN_NAME": "precheck-replay" },
+  "metrics": { "switched": "boolean" },
+  "n": 2,
+  "timeout_seconds": 10,
+  "expect": {
+    "base":      { "all": { "key": "switched", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "switched", "op": "==", "value": true } }
+  }
+}

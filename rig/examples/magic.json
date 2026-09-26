@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "knownPeers": [
+        "B"
+      ]
+    },
+    {
+      "name": "B",
+      "mining": true,
+      "knownPeers": [
+        "A"
+      ],
+      "conf": {
+        "scorex.network.magicBytes": "[2,2,4,4]"
+      }
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    }
+  ],
+  "bringup_links": false
+}

@@ -1,0 +1,39 @@
+{
+  "name": "sibling-fork",
+  "description": "SMOKE: one pair, no cited verdict; the only expectation is that every node still answers afterwards. Four devnet nodes, two miners behind a slow link: does a node's best full block ever sit on a different fork from its best header at the same height, in two consecutive samples?",
+  "script": "sibling-fork.sh",
+  "tier": "public",
+  "env": {
+    "D_AC": 500,
+    "P": "4s",
+    "P_C": "5s",
+    "W": 150
+  },
+  "metrics": {
+    "D_total": "number",
+    "D_confirmed": "number",
+    "E_total": "number",
+    "agreement": "boolean",
+    "max_height": "number",
+    "unresponsive_after": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "unresponsive_after",
+        "op": "==",
+        "value": 0
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "unresponsive_after",
+        "op": "==",
+        "value": 0
+      }
+    }
+  }
+}

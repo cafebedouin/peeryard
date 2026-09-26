@@ -1,0 +1,33 @@
+# The example suite: one row per rig example, run by rig/run-suite.sh (and by the publication sweeps).
+# Columns (tab-separated): name, PASS marker (extended regex matched in the run's output), timeout in seconds,
+# extra environment (space-separated KEY=VALUE, or -), needs: the artefacts beyond PEERYARD_JAR (comma-separated:
+# release, matrix, arkadianet, arkadianet-magic, ergo-node-rust; or -).
+poscontrol	OBSERVER-POSCTRL PASS	600	-	-
+floor	FLOOR HOLDS	600	-	-
+magic	MAGIC-ISOLATION: PASS	600	-	-
+bringup	SYNC-OK	600	-	-
+mining	minetest\] PASS	600	-	-
+netsplit	NETSPLIT-RESULT: PASS	600	-	-
+txload	TXLOAD: PASS	600	-	-
+txchain	TXCHAIN: PASS	600	-	-
+churn	CHURN: PASS	900	-	-
+bootstrap-modes	BOOTSTRAP-MODES: PASS	600	-	-
+mixed	MIXED VERDICT: PASS	600	-	release
+reorg-mempool	REORG-MEMPOOL: PASS	900	-	-
+soak	SOAK: PASS	600	PEERYARD_DURATION=300 SOAK_CRASH_EVERY_MIN=2	-
+matrix-pair	MATRIX-PAIR: PASS	900	PEERYARD_DURATION=360	matrix
+matrix-mixed	MATRIX-MIXED: PASS	600	-	matrix
+matrix-tx	MATRIX-TX: PASS	1500	-	matrix
+matrix-latency	MATRIX-LATENCY: PASS	1200	-	matrix
+matrix-fork	MATRIX-FORK: PASS	1200	-	matrix
+matrix-fork-deep	MATRIX-FORK: PASS	1800	-	matrix
+matrix-churn	MATRIX-CHURN: PASS	1200	-	matrix
+arkadianet-follow	ARKADIANET-FOLLOW: PASS	600	-	arkadianet
+ergo-node-rust-follow	ERGO-NODE-RUST-FOLLOW: PASS	600	-	ergo-node-rust
+arkadianet-mine	ARKADIANET-MINE: PASS	600	-	arkadianet
+arkadianet-mine-magic	ARKADIANET-MINE: PASS	600	-	arkadianet-magic
+ergo-node-rust-follow-magic	ERGO-NODE-RUST-FOLLOW: PASS	600	-	ergo-node-rust
+mempool-evict	MEMPOOL-EVICT: PASS	600	-	-
+corruption	CORRUPTION: PASS	1700	-	-
+utxo-bootstrap	UTXO-BOOTSTRAP: PASS	1700	-	-
+nipopow-bootstrap	NIPOPOW-BOOTSTRAP: PASS	1700	-	-

@@ -1,0 +1,90 @@
+# diffrun: differential scenario workflow (example; untested on hosted runners).
+# Copy to .github/workflows/diffrun.yml in a repository containing peeryard to enable it.
+# It runs public-tier manifests only (run.sh also refuses a private-tier manifest when CI or GITHUB_ACTIONS is
+# set) and uploads only each run's verdict.json and table.txt: no stdout, no node logs, no workdirs, no
+# run_meta.json.
+#
+# GitHub-hosted ubuntu-24.04 runners allow the userns sysctl and load sch_netem (checked once: a real two-node
+# rig bringup with the release jar passed there). A full scenario suite's timing on two vCPUs is the
+# open question; check INCONCLUSIVE counts in the uploaded verdicts.
+name: diffrun
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "ergo base ref (tag, branch or sha)"
+        required: true
+        default: "v6.0.6"
+      candidate_commit:
+        description: "ergo commit whose first-parent diff is applied on base_ref to make the candidate"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  diffrun:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      BASE_REF: ${{ inputs.base_ref }}
+      CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Allow unprivileged user namespaces; load sch_netem
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+
+      - name: Lint public-tier scenarios (before any build or run)
+        # a no-op unless DIFFRUN_TERMS names a term list (point it at a file checked in by your repository)
+        run: bash peeryard/diffrun/lint.sh
+
+      - uses: actions/setup-java@v4
+        id: java8
+        with:
+          distribution: temurin
+          java-version: "8"
+
+      - uses: sbt/setup-sbt@v1
+
+      - name: Clone ergo
+        run: |
+          git clone --filter=blob:none https://github.com/ergoplatform/ergo.git "$RUNNER_TEMP/ergo"
+          git -C "$RUNNER_TEMP/ergo" fetch --tags origin
+          git -C "$RUNNER_TEMP/ergo" fetch origin "$CANDIDATE_COMMIT"
+
+      - name: Build base and candidate
+        env:
+          DIFFRUN_ERGO_CLONE: ${{ runner.temp }}/ergo
+          DIFFRUN_CACHE: ${{ runner.temp }}/diffrun-cache
+          JAVA8_HOME: ${{ steps.java8.outputs.path }}
+        run: |
+          echo "BASE_JAR=$(bash peeryard/diffrun/build.sh "$BASE_REF")" >> "$GITHUB_ENV"
+          echo "CAND_JAR=$(bash peeryard/diffrun/build.sh "$BASE_REF" "$CANDIDATE_COMMIT")" >> "$GITHUB_ENV"
+
+      - name: Run public-tier scenarios
+        run: |
+          mkdir -p upload
+          for m in peeryard/diffrun/scenarios/sibling-fork.json peeryard/diffrun/scenarios/fork-convergence.json; do
+            name="$(basename "$m" .json)"
+            bash peeryard/diffrun/run.sh "$m" --base "$BASE_JAR" --candidate "$CAND_JAR" --out "$RUNNER_TEMP/out/$name" || echo "run.sh exit $? for $name"
+            if [ -f "$RUNNER_TEMP/out/$name/verdict.json" ]; then
+              mkdir -p "upload/$name"
+              cp "$RUNNER_TEMP/out/$name/verdict.json" "$RUNNER_TEMP/out/$name/table.txt" "upload/$name/"
+              cat "upload/$name/table.txt" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "no verdict for $name" >> "$RUNNER_TEMP/missing"
+            fi
+          done
+          # a runner error or a refused run leaves no verdict; that fails the job instead of passing quietly
+          [ ! -f "$RUNNER_TEMP/missing" ] || { cat "$RUNNER_TEMP/missing"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diffrun-verdicts
+          path: |
+            upload/*/verdict.json
+            upload/*/table.txt

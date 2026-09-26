@@ -1,0 +1,28 @@
+commit 4ea8e18e4d01ad300c9d4250d9ef6a267b83bb3d
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Sat Sep 26 12:55:52 2026 -0500
+
+    Drop a cached copy of a modifier already in history as a duplicate
+    
+    findCandidateKey logged every cached modifier that failed a fatal rule as permanently invalid, with a stack trace, so a
+    second copy of one already applied (alreadyApplied) was reported as invalid. It was removed either way; it is now
+    removed as a duplicate, at debug level.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala b/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala
+index 70ed8d8f3..66403c837 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala
+@@ -14,6 +14,11 @@ class ErgoModifiersCache(override val maxSize: Int) extends ModifiersCache with
+   override def findCandidateKey(history: ErgoHistory): Option[K] = {
+     def tryToApply(k: K, v: BlockSection): Boolean = {
+       history.applicableTry(v) match {
++        case Failure(e) if e.isInstanceOf[MalformedModifierError] && history.contains(v.id) =>
++          // a second copy of a modifier already applied (e.g. delivered twice): a duplicate, not an invalid modifier
++          log.debug(s"Modifier ${v.encodedId} is already in history, removing its copy from cache")
++          remove(k)
++          false
+         case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
+           log.warn(s"Modifier ${v.encodedId} is permanently invalid and will be removed from cache", e)
+           remove(k)

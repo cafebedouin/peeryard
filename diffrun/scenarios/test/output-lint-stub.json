@@ -1,0 +1,14 @@
+{
+  "name": "output-lint-stub",
+  "description": "Test scenario: no nodes; its result carries a lint-listed term assembled at runtime.",
+  "script": "test/output-lint-stub.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "ok": "boolean" },
+  "n": 1,
+  "timeout_seconds": 60,
+  "expect": {
+    "base":      { "all": { "key": "ok", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "ok", "op": "==", "value": true } }
+  }
+}

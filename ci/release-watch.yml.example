@@ -1,0 +1,88 @@
+# Example: watch ergoplatform/ergo releases and run a release-vs-release diffrun when a new tag appears in a
+# line. Needs diffrun-hosted.yml.example installed as .github/workflows/diffrun-hosted.yml, and the repository
+# settings to allow Actions to write (it commits state/). First run seeds; later runs dispatch.
+name: peeryard-release-watch
+on:
+  schedule:
+    - cron: "17 */6 * * *"   # every six hours
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = report what would be triggered, change nothing"
+        required: false
+        default: "true"
+permissions:
+  contents: write     # to commit state/last_release.txt
+  actions: write      # to dispatch the diffrun workflow
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY: ${{ inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare each release line's newest tag with the last one seen for that line
+        id: cmp
+        run: |
+          set -e
+          # ergo publishes lines in parallel (6.0.x stable, 6.1.x pre-releases of the sub-block line): a
+          # release is compared with the previous release of ITS OWN line (same major.minor), never across.
+          gh api repos/ergoplatform/ergo/releases --paginate --jq '.[] | select(.draft | not) | "\(.published_at) \(.tag_name) \(.prerelease)"' | sort -r > releases.txt
+          head -6 releases.txt
+          mkdir -p state; todo=""; seed=""
+          for line in $(awk '{print $2}' releases.txt | sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/' | sort -u); do
+            latest="$(awk -v l="v$line." 'index($2, l) == 1 {print $2; exit}' releases.txt)"
+            previous="$(awk -v l="v$line." 'index($2, l) == 1 {print $2}' releases.txt | sed -n 2p)"
+            seen="$(cat "state/last_release_$line.txt" 2>/dev/null || echo none)"
+            published="$(awk -v t="$latest" '$2 == t {print $1; exit}' releases.txt)"
+            age_days=$(( ( $(date -u +%s) - $(date -u -d "$published" +%s) ) / 86400 ))
+            [ "$age_days" -le 90 ] || continue    # dormant lines are not watched
+            echo "line $line: latest=$latest ($age_days d) previous=${previous:-none} seen=$seen"
+            [ -n "$previous" ] || { echo "  no previous release in this line; skip"; continue; }
+            if [ "$seen" = none ]; then
+              # first sight of a line: record it, do not run (otherwise the first run would replay history)
+              echo "  seeding state with $latest; no run"; seed="$seed $line:$latest"; continue
+            fi
+            [ "$latest" != "$seen" ] || continue
+            ok=1; for t in "$latest" "$previous"; do
+              gh api "repos/ergoplatform/ergo/releases/tags/$t" --jq '.assets[].name' | grep -q "^ergo-${t#v}\.jar$" || { echo "  $t has no ergo jar asset; skip"; ok=0; }
+            done
+            [ $ok = 1 ] && todo="$todo $line:$previous:$latest"
+          done
+          echo "todo=${todo# }" >> "$GITHUB_OUTPUT"; echo "seed=${seed# }" >> "$GITHUB_OUTPUT"
+          echo "to run:${todo:- nothing}"; echo "to seed:${seed:- nothing}"
+      - name: Dispatch one release-vs-release diffrun per line with a new tag; record new and seeded tags
+        if: steps.cmp.outputs.todo != '' || steps.cmp.outputs.seed != ''
+        env:
+          TODO: ${{ steps.cmp.outputs.todo }}
+          SEED: ${{ steps.cmp.outputs.seed }}
+        run: |
+          set -e
+          for item in $TODO; do
+            line="${item%%:*}"; rest="${item#*:}"; previous="${rest%%:*}"; latest="${rest#*:}"
+            echo "would run: diffrun-hosted base=$previous candidate=$latest (line $line)"
+            [ "$DRY" = "true" ] && continue
+            gh workflow run diffrun-hosted.yml -f base_tag="$previous" -f candidate_tag="$latest" -f scenarios="fork-convergence.json sibling-fork.json"
+            echo "$latest" > "state/last_release_$line.txt"
+          done
+          for item in $SEED; do echo "${item#*:}" > "state/last_release_${item%%:*}.txt"; echo "seeded ${item%%:*} = ${item#*:}"; done
+          [ "$DRY" = "true" ] && { echo "dry run: not dispatching, not recording"; exit 0; }
+          git config user.name "peeryard-release-watch"; git config user.email "actions@users.noreply.github.com"
+          git add state; git commit -m "release watch: dispatched [$TODO] seeded [$SEED]"; git push
+      - name: Check peeryard's carried patches against each new release (patches/check.sh)
+        # a patch that has landed (CONTAINED) or no longer applies (COLLIDES) fails this step, so the run is
+        # flagged: remove or rebase it in patches/ergo/patches.json and rebuild the reference jar
+        # runs last, so a failing check never blocks the dispatch above
+        if: steps.cmp.outputs.todo != ''
+        env:
+          TODO: ${{ steps.cmp.outputs.todo }}
+        run: |
+          set -e
+          git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$RUNNER_TEMP/ergo"
+          rc=0
+          for item in $TODO; do latest="${item##*:}"
+            DIFFRUN_ERGO_CLONE="$RUNNER_TEMP/ergo" bash patches/check.sh ergo "$latest" || rc=1
+          done
+          exit $rc

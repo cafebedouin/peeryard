@@ -1,0 +1,28 @@
+commit 7072145e6415a03896528c1ab9264804e5d620e9
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Sat Sep 26 07:20:38 2026 -0500
+
+    Check a header's age against its parent's own height, not the height index
+    
+    HistoryStorage.insert writes a header's object before its indexes, and incoming headers are validated while that
+    write may be in progress. A child validated in between found the parent but read its height from the index as
+    None, so the age check (hdrTooOld) failed and a valid header was marked invalid, not requested again, and its
+    sender penalized. The parent header is already loaded, so its height is read from it.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+index 0a801ccd5..23ff1abf6 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+@@ -421,7 +421,9 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+         .validate(hdrHeight, header.height == parent.height + 1, InvalidModifier(s"${header.height} vs ${parent.height}", header.id, header.modifierTypeId))
+         .validateNoFailure(hdrPoW, powScheme.validate(header), header.id, header.modifierTypeId)
+         .validateEquals(hdrRequiredDifficulty, header.requiredDifficulty, requiredDifficultyAfter(parent), header.id, header.modifierTypeId)
+-        .validate(hdrTooOld, heightOf(header.parentId).exists(h => fullBlockHeight - h < nodeSettings.keepVersions), InvalidModifier(heightOf(header.parentId).toString, header.id, header.modifierTypeId))
++        // the parent's own height, not the height index: headers are validated while a parent may be half-written
++        // (HistoryStorage.insert stores the object before its indexes), and a missing index is not a too-old parent
++        .validate(hdrTooOld, fullBlockHeight - parent.height < nodeSettings.keepVersions, InvalidModifier(parent.height.toString, header.id, header.modifierTypeId))
+         .validateSemantics(hdrParentSemantics, isSemanticallyValid(header.parentId), InvalidModifier(s"Parent semantics broken", header.id, header.modifierTypeId))
+         .validate(hdrFutureTimestamp, header.timestamp - time() <= MaxTimeDrift, InvalidModifier(s"${header.timestamp} vs ${time()}", header.id, header.modifierTypeId))
+         .validateNot(alreadyApplied, historyStorage.contains(header.id), InvalidModifier(s"${header.id} already applied", header.id, header.modifierTypeId))

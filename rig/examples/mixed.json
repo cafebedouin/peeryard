@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "mining": false,
+      "knownPeers": [
+        "A"
+      ],
+      "jar": "${PEERYARD_JAR_B}"
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    }
+  ]
+}

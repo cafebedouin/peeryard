@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "mining": true,
+      "knownPeers": []
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    }
+  ],
+  "bringup_links": false
+}

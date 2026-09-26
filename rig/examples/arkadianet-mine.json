@@ -1,0 +1,8 @@
+{
+  "chain": "rust-devnet",
+  "nodes": [
+    { "name": "A", "mining": false, "knownPeers": [] },
+    { "name": "B", "kind": "arkadianet", "bin": "${PEERYARD_ARKADIANET_BIN}", "mining": true, "knownPeers": ["A"] }
+  ],
+  "links": [ { "a": "A", "b": "B", "delay_ms": 0 } ]
+}

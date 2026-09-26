@@ -1,0 +1,82 @@
+{
+  "repo": "ergoplatform/ergo",
+  "branch": "weak-blocks",
+  "base": "a1bd938effb7f5acabfe5230a5ef20fe0d50ae62",
+  "stack_statuses": [
+    "proposed",
+    "under-review",
+    "merged-unreleased"
+  ],
+  "clone_env": "DIFFRUN_ERGO_CLONE",
+  "build": "diffrun/build.sh",
+  "patches": [
+    {
+      "id": "001",
+      "file": "001-pr2505-input-block-route-dispatch.patch",
+      "title": "Full-block route matches only /blocks/{id}, so the input-block transaction routes are reachable",
+      "origin": "upstream PR by A. Shannon (not ours), the BlocksApiRoute hunk only; the same one-line change is arkadianet/ergo-scala#17 commit d6cd348e0",
+      "upstream_pr": 2505,
+      "upstream_head": "4138875ba5",
+      "status": "under-review",
+      "added": "2026-09-24",
+      "fixes": "/blocks/{id}/inputBlockTransactionIds and /inputBlockTransactions answer 404 for every input block: the full-block route matches /blocks/{id}/<anything> first",
+      "needed_by": [
+        "rig matrix-tx"
+      ],
+      "witness": "route probe on a1bd938ef + this patch: 72 of 72 input-block id lookups answered a list (unpatched: 0 of 70, all 404, while the node log applied transactions for all 70 ids); matrix-tx 3/3 PASS (unpatched 3/3 FAIL); 2026-09-25",
+      "responses": [
+        "#2505 open, 1 review, 1 comment (2026-09-25)",
+        "2026-09-25: #2505 head moved to 4138875ba5; the route hunk is unchanged"
+      ]
+    },
+    {
+      "id": "002",
+      "file": "002-input-block-relay.patch",
+      "title": "Relay a received input block by id to eligible sub-block peers (receive-side guard + relay)",
+      "origin": "ours",
+      "upstream_pr": 2566,
+      "upstream_head": "516b30efd",
+      "status": "proposed",
+      "added": "2026-09-25",
+      "fixes": "input blocks reach only the miner's own peers (issue #2565)",
+      "needed_by": [
+        "rig matrix-latency"
+      ],
+      "witness": "unit: ErgoNodeViewSynchronizerSpecification per commit (95, 96 pass; each commit reverted: its properties fail); network: matrix-latency 3/3 PASS on a1bd938ef + this diff (C 207, 202, 205 input blocks; none without), matrix-pair PASS",
+      "responses": []
+    },
+    {
+      "id": "003",
+      "file": "003-pr2511-v2-sync-summaries.patch",
+      "title": "Key V2 sync summaries by selected tip and requested mode (#2511, as patches/ergo/001)",
+      "origin": "upstream PR by A. Shannon (not ours); production diff only",
+      "upstream_pr": 2511,
+      "upstream_head": "a6b8f86065",
+      "status": "under-review",
+      "added": "2026-09-25",
+      "fixes": "a follower that never switches to the heavier chain after a partition heals",
+      "needed_by": [
+        "rig matrix-fork"
+      ],
+      "witness": "release line: fork-convergence A/A 23 of 23 switched; Matrix line: matrix-fork 1 of 2 valid runs converged, a rate is not yet measured",
+      "responses": []
+    },
+    {
+      "id": "004",
+      "file": "004-v2-sync-genesis-anchor.patch",
+      "title": "Full V2 sync summaries also carry the genesis header, so a peer always finds a common point",
+      "origin": "upstream work by A. Shannon (not ours): the ErgoHistoryReader.syncInfoV2 hunk of ergoplatform/ergo#2511 at its earlier head 8c00df3a98, dropped when #2511 was narrowed to the cache keying; the same hunk is in ergoplatform/ergo#2529 (a-shannon, open) at 561e5c3a40, verified 2026-09-26",
+      "upstream_pr": 2529,
+      "upstream_head": "561e5c3a40",
+      "status": "under-review",
+      "added": "2026-09-25",
+      "fixes": "a node on a fork deeper than 16 blocks on a young chain (height <= 128) sends sync summaries (tip, tip-16) that are all on its own fork; the peer finds no common point, answers with an empty continuation ('Extension is empty while comparison is younger'), and the node never learns the heavier chain",
+      "needed_by": [
+        "rig matrix-fork (deep-fork runs)"
+      ],
+      "witness": "matrix-fork on the Matrix stack: without it deep-fork runs 0/4 PASS (fork depth 22-28, every FAIL LIGHTER_FORK_NOT_SWITCHING), shallow 4/4; with it 7/7 valid PASS, deep 5/5 (depth 21-28), shallow 2/2 (1 INCONCLUSIVE: the example's disjoint-genesis race, fixed separately); 2026-09-25",
+      "route": "upstream in #2529; no separate PR needed",
+      "responses": []
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "sibling-fork",
+  "description": "Four devnet nodes, two miners behind a slow link: does a node's best full block ever sit on a different fork from its best header at the same height, in two consecutive samples?",
+  "script": "sibling-fork.sh",
+  "tier": "public",
+  "env": {
+    "D_AC": 500,
+    "P": "4s",
+    "P_C": "5s",
+    "W": 150
+  },
+  "metrics": {
+    "D_total": "number",
+    "D_confirmed": "number",
+    "E_total": "number",
+    "agreement": "boolean",
+    "max_height": "number",
+    "unresponsive_after": "number"
+  },
+  "n": 3,
+  "timeout_seconds": 900,
+  "expect": {
+    "base": {
+      "count": {
+        "key": "E_total",
+        "op": ">",
+        "value": 0
+      },
+      "cmp": ">=",
+      "k": 1
+    },
+    "candidate": {
+      "all": {
+        "key": "D_confirmed",
+        "op": "==",
+        "value": 0
+      }
+    }
+  }
+}

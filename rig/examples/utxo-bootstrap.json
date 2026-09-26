@@ -1,0 +1,11 @@
+{
+  "nodes": [
+    { "name": "A", "mining": true, "mine_poll": "500ms", "knownPeers": [],
+      "conf": { "ergo.chain.makeSnapshotEvery": 128, "ergo.node.utxo.storingUtxoSnapshots": 2 } },
+    { "name": "B", "mining": false, "knownPeers": ["A"],
+      "conf": { "ergo.chain.makeSnapshotEvery": 128, "ergo.node.utxo.storingUtxoSnapshots": 2 } },
+    { "name": "C", "mining": false, "knownPeers": ["A", "B"], "defer": true,
+      "conf": { "ergo.chain.makeSnapshotEvery": 128, "ergo.node.utxo.utxoBootstrap": true, "ergo.node.utxo.p2pUtxoSnapshots": 2 } }
+  ],
+  "links": [ { "a": "A", "b": "B", "delay_ms": 0 }, { "a": "C", "b": "A", "delay_ms": 0 }, { "a": "C", "b": "B", "delay_ms": 0 } ]
+}

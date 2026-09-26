@@ -1,0 +1,115 @@
+{
+  "verdict_schema_version": 1,
+  "scenario": "sibling-fork",
+  "tier": "public",
+  "verdict": "AGAINST",
+  "precedence": [
+    "DEGENERATE",
+    "AGAINST",
+    "NULL",
+    "SUPPORTS"
+  ],
+  "same_jar": true,
+  "provenance": {
+    "scenario_script_sha256": "881431a140f820d52bca94e41808b12e3965725c984c59091c3391d7ad86be00",
+    "precheck_sha256": null,
+    "env": {
+      "D_AC": 500,
+      "P": "4s",
+      "P_C": "5s",
+      "W": 150
+    },
+    "runner_rev": "unknown"
+  },
+  "precheck": null,
+  "n_manifest": 1,
+  "n_min": 1,
+  "n_run": 1,
+  "n_overridden": false,
+  "min_valid_runs": 1,
+  "sequential": null,
+  "expect": {
+    "base": {
+      "count": {
+        "key": "E_total",
+        "op": ">",
+        "value": 0
+      },
+      "cmp": ">=",
+      "k": 1
+    },
+    "candidate": {
+      "all": {
+        "key": "D_total",
+        "op": "==",
+        "value": 0
+      }
+    }
+  },
+  "jars": {
+    "base": {
+      "jar_sha256": "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323",
+      "expected_app_version": "6.0.6"
+    },
+    "candidate": {
+      "jar_sha256": "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323",
+      "expected_app_version": "6.0.6"
+    }
+  },
+  "per_role": {
+    "base": {
+      "valid": 1,
+      "void": 0,
+      "inconclusive": 0,
+      "pass": true
+    },
+    "candidate": {
+      "valid": 1,
+      "void": 0,
+      "inconclusive": 0,
+      "pass": false
+    }
+  },
+  "runs": [
+    {
+      "role": "base",
+      "index": 1,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "D_total": 195,
+        "E_total": 2,
+        "agreement": true,
+        "max_height": 45,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 1,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "D_total": 436,
+        "E_total": 5,
+        "agreement": true,
+        "max_height": 45,
+        "unresponsive_after": 0
+      }
+    }
+  ]
+}

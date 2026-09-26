@@ -1,0 +1,10 @@
+scenario interop (public)   verdict: SUPPORTS   [the base showed the effect and the candidate did not]   [A/A control: the same jar in both roles; not evidence about a change]
+n=1 (manifest 1)   min_valid_runs=1
+
+role       valid  void  inconcl  pass   expect
+base       1      0     0        true   {"all":{"key":"interop","op":"==","value":true}}
+candidate  1      0     0        true   {"all":{"key":"interop","op":"==","value":true}}
+
+run            class                            metrics
+base-1         VALID                            {"follow_ab":true,"follow_ba":true,"interop":true,"unresponsive_after":0}
+candidate-1    VALID                            {"follow_ab":true,"follow_ba":true,"interop":true,"unresponsive_after":0}

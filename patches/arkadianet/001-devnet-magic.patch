@@ -1,0 +1,157 @@
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 0f38ce4..5c4298f 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -44,7 +44,7 @@ section rejects typos:
+ 
+ | Key | Type | Default | Description |
+ |---|---|---|---|
+-| `network` | string | `"mainnet"` | Selects the chain spec. `"mainnet"` or `"testnet"`. The network must have an embedded genesis or the node fails fast. CLI: `--network`. |
++| `network` | string | `"mainnet"` | Selects the chain spec. `"mainnet"`, `"testnet"` or `"devnet"` (the private conformance chain of `scripts/devnet-mixed/`). The network must have an embedded genesis or the node fails fast. CLI: `--network`. |
+ | `data_dir` | string (path) | `"./ergo-data"` | Root directory for the state database, logs, wallet, and the default config-file location. CLI: `--data-dir`. |
+ 
+ ## `[node]`
+@@ -116,6 +116,7 @@ the fast clean-database boot path.
+ | `script_validation_checkpoint_height` | u32 | network default | Blocks at or below this height skip per-input ErgoScript evaluation (UTXO mutations and the per-block state-root check still run). `0` disables the checkpoint (full validation everywhere). Precedence: CLI `--checkpoint-height` > TOML > the network's embedded default. |
+ | `script_validation_checkpoint_block_id` | string (hex) | network default | The 32-byte block id pinned at the checkpoint height; asserted on apply, and a mismatch is a hard error. Must decode to exactly 32 bytes. If a height is set with no id and the network has no default, load fails. CLI: `--checkpoint-block-id`. |
+ | `checkpoint` | table `{ height, block_id }` | absent | **Header-level trust anchor** (Scala `ergo.node.checkpoint`, enforced in header validation by `HeadersProcessor.checkpointCondition`). The header at exactly `height` must have id `block_id`; a header at that height with any other id is rejected as invalid and the peer that sent it is penalised. Headers at every other height are unaffected — the anchor skips **no** validation. Absent by default, matching Scala's `checkpoint = null`; there is deliberately no network default, so an anchored node is always an operator decision. Distinct from `script_validation_checkpoint_*` above, which governs *skipping* ErgoScript evaluation during full-block validation. `height` must be >= 2 (genesis takes its own validation path and is never checked against the anchor) and `block_id` must decode to exactly 32 bytes (an optional `0x` prefix is allowed). Also gates Mode 2 snapshot installs — see [operating.md](operating.md). |
++| `devnet_magic` | array of 4 integers | `[7, 7, 7, 7]` | **Devnet only.** The P2P wire magic of the private chain, so several devnets can run side by side or one can join another private network's magic. Rejected for mainnet and testnet, whose magic is fixed. |
+ | `genesis_id` | string (hex) | network genesis id | The 32-byte genesis header id used for NiPoPoW R5 enforcement. An optional `0x` prefix is allowed; must decode to 32 bytes. The empty string `""` disables the check (development against synthetic chains only) — mainnet runs must leave this at the default. Combining `genesis_id = ""` with `nipopow_bootstrap = true` is rejected. |
+ 
+ ## `[api]`
+diff --git a/ergo-node/ergo-node.toml.example b/ergo-node/ergo-node.toml.example
+index 15ba4a4..992bb5f 100644
+--- a/ergo-node/ergo-node.toml.example
++++ b/ergo-node/ergo-node.toml.example
+@@ -95,6 +95,11 @@ download_window = 384
+ # cache_bytes = 1073741824
+ 
+ [chain]
++# Devnet only (`network = "devnet"`): replace the private chain's P2P wire
++# magic [7, 7, 7, 7] so several devnets can coexist or one can join another
++# private network. Rejected for mainnet and testnet.
++# devnet_magic = [7, 7, 7, 7]
++
+ # Mainnet default script-validation checkpoint is embedded. Set height = 0
+ # to fully validate scripts from genesis.
+ # script_validation_checkpoint_height = 1231454
+diff --git a/ergo-node/src/config/load.rs b/ergo-node/src/config/load.rs
+index 0414c42..0dfb24e 100644
+--- a/ergo-node/src/config/load.rs
++++ b/ergo-node/src/config/load.rs
+@@ -57,7 +57,19 @@ impl NodeConfig {
+                 );
+             }
+         }
+-        let chain_spec = Arc::new(ChainSpec::for_network(network));
++        let mut chain_spec = ChainSpec::for_network(network);
++        if let Some(magic) = toml_cfg.chain.devnet_magic {
++            if network != Network::Devnet {
++                return Err("[chain] devnet_magic requires devnet".into());
++            }
++            if magic == ergo_chain_spec::NetworkParams::MAINNET.magic
++                || magic == ergo_chain_spec::NetworkParams::TESTNET.magic
++            {
++                return Err("[chain] devnet_magic must not be a public network's magic".into());
++            }
++            chain_spec.network_params.magic = magic;
++        }
++        let chain_spec = Arc::new(chain_spec);
+         validate_supported(&chain_spec)?;
+ 
+         let data_dir = cli
+@@ -1158,6 +1170,66 @@ mod tests {
+         assert_eq!(config.chain_spec.difficulty.epoch_length, 33_554_432);
+         assert!(config.chain_spec.bootstrap.seed_peers.is_empty());
+     }
++    #[test]
++    fn devnet_magic_private_network_replaces_wire_magic() {
++        let file = tempfile::NamedTempFile::new().unwrap();
++        std::fs::write(file.path(), "network = \"devnet\"\n[peers]\nknown = [\"127.0.0.1:19530\"]\n[api]\ndisabled = true\n[chain]\ndevnet_magic = [102, 111, 114, 107]\n").unwrap();
++        let cli =
++            Cli::try_parse_from(["ergo-node", "--config", file.path().to_str().unwrap()]).unwrap();
++        assert_eq!(
++            NodeConfig::load(cli)
++                .unwrap()
++                .chain_spec
++                .network_params
++                .magic,
++            [102, 111, 114, 107]
++        );
++    }
++
++    #[test]
++    fn devnet_magic_absent_keeps_the_built_in_devnet_magic() {
++        let file = tempfile::NamedTempFile::new().unwrap();
++        std::fs::write(file.path(), "network = \"devnet\"\n[peers]\nknown = [\"127.0.0.1:19530\"]\n[api]\ndisabled = true\n").unwrap();
++        let cli =
++            Cli::try_parse_from(["ergo-node", "--config", file.path().to_str().unwrap()]).unwrap();
++        assert_eq!(
++            NodeConfig::load(cli)
++                .unwrap()
++                .chain_spec
++                .network_params
++                .magic,
++            [7, 7, 7, 7]
++        );
++    }
++
++    #[test]
++    fn devnet_magic_rejected_on_public_networks() {
++        for net in ["mainnet", "testnet"] {
++            let file = tempfile::NamedTempFile::new().unwrap();
++            std::fs::write(file.path(), format!("network = \"{net}\"\n[peers]\nknown = [\"127.0.0.1:19530\"]\n[api]\ndisabled = true\n[chain]\ndevnet_magic = [7, 7, 7, 7]\n")).unwrap();
++            let cli = Cli::try_parse_from(["ergo-node", "--config", file.path().to_str().unwrap()])
++                .unwrap();
++            let err = NodeConfig::load(cli).expect_err("public network must reject devnet_magic");
++            // the named rejection, not the unknown-key error a build without the key would raise
++            assert!(
++                err.to_string().contains("devnet_magic requires devnet"),
++                "{err}"
++            );
++        }
++    }
++
++    #[test]
++    fn devnet_magic_rejects_public_network_magics() {
++        for magic in ["[1, 0, 2, 4]", "[2, 3, 2, 3]"] {
++            let file = tempfile::NamedTempFile::new().unwrap();
++            std::fs::write(file.path(), format!("network = \"devnet\"\n[peers]\nknown = [\"127.0.0.1:19530\"]\n[api]\ndisabled = true\n[chain]\ndevnet_magic = {magic}\n")).unwrap();
++            let cli = Cli::try_parse_from(["ergo-node", "--config", file.path().to_str().unwrap()])
++                .unwrap();
++            let err = NodeConfig::load(cli).expect_err("a public network's magic must be rejected");
++            assert!(err.to_string().contains("public network"), "{err}");
++        }
++    }
++
+     #[test]
+     fn devnet_cost_cap_private_network_preserves_override() {
+         let file = tempfile::NamedTempFile::new().unwrap();
+diff --git a/ergo-node/src/config/toml_sections.rs b/ergo-node/src/config/toml_sections.rs
+index d984bc3..6269809 100644
+--- a/ergo-node/src/config/toml_sections.rs
++++ b/ergo-node/src/config/toml_sections.rs
+@@ -262,6 +262,10 @@ pub(super) struct TomlMempool {
+ pub(super) struct TomlChain {
+     /// Private devnet genesis cost cap; forbidden on public networks.
+     pub(super) devnet_max_block_cost: Option<u32>,
++    /// Private devnet wire magic (four bytes), replacing the built-in
++    /// `[7, 7, 7, 7]`, so several devnets can coexist or one can join
++    /// another private network's magic; forbidden on public networks.
++    pub(super) devnet_magic: Option<[u8; 4]>,
+     /// Override the network's default script-validation checkpoint
+     /// height. Use 0 to disable.
+     pub(super) script_validation_checkpoint_height: Option<u32>,
+diff --git a/scripts/devnet-mixed/README.md b/scripts/devnet-mixed/README.md
+index 3743653..cd3960d 100644
+--- a/scripts/devnet-mixed/README.md
++++ b/scripts/devnet-mixed/README.md
+@@ -41,7 +41,7 @@ ergo-core 6.0.5, sigma-state 6.0.6 and circe-parser 0.14.15.
+ 
+ | Setting | Shared value |
+ | --- | --- |
+-| P2P magic | `[7, 7, 7, 7]` |
++| P2P magic | `[7, 7, 7, 7]` (Rust: overridable with `[chain] devnet_magic`; `genesis.conf` `magicBytes` must match) |
+ | Address prefix | `16` |
+ | Genesis state root | `cb63aa99a3060f341781d8662b58bf18b9ad258db4fe88d09f8f71cb668cad4502` |
+ | Genesis boxes | `test-vectors/testnet/genesis_boxes.json` (three JVM boxes) |

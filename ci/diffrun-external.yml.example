@@ -1,0 +1,26 @@
+# diffrun-external.yml.example: the hosted workflow for a repository that does NOT vendor peeryard: two
+# checkouts, the node repository (the pull request under test) and peeryard at a pinned commit. Untested as a
+# whole; it is diffrun-hosted.yml.example with the checkout step doubled and every diffrun/ path prefixed.
+# Replace <peeryard-sha> with the commit you reviewed.
+name: peeryard (external checkout)
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref: { description: "release tag to build the base jar from", default: "v6.0.6", required: true }
+      candidate_ref: { description: "ref or PR head to build the candidate from", required: true }
+      scenarios: { description: "space-separated manifests under peeryard/diffrun/scenarios", default: "fork-convergence-smoke.json sibling-fork-smoke.json" }
+jobs:
+  diffrun:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: node, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: cafebedouin/peeryard, ref: <peeryard-sha>, path: peeryard }
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          bash peeryard/rig/preflight.sh 4
+      # from here on, the steps of diffrun-hosted.yml.example with `peeryard/diffrun/...` paths and
+      # DIFFRUN_ERGO_CLONE=$GITHUB_WORKSPACE/node for build.sh; fail the job when a scenario writes no verdict

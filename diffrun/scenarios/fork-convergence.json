@@ -1,0 +1,19 @@
+{
+  "name": "fork-convergence",
+  "description": "A follower on a lighter, static fork is connected to a peer holding a heavier fork: does it switch?",
+  "script": "fork-convergence.sh",
+  "tier": "public",
+  "env": { "PREFIX_MIN": 14, "LMIN": 17, "TMAX": 300, "DELTA": 8 },
+  "metrics": { "switched": "boolean", "s_switched": "boolean", "fork_height": "number", "margin": "number",
+               "warn_S": "number", "warn_L": "number", "unresponsive_after": "number" },
+  "n": 8,
+  "max_n": 12,
+  "stop_when": {
+    "base": { "count": { "key": "switched", "op": "==", "value": false }, "cmp": ">=", "k": 2 }
+  },
+  "timeout_seconds": 900,
+  "expect": {
+    "base":      { "count": { "key": "switched", "op": "==", "value": false }, "cmp": ">=", "k": 2 },
+    "candidate": { "all":   { "key": "switched", "op": "==", "value": true } }
+  }
+}

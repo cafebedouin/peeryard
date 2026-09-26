@@ -1,0 +1,39 @@
+# The no-node checks, on every push and pull request: seconds, no node, no JDK 8. The node runs are sweep.yml and aa.yml.
+# Hand-maintained (the development repository runs the same steps under its own checks workflow); keep the step list
+# equal to CONTRIBUTING.md's "Before a pull request".
+name: checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  no-node:
+    name: no-node tests, lint, leak check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -qq jq shellcheck
+      - name: shellcheck (scripts, then the sourced hooks)
+        run: |
+          shellcheck -x $(grep -rlE '^#!.*bash' --include='*.sh' --include='comment-lint' . | grep -v '^./.git/')
+          shellcheck -s bash -e SC2148,SC2154 rig/examples/*.sh diffrun/scenarios/precheck/lib.sh
+      - name: bash -n
+        run: for f in $(grep -rlE '^#!.*bash' . | grep -v '^./.git/'); do bash -n "$f"; done
+      - name: python tests (diagnose, features, sweep, logmap, aa_pool)
+        run: python3 -m unittest discover -s tests -p '*_test.py'
+      - name: leakcheck (no register files or ids travel with peeryard)
+        run: bash tests/leakcheck.sh
+      - name: lint
+        run: T=$(mktemp -d) bash tests/lint.sh
+      - name: precheck
+        run: T=$(mktemp -d) bash tests/precheck.sh
+      - name: sequential rule
+        run: T=$(mktemp -d) bash tests/sequential.sh
+      - name: tooling (check.sh, stack.sh, register.sh, provenance.sh, post.sh)
+        run: |
+          git config --global user.email ci@example.invalid
+          git config --global user.name ci
+          T=$(mktemp -d) bash tests/tooling.sh
+      - name: exported workflows in step with their source (no-op in a standalone clone)
+        run: bash ci/export-workflows.sh --check

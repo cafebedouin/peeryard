@@ -1,0 +1,452 @@
+diff --git a/ergo.toml.example b/ergo.toml.example
+index 95e7962..cbbaa53 100644
+--- a/ergo.toml.example
++++ b/ergo.toml.example
+@@ -25,6 +25,10 @@
+ # it your own `seed_peers`). Switching requires reconfiguring `seed_peers`
+ # below to peers on the same network.
+ network = "testnet"
++# Devnet only: override the wire magic (four bytes) so several private
++# networks can coexist, or to join another private network's magic.
++# Rejected for mainnet and testnet.
++# magic = [7, 7, 7, 7]
+ 
+ # ── Listeners ───────────────────────────────────────────────────────────
+ #
+diff --git a/facts/p2p-node.md b/facts/p2p-node.md
+index a06e832..46d06ab 100644
+--- a/facts/p2p-node.md
++++ b/facts/p2p-node.md
+@@ -4,7 +4,10 @@
+ 
+ ### `from_toml_str(toml: &str) -> Result<Config>`
+ 
+-`[proxy] network` is `mainnet`, `testnet` or `devnet`.
++`[proxy] network` is `mainnet`, `testnet` or `devnet`. `[proxy] magic` (optional, four bytes) replaces the
++wire magic and is accepted only when the network is `devnet`; a public network's magic is rejected as a value.
++`ProxyConfig::magic()` returns the magic in force, and it is what the handshake session feature, the peer
++check and the frame codec use.
+ 
+ Parse a `Config` from TOML **already in memory**.
+ 
+diff --git a/man/ergo-node-rust.conf.5.md b/man/ergo-node-rust.conf.5.md
+index c34e46f..0c4514e 100644
+--- a/man/ergo-node-rust.conf.5.md
++++ b/man/ergo-node-rust.conf.5.md
+@@ -74,6 +74,11 @@ applicable.
+     test chain (protocol v4 from genesis, difficulty 1, no public seeds;
+     give it your own **seed_peers**).
+ 
++**magic** = *[b0, b1, b2, b3]*
++:   Devnet only: replace the wire magic so several private networks can
++    coexist. Rejected for mainnet and testnet, and a public network's
++    magic is rejected as a value.
++
+ # [listen.ipv6] / [listen.ipv4]
+ 
+ At least one listener must be configured. IPv6 is preferred — Ergo
+diff --git a/p2p/src/config.rs b/p2p/src/config.rs
+index d1be576..1e7d360 100644
+--- a/p2p/src/config.rs
++++ b/p2p/src/config.rs
+@@ -123,6 +123,19 @@ impl Default for NetworkConfig {
+ #[derive(Debug, Deserialize)]
+ pub struct ProxyConfig {
+     pub network: Network,
++    /// Optional wire magic, accepted only for `network = "devnet"`: several
++    /// private test networks can then run side by side without sharing a
++    /// magic, and a devnet can be given the magic of another private
++    /// network it must join. Public networks always use their own magic.
++    #[serde(default)]
++    pub magic: Option<[u8; 4]>,
++}
++
++impl ProxyConfig {
++    /// The wire magic in force: the override when set, else the network's own.
++    pub fn magic(&self) -> [u8; 4] {
++        self.magic.unwrap_or_else(|| self.network.magic())
++    }
+ }
+ 
+ #[derive(Debug, Deserialize)]
+@@ -178,6 +191,14 @@ impl Config {
+         if config.outbound.seed_peers.is_empty() {
+             return Err("At least one seed peer must be configured".into());
+         }
++        if let Some(magic) = config.proxy.magic {
++            if config.proxy.network != Network::Devnet {
++                return Err("[proxy] magic can only be set for network = \"devnet\"".into());
++            }
++            if magic == Network::Mainnet.magic() || magic == Network::Testnet.magic() {
++                return Err("[proxy] magic must not be a public network's magic".into());
++            }
++        }
+ 
+         if config.outbound.min_peers > config.outbound.max_peers {
+             return Err("min_peers must be <= max_peers".into());
+@@ -393,3 +414,51 @@ discover_timeout_secs = 7
+         assert!(Config::from_toml_str("").is_err());
+     }
+ }
++
++#[cfg(test)]
++mod devnet_magic_tests {
++    use super::{Config, Network};
++
++    const BASE: &str = r#"
++[listen.ipv4]
++address = "127.0.0.1:9030"
++mode = "full"
++max_inbound = 4
++[outbound]
++min_peers = 1
++max_peers = 1
++seed_peers = ["127.0.0.1:9031"]
++[identity]
++agent_name = "a"
++peer_name = "p"
++protocol_version = "6.0.3"
++"#;
++
++    #[test]
++    fn magic_override_only_on_devnet() {
++        let dev = format!("[proxy]\nnetwork = \"devnet\"\nmagic = [102, 111, 114, 107]\n{BASE}");
++        let c = Config::from_toml_str(&dev).expect("devnet with magic parses");
++        assert_eq!(c.proxy.network, Network::Devnet);
++        assert_eq!(c.proxy.magic(), [102, 111, 114, 107]);
++
++        let plain = format!("[proxy]\nnetwork = \"devnet\"\n{BASE}");
++        let c = Config::from_toml_str(&plain).expect("devnet without magic parses");
++        assert_eq!(c.proxy.magic(), Network::Devnet.magic());
++
++        for public in ["[1, 0, 2, 4]", "[2, 3, 2, 3]"] {
++            let bad = format!("[proxy]\nnetwork = \"devnet\"\nmagic = {public}\n{BASE}");
++            let err = Config::from_toml_str(&bad)
++                .expect_err("a public network's magic is rejected on devnet");
++            assert!(err.to_string().contains("public network"), "{err}");
++        }
++        for net in ["mainnet", "testnet"] {
++            let bad = format!("[proxy]\nnetwork = \"{net}\"\nmagic = [7, 7, 7, 7]\n{BASE}");
++            let err =
++                Config::from_toml_str(&bad).expect_err("public network rejects a magic override");
++            assert!(err.to_string().contains("devnet"), "{err}");
++            let plain = format!("[proxy]\nnetwork = \"{net}\"\n{BASE}");
++            let c = Config::from_toml_str(&plain).expect("public network parses");
++            assert_eq!(c.proxy.magic(), c.proxy.network.magic());
++        }
++    }
++}
+diff --git a/p2p/src/node.rs b/p2p/src/node.rs
+index 1642bdb..af82f74 100644
+--- a/p2p/src/node.rs
++++ b/p2p/src/node.rs
+@@ -156,6 +156,7 @@ impl P2pNode {
+         let (ver_major, ver_minor, ver_patch) = config.version_bytes()?;
+         let version = Version::new(ver_major, ver_minor, ver_patch);
+         let network = config.proxy.network;
++        let magic = config.proxy.magic();
+         let network_settings = config.network_settings();
+         let max_peer_spec_objects = network_settings.max_peer_spec_objects as usize;
+ 
+@@ -243,6 +244,7 @@ impl P2pNode {
+                 &config.identity,
+                 version,
+                 network,
++                magic,
+                 listener_cfg.mode,
+                 mode_config,
+                 ipv6_declared,
+@@ -263,6 +265,7 @@ impl P2pNode {
+                 &config.identity,
+                 version,
+                 network,
++                magic,
+                 listener_cfg.mode,
+                 mode_config,
+                 ipv4_declared,
+@@ -283,6 +286,7 @@ impl P2pNode {
+                 &config.identity,
+                 version,
+                 network,
++                magic,
+                 ProxyMode::Full,
+                 mode_config,
+                 outbound_declared,
+@@ -767,6 +771,7 @@ fn make_handshake_config(
+     identity: &crate::config::IdentityConfig,
+     version: Version,
+     network: crate::types::Network,
++    magic: [u8; 4],
+     mode: ProxyMode,
+     mode_config: handshake::ModeConfig,
+     declared_address: Option<SocketAddr>,
+@@ -776,6 +781,7 @@ fn make_handshake_config(
+         peer_name: identity.peer_name.clone(),
+         version,
+         network,
++        magic,
+         mode,
+         declared_address,
+         mode_config,
+@@ -811,6 +817,7 @@ async fn accept_loop(
+                     peer_name: hs_config.peer_name.clone(),
+                     version: hs_config.version,
+                     network: hs_config.network,
++                    magic: hs_config.magic,
+                     mode: hs_config.mode,
+                     declared_address: hs_config.declared_address,
+                     mode_config: hs_config.mode_config,
+@@ -983,6 +990,7 @@ async fn spawn_outbound_connect(
+                 peer_name: hs_config.peer_name.clone(),
+                 version: hs_config.version,
+                 network: hs_config.network,
++                magic: hs_config.magic,
+                 mode: hs_config.mode,
+                 declared_address: hs_config.declared_address,
+                 mode_config: hs_config.mode_config,
+diff --git a/p2p/src/transport/connection.rs b/p2p/src/transport/connection.rs
+index 7281522..834a305 100644
+--- a/p2p/src/transport/connection.rs
++++ b/p2p/src/transport/connection.rs
+@@ -41,7 +41,7 @@ impl Connection {
+         config: &HandshakeConfig,
+         counters: &Arc<TrafficCounters>,
+     ) -> io::Result<Self> {
+-        let magic = config.network.magic();
++        let magic = config.magic;
+         let peer_addr = stream.peer_addr()?;
+         let (read_half, mut write_half) = stream.into_split();
+         let mut reader = BufReader::new(read_half);
+@@ -58,7 +58,7 @@ impl Connection {
+             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Handshake timeout"))??;
+         counters.record_handshake_in(bytes_read as u64);
+ 
+-        handshake::validate_peer(&peer_spec, &config.network)
++        handshake::validate_peer_magic(&peer_spec, config.magic)
+             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+ 
+         Ok(Self {
+@@ -76,7 +76,7 @@ impl Connection {
+         config: &HandshakeConfig,
+         counters: &Arc<TrafficCounters>,
+     ) -> io::Result<Self> {
+-        let magic = config.network.magic();
++        let magic = config.magic;
+         let peer_addr = stream.peer_addr()?;
+         let (read_half, mut write_half) = stream.into_split();
+         let mut reader = BufReader::new(read_half);
+@@ -87,7 +87,7 @@ impl Connection {
+             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Handshake timeout"))??;
+         counters.record_handshake_in(bytes_read as u64);
+ 
+-        handshake::validate_peer(&peer_spec, &config.network)
++        handshake::validate_peer_magic(&peer_spec, config.magic)
+             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+ 
+         // Send our handshake
+diff --git a/p2p/src/transport/handshake.rs b/p2p/src/transport/handshake.rs
+index 58dbfc8..cd5bb4d 100644
+--- a/p2p/src/transport/handshake.rs
++++ b/p2p/src/transport/handshake.rs
+@@ -51,6 +51,9 @@ pub struct HandshakeConfig {
+     pub peer_name: String,
+     pub version: Version,
+     pub network: Network,
++    /// Wire magic sent in the session feature and expected from peers
++    /// (`network.magic()` unless the config overrides it on devnet).
++    pub magic: [u8; 4],
+     pub mode: ProxyMode,
+     pub declared_address: Option<SocketAddr>,
+     /// Mode feature advertisement — what capabilities to claim in the handshake.
+@@ -133,7 +136,7 @@ fn write_peer_entry_from_config(config: &HandshakeConfig, buf: &mut Vec<u8>) {
+     buf.extend_from_slice(&mode_body);
+ 
+     buf.push(FEATURE_SESSION);
+-    let session_body = build_session_body(config.network);
++    let session_body = build_session_body(config.magic);
+     vlq::write_vlq(buf, session_body.len() as u64);
+     buf.extend_from_slice(&session_body);
+ }
+@@ -180,9 +183,9 @@ fn build_mode_body(config: &HandshakeConfig) -> Vec<u8> {
+     body
+ }
+ 
+-fn build_session_body(network: Network) -> Vec<u8> {
++fn build_session_body(magic: [u8; 4]) -> Vec<u8> {
+     let mut body = Vec::with_capacity(16);
+-    body.extend_from_slice(&network.magic());
++    body.extend_from_slice(&magic);
+     // Session ID is putLong = ZigZag encode then VLQ
+     let session_id = rand_u64() as i64;
+     let zigzag = vlq::zigzag_encode_i64(session_id);
+@@ -335,6 +338,12 @@ fn parse_features<R: Read>(reader: &mut R) -> io::Result<Vec<Feature>> {
+ /// - **Precondition**: `spec` was produced by `parse`.
+ /// - **Postcondition**: returns Ok(()) if version >= 4.0.100 and session magic matches, Err otherwise.
+ pub fn validate_peer(spec: &PeerSpec, network: &Network) -> Result<(), String> {
++    validate_peer_magic(spec, network.magic())
++}
++
++/// `validate_peer` against an explicit expected magic (the configured
++/// override on devnet, else the network's own).
++pub fn validate_peer_magic(spec: &PeerSpec, expected: [u8; 4]) -> Result<(), String> {
+     if spec.version < Version::EIP37_MIN {
+         return Err(format!(
+             "Peer version {} is below minimum {} (EIP-37)",
+@@ -346,7 +355,6 @@ pub fn validate_peer(spec: &PeerSpec, network: &Network) -> Result<(), String> {
+     if let Some(session) = spec.features.iter().find(|f| f.id == FEATURE_SESSION) {
+         if session.body.len() >= 4 {
+             let peer_magic = &session.body[0..4];
+-            let expected = network.magic();
+             if peer_magic != expected {
+                 return Err(format!(
+                     "Session magic mismatch: {:?} (expected {:?})",
+@@ -475,3 +483,33 @@ mod tests {
+         assert_eq!(spec.rest_api_url(), None);
+     }
+ }
++
++#[cfg(test)]
++mod devnet_magic_tests {
++    use super::*;
++
++    #[test]
++    fn session_feature_carries_the_configured_magic() {
++        let cfg = HandshakeConfig {
++            agent_name: "a".into(),
++            peer_name: "p".into(),
++            version: Version::new(6, 0, 3),
++            network: Network::Devnet,
++            magic: [102, 111, 114, 107],
++            mode: ProxyMode::Full,
++            declared_address: None,
++            mode_config: ModeConfig::default(),
++        };
++        let bytes = build(&cfg);
++        let spec = parse(&bytes).expect("own handshake parses");
++        let session = spec
++            .features
++            .iter()
++            .find(|f| f.id == FEATURE_SESSION)
++            .expect("session feature present");
++        assert_eq!(&session.body[0..4], &[102, 111, 114, 107]);
++        assert!(validate_peer_magic(&spec, [102, 111, 114, 107]).is_ok());
++        assert!(validate_peer_magic(&spec, Network::Devnet.magic()).is_err());
++        assert!(validate_peer(&spec, &Network::Devnet).is_err());
++    }
++}
+diff --git a/p2p/tests/pcap_verify_test.rs b/p2p/tests/pcap_verify_test.rs
+index 2ea54a9..aa4db3a 100644
+--- a/p2p/tests/pcap_verify_test.rs
++++ b/p2p/tests/pcap_verify_test.rs
+@@ -113,6 +113,7 @@ fn proxy_handshake_roundtrips() {
+         peer_name: "ergo-proxy-node".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -134,6 +135,7 @@ fn proxy_handshake_feature_body_lengths_are_u16_be() {
+         peer_name: "test".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -174,6 +176,7 @@ fn proxy_handshake_matches_jvm_structure() {
+         peer_name: "ergo-test-fresh".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+diff --git a/p2p/tests/transport_test.rs b/p2p/tests/transport_test.rs
+index 03802ad..29e5eed 100644
+--- a/p2p/tests/transport_test.rs
++++ b/p2p/tests/transport_test.rs
+@@ -185,6 +185,7 @@ fn handshake_build_parse_roundtrip() {
+         peer_name: "test-node".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -207,6 +208,7 @@ fn handshake_self_built_is_not_proxy() {
+         peer_name: "test-node".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -223,6 +225,7 @@ fn handshake_full_mode_feature() {
+         peer_name: "test".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -240,6 +243,7 @@ fn handshake_light_mode_feature() {
+         peer_name: "test".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Light,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -257,6 +261,7 @@ fn handshake_session_feature_has_correct_magic() {
+         peer_name: "test".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -276,6 +281,7 @@ fn handshake_version_validation() {
+         peer_name: "test".to_string(),
+         version: Version::new(3, 0, 0),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+@@ -292,6 +298,7 @@ fn handshake_valid_peer_accepted() {
+         peer_name: "test-node".to_string(),
+         version: Version::new(6, 0, 3),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Full,
+         declared_address: None,
+         mode_config: handshake::ModeConfig::default(),
+diff --git a/tests/nipopow_serve_integration.rs b/tests/nipopow_serve_integration.rs
+index 0fb995f..c1b9660 100644
+--- a/tests/nipopow_serve_integration.rs
++++ b/tests/nipopow_serve_integration.rs
+@@ -79,6 +79,7 @@ async fn nipopow_serve_round_trip_against_running_node() {
+         peer_name: "nipopow-test-client".into(),
+         version: Version::new(5, 0, 22),
+         network,
++        magic: network.magic(),
+         mode: ProxyMode::Light,
+         declared_address: None,
+         mode_config: ModeConfig::default(),
+@@ -213,6 +214,7 @@ async fn nipopow_serve_full_chain_round_trip() {
+         peer_name: "nipopow-perf-test-client".into(),
+         version: Version::new(5, 0, 22),
+         network,
++        magic: network.magic(),
+         mode: ProxyMode::Light,
+         declared_address: None,
+         mode_config: ModeConfig::default(),
+@@ -347,6 +349,7 @@ async fn nipopow_serve_no_anchor_repro() {
+         peer_name: "nipopow-no-anchor-client".into(),
+         version: Version::new(5, 0, 22),
+         network: Network::Testnet,
++        magic: Network::Testnet.magic(),
+         mode: ProxyMode::Light,
+         declared_address: None,
+         mode_config: ModeConfig::default(),

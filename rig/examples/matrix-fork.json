@@ -1,0 +1,12 @@
+{
+  "chain": { "preset": "matrix", "blockInterval": "20s" },
+  "nodes": [
+    { "name": "A", "mining": true, "jar": "${PEERYARD_MATRIX_JAR}", "knownPeers": [] },
+    { "name": "B", "mining": false, "jar": "${PEERYARD_MATRIX_JAR}", "knownPeers": ["A", "C"] },
+    { "name": "C", "mining": true, "jar": "${PEERYARD_MATRIX_JAR}", "knownPeers": ["B"], "defer": true }
+  ],
+  "links": [
+    { "a": "A", "b": "B", "delay_ms": 20 },
+    { "a": "B", "b": "C", "delay_ms": 20 }
+  ]
+}

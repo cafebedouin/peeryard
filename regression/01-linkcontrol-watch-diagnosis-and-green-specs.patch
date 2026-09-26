@@ -1,0 +1,901 @@
+diff --git a/src/it/scala/org/ergoplatform/it/DelayedMinersAgreeSpec.scala b/src/it/scala/org/ergoplatform/it/DelayedMinersAgreeSpec.scala
+new file mode 100644
+index 000000000..bfd770971
+--- /dev/null
++++ b/src/it/scala/org/ergoplatform/it/DelayedMinersAgreeSpec.scala
+@@ -0,0 +1,95 @@
++package org.ergoplatform.it
++
++import com.typesafe.config.Config
++import org.ergoplatform.it.container.Docker.ExtraConfig
++import org.ergoplatform.it.container.{IntegrationSuite, Node}
++import org.ergoplatform.it.util.ConvergenceWatch
++import org.scalatest.flatspec.AnyFlatSpec
++
++import scala.concurrent.duration._
++import scala.concurrent.{Await, Future}
++
++/**
++  * Two miners behind a delayed link, each with a close follower, must still agree: after a window of
++  * concurrent mining across a 500 ms/way cut, every node holds the same header a few blocks below the lowest
++  * full height. This is the property the released node satisfies today, so the spec is GREEN on v6.0.6 and
++  * fails only if consensus under delay regresses (nodes end on different chains, or a follower stops
++  * following). It complements [[BestChainConsistencyUnderDelaySpec]], which reproduces the open #525 defect
++  * under the same staging and is red until a fix lands.
++  *
++  * Delay is applied by the link sidecar ([[container.LinkControl]]); a host without netem CANCELS the test,
++  * or FAILS it under `CI` (env), as in the other specs, so a missing module cannot hide a regression.
++  */
++class DelayedMinersAgreeSpec extends AnyFlatSpec with IntegrationSuite {
++
++  protected def crossDelay: FiniteDuration = 500.millis
++  protected def minerAPolling: Int = 2000
++  protected def minerCPolling: Int = 2500
++  protected def window: FiniteDuration = 120.seconds
++  protected def agreeBelowLowest: Int = 5
++  protected def minBlocks: Int = 20
++  protected def startupTimeout: FiniteDuration = 3.minutes
++  protected def agreeTimeout: FiniteDuration = 2.minutes
++  /** Under CI a cancel is a fail: a green skip would hide the test. */
++  protected def strict: Boolean = sys.env.contains("CI")
++
++  private val meshConfig: ExtraConfig = (docker, _) => Some(knownPeersConfig(docker.nodes.map(_.nodeInfo)))
++  protected def minerAConfig: Config = internalMinerPollingIntervalConfig(minerAPolling).withFallback(nodeSeedConfigs.head)
++  protected def minerCConfig: Config = internalMinerPollingIntervalConfig(minerCPolling)
++    .withFallback(onlineGeneratingPeerConfig).withFallback(nodeSeedConfigs(1))
++  protected def followerConfigs: List[Config] = nodeSeedConfigs.slice(2, 4).map(nonGeneratingPeerConfig.withFallback)
++
++  private def giveUp(reason: String): Nothing =
++    if (strict) fail(s"$reason (CI: a cancel would hide the test)") else cancel(reason)
++
++  it should "keep four nodes on one chain while two miners race across a delayed link" in {
++    val nodes: List[Node] = (minerAConfig +: minerCConfig +: followerConfigs)
++      .map(_.withFallback(allowLocalConfig))
++      .map(cfg => docker.startDevNetNode(cfg, meshConfig).get)
++    val List(minerA, minerC, nearA, nearC) = nodes
++    val watch = new ConvergenceWatch(docker, nodes)
++    try {
++      Await.result(watch.until(startupTimeout.fromNow)(_.forall(_.answered))("Not every node's REST API came up"),
++        startupTimeout + 10.seconds)
++      val crossEdges = for (a <- Seq(minerA, nearA); c <- Seq(minerC, nearC); (from, to) <- Seq((a, c), (c, a))) yield (from, to)
++      crossEdges.foreach { case (from, to) =>
++        docker.setLinkDelay(from, to, crossDelay).left.foreach { error =>
++          giveUp(s"NETEM_UNAVAILABLE: no link delay ${from.nodeName} -> ${to.nodeName} " +
++            s"(host needs sch_netem, sch_prio, cls_u32: `sudo modprobe sch_netem sch_prio cls_u32`). tc said: $error")
++        }
++      }
++      val started = Await.result(
++        watch.until(startupTimeout.fromNow)(_.forall(n => n.fullHeight.exists(_ >= 2) && n.peers.exists(_ >= 1)))(
++          "Nodes did not all reach height 2 with a peer"), startupTimeout + 10.seconds)
++      val startHeight = started.flatMap(_.fullHeight).min
++
++      // the window: both miners produce across the delayed cut; nothing is asserted meanwhile
++      val windowEnd = window.fromNow
++      while (windowEnd.hasTimeLeft()) { Await.result(watch.sample(2.seconds, withContainerState = false), 10.seconds); Thread.sleep(1000) }
++      val last = Await.result(watch.sample(), 15.seconds)
++      val heights = last.flatMap(_.fullHeight)
++      if (heights.isEmpty) fail(watch.report("No node reported a height at the end of the window"))
++      val mined = heights.min - startHeight
++      if (mined < minBlocks) giveUp(s"RACE_NOT_EXERCISED: only $mined blocks in ${window.toSeconds} s (at least $minBlocks needed)")
++
++      // agreement a few blocks below the lowest full height, allowing a short catch-up for lagging followers
++      val h = heights.min - agreeBelowLowest
++      var ids: Seq[Option[String]] = Seq.empty
++      val agreed = Await.result(
++        watch.untilWith(agreeTimeout.fromNow, 2.seconds) { _ =>
++          Future.traverse(nodes)(_.headerIdsByHeight(h)).map { r => ids = r.map(_.headOption); ids }
++        }(r => r.forall(_.nonEmpty) && r.map(_.head).distinct.size == 1)(
++          s"Nodes do not agree on the header at height $h: " +
++            nodes.map(_.nodeName).zip(ids.map(_.map(_.take(8)).getOrElse("-"))).map { case (n, id) => s"$n=$id" }.mkString(", ")),
++        agreeTimeout + 10.seconds)
++      log.info(s"Agreement: $mined blocks in ${window.toSeconds} s across a ${crossDelay.toMillis} ms/way cut; all nodes hold ${agreed.head.head.take(8)} at height $h")
++    } catch {
++      case verdict: org.scalatest.exceptions.TestFailedException => throw verdict
++      case verdict: org.scalatest.exceptions.TestCanceledException => throw verdict
++      case diagnosed: java.util.concurrent.TimeoutException if diagnosed.getMessage.contains("CAUSE ") =>
++        fail(diagnosed.getMessage)
++      case scala.util.control.NonFatal(error) =>
++        fail(watch.report(s"HARNESS_ERROR: ${error.getClass.getName}: ${error.getMessage}"), error)
++    } finally watch.close()
++  }
++}
+diff --git a/src/it/scala/org/ergoplatform/it/PartitionHealSpec.scala b/src/it/scala/org/ergoplatform/it/PartitionHealSpec.scala
+new file mode 100644
+index 000000000..d43ee528e
+--- /dev/null
++++ b/src/it/scala/org/ergoplatform/it/PartitionHealSpec.scala
+@@ -0,0 +1,113 @@
++package org.ergoplatform.it
++
++import com.typesafe.config.Config
++import org.ergoplatform.it.container.Docker.ExtraConfig
++import org.ergoplatform.it.container.{IntegrationSuite, Node}
++import org.ergoplatform.it.util.ConvergenceWatch
++import org.scalatest.flatspec.AnyFlatSpec
++
++import scala.concurrent.duration._
++import scala.concurrent.{Await, Future}
++
++/**
++  * Partition and heal through the link sidecar ([[container.LinkControl]]): a follower whose only peer is a
++  * miner is cut off with 100% packet loss in both directions, must stop advancing while the miner keeps
++  * mining, and must catch up on the miner's chain once the link is restored.
++  *
++  * The cut is soft: both containers keep running and their TCP sockets stay, which is what a network fault
++  * looks like to the node (a stopped container or a docker-network disconnect closes the socket instead).
++  * That is the condition the existing suite cannot stage.
++  *
++  * The pass is reported only if the miner actually advanced during the cut (`minMinerGain`); otherwise the
++  * test is CANCELED as not exercised, or FAILS under `CI` (env), like [[BestChainConsistencyUnderDelaySpec]].
++  * A follower that advances behind a 100%-loss link fails as `PARTITION_LEAKED`: either the cut was not
++  * applied to every path, or the node found another way to the miner, and both are worth knowing.
++  */
++class PartitionHealSpec extends AnyFlatSpec with IntegrationSuite {
++
++  protected def minerPolling: Int = 2000
++  protected def syncTarget: Int = 3
++  protected def partitionWindow: FiniteDuration = 30.seconds
++  /** Time for the cut to take effect and in-flight blocks to land before the frozen baseline is sampled. */
++  protected def settle: FiniteDuration = 8.seconds
++  protected def minMinerGain: Int = 2
++  protected def healTimeout: FiniteDuration = 3.minutes
++  protected def startupTimeout: FiniteDuration = 3.minutes
++  /** Under CI a cancel is a fail: a green skip would hide the test. */
++  protected def strict: Boolean = sys.env.contains("CI")
++
++  private val meshConfig: ExtraConfig = (docker, _) => Some(knownPeersConfig(docker.nodes.map(_.nodeInfo)))
++
++  protected def minerConfig: Config = internalMinerPollingIntervalConfig(minerPolling).withFallback(nodeSeedConfigs.head)
++  protected def followerConfig: Config = nonGeneratingPeerConfig.withFallback(nodeSeedConfigs(1))
++
++  private def giveUp(reason: String): Nothing =
++    if (strict) fail(s"$reason (CI: a cancel would hide the test)") else cancel(reason)
++
++  it should "freeze a follower behind a 100%-loss link and let it catch up after heal" in {
++    val nodes: List[Node] = List(minerConfig, followerConfig)
++      .map(_.withFallback(allowLocalConfig))
++      .map(cfg => docker.startDevNetNode(cfg, meshConfig).get)
++    val List(miner, follower) = nodes
++    val watch = new ConvergenceWatch(docker, nodes)
++
++    def heightOf(round: Seq[org.ergoplatform.it.util.NodeSample], node: Node): Int =
++      round.find(_.name == node.nodeName).flatMap(_.fullHeight).getOrElse(-1)
++
++    try {
++      // floor: the follower syncs from its only peer
++      val synced = Await.result(
++        watch.until(startupTimeout.fromNow)(r => r.forall(_.answered) && heightOf(r, follower) >= syncTarget)(
++          s"Follower did not reach height $syncTarget from the miner"), startupTimeout + 10.seconds)
++      log.info(s"Synced: follower ${heightOf(synced, follower)}, miner ${heightOf(synced, miner)}")
++
++      // cut: 100% loss both ways, applied from a helper container in each node's namespace. Applying it takes a
++      // few seconds (two helper containers), and blocks already in flight land after it; so the frozen baseline
++      // is sampled AFTER the cut has settled, not before it.
++      docker.partition(miner, follower).left.foreach { error =>
++        giveUp(s"NETEM_UNAVAILABLE: cannot cut the link ${miner.nodeName} <-> ${follower.nodeName} " +
++          s"(host needs sch_netem, sch_prio, cls_u32: `sudo modprobe sch_netem sch_prio cls_u32`). tc said: $error")
++      }
++      Thread.sleep(settle.toMillis)
++      val baseline = Await.result(watch.sample(), 15.seconds)
++      val frozenAt = heightOf(baseline, follower)
++      val minerAt = heightOf(baseline, miner)
++      log.info(s"Cut applied and settled ${settle.toSeconds} s: follower $frozenAt, miner $minerAt; window ${partitionWindow.toSeconds} s")
++      Thread.sleep(partitionWindow.toMillis)
++      val after = Await.result(watch.sample(), 15.seconds)
++      val followerAfter = heightOf(after, follower)
++      val minerAfter = heightOf(after, miner)
++      log.info(s"Partition ${partitionWindow.toSeconds} s: follower $frozenAt -> $followerAfter, miner $minerAt -> $minerAfter")
++
++      if (minerAfter - minerAt < minMinerGain) {
++        giveUp(s"RACE_NOT_EXERCISED: the miner gained only ${minerAfter - minerAt} blocks in ${partitionWindow.toSeconds} s, " +
++          s"so a frozen follower proves nothing")
++      }
++      if (followerAfter != frozenAt) {
++        fail(watch.report(s"PARTITION_LEAKED: the follower advanced $frozenAt -> $followerAfter behind a 100%-loss link " +
++          s"while the miner went $minerAt -> $minerAfter"))
++      }
++
++      // heal: the follower must reach the miner's height and be on the miner's chain at a height mined during the cut
++      docker.heal(miner, follower).left.foreach(error => fail(s"heal ${miner.nodeName} <-> ${follower.nodeName} failed: $error"))
++      val target = minerAfter
++      Await.result(
++        watch.until(healTimeout.fromNow)(r => heightOf(r, follower) >= target)(
++          s"After heal the follower did not reach the miner's height $target"), healTimeout + 10.seconds)
++      val h = frozenAt + 1
++      val ids = Await.result(Future.traverse(nodes)(_.headerIdsByHeight(h)), 30.seconds).map(_.headOption)
++      if (ids.exists(_.isEmpty) || ids.distinct.size != 1) {
++        fail(watch.report(s"After heal the nodes disagree at height $h (mined during the cut): " +
++          nodes.map(_.nodeName).zip(ids.map(_.map(_.take(8)).getOrElse("-"))).map { case (n, id) => s"$n=$id" }.mkString(", ")))
++      }
++      log.info(s"Heal: follower caught up to $target and agrees with the miner at height $h")
++    } catch {
++      case verdict: org.scalatest.exceptions.TestFailedException => throw verdict
++      case verdict: org.scalatest.exceptions.TestCanceledException => throw verdict
++      case diagnosed: java.util.concurrent.TimeoutException if diagnosed.getMessage.contains("CAUSE ") =>
++        fail(diagnosed.getMessage)
++      case scala.util.control.NonFatal(error) =>
++        fail(watch.report(s"HARNESS_ERROR: ${error.getClass.getName}: ${error.getMessage}"), error)
++    } finally watch.close()
++  }
++}
+diff --git a/src/it/scala/org/ergoplatform/it/container/Docker.scala b/src/it/scala/org/ergoplatform/it/container/Docker.scala
+index 4c9e5f0d2..6188bb05c 100644
+--- a/src/it/scala/org/ergoplatform/it/container/Docker.scala
++++ b/src/it/scala/org/ergoplatform/it/container/Docker.scala
+@@ -40,6 +40,7 @@ class Docker(
+   localDataVolumeOpt: Option[String] = None
+ )(implicit ec: ExecutionContext)
+   extends AutoCloseable
++  with LinkControl
+   with ScorexLogging {
+ 
+   import Docker._
+@@ -64,7 +65,7 @@ class Docker(
+     .responseTimeout(java.time.Duration.ofSeconds(45))
+     .build()
+ 
+-  private val client: DockerClient =
++  protected val client: DockerClient =
+     DockerClientImpl.getInstance(configStandart, httpDockerClient)
+   private var nodeRepository                    = Seq.empty[Node]
+   private val isStopped                         = new AtomicBoolean(false)
+@@ -75,6 +76,7 @@ class Docker(
+ 
+   private def uuidShort: String = UUID.randomUUID().hashCode().toHexString
+   private val networkName       = Docker.networkNamePrefix + uuidShort
++  protected def networkNamePrefix: String = Docker.networkNamePrefix
+   private val networkSeed       = Random.nextInt(0x100000) << 4 | 0x0A000000
+ 
+   private val networkPrefix =
+@@ -469,6 +471,27 @@ class Docker(
+     }
+   }
+ 
++  /** The last `lines` lines a container wrote; CI keeps no node log files, so failures quote this. */
++  def logTail(containerId: String, lines: Int = 15): String = {
++    val output = new StringBuffer
++    Try {
++      client.logContainerCmd(containerId).withStdOut(true).withStdErr(true).withTail(lines)
++        .exec(new ResultCallback.Adapter[Frame] {
++          override def onNext(frame: Frame): Unit = output.append(new String(frame.getPayload))
++        }).awaitCompletion(10, TimeUnit.SECONDS)
++    }
++    output.toString.trim
++  }
++
++  /** "running", "paused", "oom-killed" or "<status>(<exit code>)"; "unknown" if docker does not answer. */
++  def containerState(containerId: String): String =
++    Try(client.inspectContainerCmd(containerId).exec().getState).map { state =>
++      if (Option(state.getOOMKilled).exists(_.booleanValue)) "oom-killed"
++      else if (Option(state.getPaused).exists(_.booleanValue)) "paused"
++      else if (Option(state.getRunning).exists(_.booleanValue)) "running"
++      else s"${state.getStatus}(${state.getExitCodeLong})"
++    }.getOrElse("unknown")
++
+   def disconnectFromNetwork(containerId: String): Unit =
+     client
+       .disconnectFromNetworkCmd()
+diff --git a/src/it/scala/org/ergoplatform/it/container/LinkControl.scala b/src/it/scala/org/ergoplatform/it/container/LinkControl.scala
+new file mode 100644
+index 000000000..9755092f1
+--- /dev/null
++++ b/src/it/scala/org/ergoplatform/it/container/LinkControl.scala
+@@ -0,0 +1,165 @@
++package org.ergoplatform.it.container
++
++import java.io.File
++import java.nio.charset.StandardCharsets
++import java.nio.file.Files
++import java.util.concurrent.TimeUnit
++
++import com.github.dockerjava.api.DockerClient
++import com.github.dockerjava.api.async.ResultCallback
++import com.github.dockerjava.api.command.BuildImageResultCallback
++import com.github.dockerjava.api.model.{Capability, Frame, HostConfig}
++import scorex.util.ScorexLogging
++
++import scala.collection.JavaConverters._
++import scala.concurrent.duration._
++import scala.util.{Failure, Success, Try}
++
++/**
++  * Link shaping for integration tests: one-way delay and/or packet loss between two node containers, applied
++  * with `tc netem` from a helper container that shares the node's network namespace (`--network container:<id>`).
++  *
++  * The node image and the node containers are untouched: no `tc` in the image, no `NET_ADMIN` on a node.
++  * The helper image (`alpine` + `iproute2`) is built once, lazily, by the first suite that shapes a link, so
++  * suites that do not shape links pay nothing. Shaping is per destination: a `prio` qdisc on the node's
++  * interface with one `netem` band per target address, selected by a `u32` filter on the destination, so
++  * traffic to any other address (the test harness's REST polling included) is not touched.
++  *
++  * `setLink` and its wrappers return `Left` with tc's own words when shaping is impossible: the host kernel
++  * lacks `sch_netem`, `sch_prio` or `cls_u32` (`sudo modprobe sch_netem sch_prio cls_u32`), or the helper image
++  * cannot be built. Callers decide whether that cancels or fails the test.
++  *
++  * `partition` cuts a link with 100% loss in both directions and `heal` restores it. Unlike stopping a
++  * container or disconnecting it from the docker network, this is a soft cut: the nodes keep running and their
++  * TCP sockets stay, which is what a real network fault looks like to the node.
++  *
++  * Qdiscs live in the node's network namespace and vanish with the container; no teardown is needed.
++  */
++trait LinkControl { self: ScorexLogging =>
++
++  protected def client: DockerClient
++  protected def networkNamePrefix: String
++
++  import LinkControl._
++
++  private var helperImageId: Option[Either[String, String]] = None
++  // one band per destination address, per node interface; tc reads class ids as hex
++  private var bands: Map[(String, String), Int] = Map.empty
++
++  /**
++    * Shapes packets from `from` to `to`, one direction, replacing whatever the band held before: an optional
++    * delay and an optional loss percentage (0-100). Both `None` restores an unshaped band.
++    */
++  def setLink(from: Node, to: Node, delay: Option[FiniteDuration], lossPercent: Option[Int]): Either[String, Unit] = {
++    lossPercent.foreach(p => require(p >= 0 && p <= 100, s"lossPercent must be 0..100, got $p"))
++    val ip = to.nodeInfo.networkIpAddress
++    val band = synchronized {
++      val key = (from.nodeInfo.containerId, ip)
++      bands.getOrElse(key, { val b = 4 + bands.count(_._1._1 == key._1); bands += key -> b; b })
++    }
++    val hex = band.toHexString
++    val netem = "netem" + delay.map(d => s" delay ${d.toMillis}ms").getOrElse("") + lossPercent.map(p => s" loss $p%").getOrElse("")
++    // no backslashes: the s-interpolator reads them as escapes even in a triple-quoted string
++    val script =
++      s"""set -e
++         |dev=$$(ip -o route get $ip | awk '{ for (i = 1; i < NF; i++) if ($$i == "dev") print $$(i + 1) }')
++         |if ! tc qdisc show dev $$dev | grep -q 'qdisc prio 1:'; then
++         |  tc qdisc add dev $$dev root handle 1: prio bands 16 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1
++         |fi
++         |tc qdisc replace dev $$dev parent 1:$hex handle ${hex}0: $netem
++         |tc filter del dev $$dev parent 1:0 prio $band 2>/dev/null || true
++         |tc filter add dev $$dev parent 1:0 prio $band protocol ip u32 match ip dst $ip/32 flowid 1:$hex
++         |""".stripMargin
++    inNamespaceOf(from, script).map { _ =>
++      val what = if (delay.isEmpty && lossPercent.isEmpty) "cleared" else netem.stripPrefix("netem ")
++      log.info(s"Link ${from.nodeName} -> ${to.nodeName} ($ip): $what, band $band")
++    }
++  }
++
++  /** Delays packets from `from` to `to` by `delay`, one direction; call twice for both. */
++  def setLinkDelay(from: Node, to: Node, delay: FiniteDuration): Either[String, Unit] =
++    setLink(from, to, Some(delay), None)
++
++  /** Drops `percent` of the packets from `from` to `to`, one direction. */
++  def setLinkLoss(from: Node, to: Node, percent: Int): Either[String, Unit] =
++    setLink(from, to, None, Some(percent))
++
++  /** Cuts the link between two nodes: 100% loss in both directions. The containers and their sockets stay. */
++  def partition(a: Node, b: Node): Either[String, Unit] =
++    for { _ <- setLink(a, b, None, Some(100)); _ <- setLink(b, a, None, Some(100)) } yield ()
++
++  /** Restores an unshaped link between two nodes, both directions (any delay set before is cleared too). */
++  def heal(a: Node, b: Node): Either[String, Unit] =
++    for { _ <- setLink(a, b, None, None); _ <- setLink(b, a, None, None) } yield ()
++
++  /** Milliseconds for a TCP connect from `from` to `to`'s REST port: one round trip over the shaped path. */
++  def connectMillis(from: Node, to: Node): Either[String, Long] = {
++    val target = s"${to.nodeInfo.networkIpAddress}/${to.nodeInfo.containerApiPort}"
++    val script =
++      s"s=$$(date +%s%N); timeout 10 sh -c 'exec 3<>/dev/tcp/$target' 2>/dev/null || " +
++        s"timeout 10 bash -c 'exec 3<>/dev/tcp/$target'; rc=$$?; e=$$(date +%s%N); " +
++        s"[ $$rc -eq 0 ] && echo $$(( (e - s) / 1000000 )) || { echo connect failed rc=$$rc; exit 1; }"
++    inNamespaceOf(from, script).flatMap(out => Try(out.trim.toLong).toEither.left.map(_ => s"unreadable timing: $out"))
++  }
++
++  /** Runs `script` (bash) in a throwaway helper container inside `node`'s network namespace. */
++  private def inNamespaceOf(node: Node, script: String): Either[String, String] =
++    helperImage.flatMap { image =>
++      Try {
++        val id = client.createContainerCmd(image)
++          .withName(s"$networkNamePrefix-netem-${node.nodeName}-${System.nanoTime().toHexString}")
++          .withHostConfig(new HostConfig()
++            .withNetworkMode(s"container:${node.nodeInfo.containerId}")
++            .withCapAdd(Capability.NET_ADMIN)
++            .withAutoRemove(false))
++          .withCmd("bash", "-c", script)
++          .exec().getId
++        try {
++          client.startContainerCmd(id).exec()
++          val exit = client.waitContainerCmd(id).start().awaitStatusCode(60, TimeUnit.SECONDS)
++          val output = new StringBuffer
++          client.logContainerCmd(id).withStdOut(true).withStdErr(true)
++            .exec(new ResultCallback.Adapter[Frame] {
++              override def onNext(frame: Frame): Unit = output.append(new String(frame.getPayload, StandardCharsets.UTF_8))
++            }).awaitCompletion(10, TimeUnit.SECONDS)
++          if (exit == 0) Right(output.toString.trim) else Left(s"helper exited with $exit: ${output.toString.trim}")
++        } finally Try(client.removeContainerCmd(id).withForce(true).exec())
++      } match {
++        case Success(result) => result
++        case Failure(e) => Left(s"${e.getClass.getSimpleName}: ${e.getMessage}")
++      }
++    }
++
++  /** The helper image, built on first use from the Dockerfile below. */
++  private def helperImage: Either[String, String] = synchronized {
++    helperImageId.getOrElse {
++      val built = Try {
++        // the name filter matches loosely (it returned the node image); require the exact tag
++        val existing = client.listImagesCmd().withImageNameFilter(HelperImage).exec().asScala
++          .find(img => Option(img.getRepoTags).exists(_.contains(s"$HelperImage:latest")))
++        existing.map(_.getId).getOrElse {
++          log.info(s"Building $HelperImage (alpine + iproute2) for link shaping")
++          val dir = Files.createTempDirectory("ergo-it-netem").toFile
++          Files.write(new File(dir, "Dockerfile").toPath, HelperDockerfile.getBytes(StandardCharsets.UTF_8))
++          client.buildImageCmd(dir).withTags(Set(HelperImage).asJava)
++            .exec(new BuildImageResultCallback()).awaitImageId(5, TimeUnit.MINUTES)
++        }
++      } match {
++        case Success(id) => Right(id)
++        case Failure(e) => Left(s"cannot build $HelperImage: ${e.getClass.getSimpleName}: ${e.getMessage}")
++      }
++      helperImageId = Some(built)
++      built
++    }
++  }
++}
++
++object LinkControl {
++  val HelperImage = "org.ergoplatform/ergo-it-netem"
++
++  /** Built in-repo; not a third-party image. `bash` for `/dev/tcp`; Alpine ships `ip` and `tc` as separate packages. */
++  val HelperDockerfile: String =
++    """FROM alpine:3.21.3
++      |RUN apk add --no-cache iproute2-minimal iproute2-tc bash coreutils
++      |""".stripMargin
++}
+diff --git a/src/it/scala/org/ergoplatform/it/util/ConvergenceWatch.scala b/src/it/scala/org/ergoplatform/it/util/ConvergenceWatch.scala
+new file mode 100644
+index 000000000..776503c41
+--- /dev/null
++++ b/src/it/scala/org/ergoplatform/it/util/ConvergenceWatch.scala
+@@ -0,0 +1,81 @@
++package org.ergoplatform.it.util
++
++import io.circe.Json
++import org.ergoplatform.it.api.NodeApi.NodeInfo
++import org.ergoplatform.it.container.{Docker, Node}
++
++import scala.concurrent.duration._
++import scala.concurrent.{ExecutionContext, Future}
++
++/**
++  * Samples a group of nodes (REST state, peer count, container state), keeps the last rounds, and turns a
++  * timeout into a named cause (see [[ConvergenceDiagnosis]]). A node that does not answer within the
++  * budget yields an empty sample instead of failing the round.
++  */
++final class ConvergenceWatch(docker: Docker, nodes: Seq[Node], keep: FiniteDuration = 90.seconds,
++                             expectPeers: Boolean = true)
++                            (implicit ec: ExecutionContext) extends AutoCloseable {
++
++  private val observations = new ConvergenceObservations
++  private var rounds = Vector.empty[Seq[NodeSample]]
++
++  private val probes = nodes.map { node =>
++    val info = observations.probe(node.singleGet("/info", _.setRequestTimeout(5000)).map { r =>
++      require(r.getStatusCode == 200, s"/info answered ${r.getStatusCode}")
++      node.ergoJsonAnswerAs[NodeInfo](r.getResponseBody)
++    })
++    val peers = observations.probe(node.singleGet("/peers/connected", _.setRequestTimeout(5000)).map { r =>
++      require(r.getStatusCode == 200, s"/peers/connected answered ${r.getStatusCode}")
++      node.ergoJsonAnswerAs[Json](r.getResponseBody).asArray.map(_.size).getOrElse(0)
++    })
++    (node, info, peers)
++  }
++
++  def history: Seq[Seq[NodeSample]] = synchronized(rounds)
++
++  /** One round. With `withContainerState = false` the docker daemon is not asked (for fast polling). */
++  def sample(budget: FiniteDuration = 3.seconds, withContainerState: Boolean = true): Future[Seq[NodeSample]] =
++    Future.traverse(probes) { case (node, infoProbe, peersProbe) =>
++      infoProbe.sample(budget).zip(peersProbe.sample(budget)).map { case (info, peers) =>
++        val state =
++          if (withContainerState || info.isLeft) docker.containerState(node.nodeInfo.containerId)
++          else NodeSample.Running
++        val i = info.toOption
++        NodeSample(node.nodeName, System.currentTimeMillis(), state, info.isRight,
++          i.flatMap(_.bestHeaderHeightOpt), i.flatMap(_.bestBlockHeightOpt),
++          i.flatMap(_.bestHeaderIdOpt), i.flatMap(_.bestBlockIdOpt),
++          peers.toOption, i.flatMap(_.isMining))
++      }
++    }.map { round =>
++      synchronized {
++        // kept by time, so the lag and progress spans (30 s) are always covered whatever the sampling rate
++        val cutoff = System.currentTimeMillis() - keep.toMillis
++        rounds = (rounds :+ round).dropWhile(_.forall(_.atMillis < cutoff))
++      }
++      round
++    }
++
++  /** The named cause and last rounds; for nodes that are down or silent, also the end of their own log. */
++  def report(goal: String): String = {
++    val troubled = history.lastOption.toSeq.flatten.filter(n => !n.answered || n.containerState != NodeSample.Running)
++    val tails = troubled.flatMap { sample =>
++      nodes.find(_.nodeName == sample.name).map { node =>
++        s"  last log lines of ${sample.name}:\n" +
++          docker.logTail(node.nodeInfo.containerId).linesIterator.map("    " + _).mkString("\n")
++      }
++    }
++    (ConvergenceDiagnosis.report(history, goal, expectPeers) +: tails).mkString("\n")
++  }
++
++  /** Samples until `accept` holds; at the deadline fails with the named cause and the last rounds. */
++  def until(deadline: Deadline, interval: FiniteDuration = 1.second)
++           (accept: Seq[NodeSample] => Boolean)(goal: String): Future[Seq[NodeSample]] =
++    observations.until(deadline, interval, 5.seconds)(budget => sample(budget))(accept)(report(goal))
++
++  /** Like `until`, but the observation is `observe` (run after each sample), so the goal can be anything. */
++  def untilWith[A](deadline: Deadline, interval: FiniteDuration)
++                  (observe: FiniteDuration => Future[A])(accept: A => Boolean)(goal: => String): Future[A] =
++    observations.until(deadline, interval, 5.seconds)(budget => sample(budget).flatMap(_ => observe(budget)))(accept)(report(goal))
++
++  override def close(): Unit = observations.close()
++}
+diff --git a/src/test/scala/org/ergoplatform/it/util/ConvergenceDiagnosis.scala b/src/test/scala/org/ergoplatform/it/util/ConvergenceDiagnosis.scala
+new file mode 100644
+index 000000000..4e48fc255
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/it/util/ConvergenceDiagnosis.scala
+@@ -0,0 +1,207 @@
++package org.ergoplatform.it.util
++
++import scala.concurrent.duration._
++
++/**
++  * One node's state at one sampling instant. `answered` says whether REST answered at all: a node at
++  * height 0 answers with empty heights, which is not the same as silence.
++  */
++final case class NodeSample(name: String,
++                            atMillis: Long,
++                            containerState: String,
++                            answered: Boolean,
++                            headersHeight: Option[Int],
++                            fullHeight: Option[Int],
++                            bestHeaderId: Option[String],
++                            bestFullId: Option[String],
++                            peers: Option[Int],
++                            mining: Option[Boolean]) {
++
++  /** A paused container still exists (silence, not death); an unanswered `inspect` proves nothing. */
++  def running: Boolean =
++    containerState == NodeSample.Running || containerState == NodeSample.Paused || containerState == NodeSample.Unknown
++
++  /** Full block and header at the same height but on different forks (issue #525). */
++  def bestChainInconsistent: Boolean =
++    fullHeight.nonEmpty && fullHeight == headersHeight &&
++      bestFullId.nonEmpty && bestHeaderId.nonEmpty && bestFullId != bestHeaderId
++
++  def render: String = {
++    def short(id: Option[String]): String = id.map(_.take(8)).getOrElse("-")
++    def num(v: Option[Int]): String = v.map(_.toString).getOrElse("-")
++    s"$name[$containerState] headers=${num(headersHeight)}:${short(bestHeaderId)} " +
++      s"full=${num(fullHeight)}:${short(bestFullId)} peers=${num(peers)} " +
++      s"mining=${mining.map(_.toString).getOrElse("-")}"
++  }
++}
++
++object NodeSample {
++  val Running = "running"
++  val Paused = "paused"
++  val Unknown = "unknown"
++}
++
++/** A named reason for a multi-node test not reaching its goal, with the evidence for it. */
++final case class Diagnosis(cause: String, evidence: String) {
++  override def toString: String = s"$cause: $evidence"
++}
++
++/**
++  * Names why a group of nodes did not converge, from a short history of their sampled state.
++  *
++  * A round is one sample of every node; `history` is oldest first. The rules are ordered: infrastructure
++  * first (a node that is down explains everything after it), then the defect that needs no history
++  * (#525), then the ways a chain can stop moving, then "it was still moving".
++  */
++object ConvergenceDiagnosis {
++
++  val NodeDown = "NODE_DOWN"
++  val NodeUnresponsive = "NODE_UNRESPONSIVE"
++  val NoPeers = "NO_PEERS"
++  val NodeLagging = "NODE_LAGGING"
++  val BestChainInconsistent = "BEST_CHAIN_INCONSISTENT"
++  val EqualHeightTie = "EQUAL_HEIGHT_TIE"
++  val HeadersAheadFullStuck = "HEADERS_AHEAD_FULL_STUCK"
++  val LighterForkNotSwitching = "LIGHTER_FORK_NOT_SWITCHING"
++  val ChainStalled = "CHAIN_STALLED"
++  val StillProgressing = "STILL_PROGRESSING"
++  val Unknown = "UNKNOWN"
++
++  /** Rounds a condition must hold for before it is named (one slow answer is not a cause). */
++  val PersistRounds = 3
++
++  /** Progress is judged over this span, so early progress cannot mask a later stall. */
++  val ProgressSpan: FiniteDuration = 30.seconds
++
++  /** A node whose heights did not move over this span while another node gained `LagBlocks` is lagging. */
++  val LagSpan: FiniteDuration = 30.seconds
++  val LagBlocks = 3
++
++  /** Nodes frozen over the last `LagSpan` while the group moved: out of the network, or wedged, either way not converging. */
++  def lagging(history: Seq[Seq[NodeSample]]): Seq[(NodeSample, Int)] = history.lastOption.toSeq.flatMap { last =>
++    val cutoff = last.map(_.atMillis).max - LagSpan.toMillis
++    val window = history.filter(_.exists(_.atMillis >= cutoff))
++    if (window.size < 2) Seq.empty
++    else {
++      def gain(name: String): Option[Int] = for {
++        first <- window.head.find(_.name == name).flatMap(_.fullHeight)
++        end <- last.find(_.name == name).flatMap(_.fullHeight)
++      } yield end - first
++      val best = last.flatMap(n => gain(n.name)).reduceOption(_ max _).getOrElse(0)
++      if (best < LagBlocks) Seq.empty
++      else last.flatMap { n =>
++        val moved = window.head.find(_.name == n.name).exists(f => f.fullHeight != n.fullHeight || f.headersHeight != n.headersHeight)
++        if (n.answered && !moved) Some(n -> best) else None
++      }
++    }
++  }
++
++  /**
++    * @param expectPeers false for a phase that isolates nodes on purpose (`NO_PEERS` is then not a cause)
++    */
++  def diagnose(history: Seq[Seq[NodeSample]], expectPeers: Boolean = true): Diagnosis = {
++    if (history.isEmpty || history.last.isEmpty) Diagnosis(Unknown, "no samples were taken")
++    else {
++      val last = history.last
++      val tail = history.takeRight(PersistRounds)
++
++      // a condition is named only when it held in every retained round, and there were at least two
++      def persistent(name: String)(p: NodeSample => Boolean): Boolean =
++        tail.size >= 2 && tail.forall(_.find(_.name == name).exists(p))
++
++      val down = last.filter(n => persistent(n.name)(!_.running))
++      val silent = last.filter(n => n.running && persistent(n.name)(!_.answered))
++      val lonely = if (expectPeers) last.filter(n => persistent(n.name)(_.peers.contains(0))) else Seq.empty
++      val inconsistent = last.filter(n => persistent(n.name)(_.bestChainInconsistent))
++      val stuckFull = fullStuckBehindHeaders(history)
++      val laggers = lagging(history).filterNot { case (n, _) => stuckFull.exists(_.name == n.name) }
++
++      if (down.nonEmpty) Diagnosis(NodeDown, down.map(_.render).mkString("; "))
++      else if (silent.nonEmpty) Diagnosis(NodeUnresponsive,
++        s"no REST answer for $PersistRounds rounds: " + silent.map(_.render).mkString("; "))
++      else if (lonely.nonEmpty) Diagnosis(NoPeers,
++        s"0 connected peers for $PersistRounds rounds: " + lonely.map(_.render).mkString("; "))
++      else if (inconsistent.nonEmpty) Diagnosis(BestChainInconsistent,
++        "full block and header on different forks at one height (#525): " +
++          inconsistent.map(_.render).mkString("; "))
++      else if (stuckFull.nonEmpty) Diagnosis(HeadersAheadFullStuck,
++        s"full height unchanged for ${LagSpan.toSeconds} s while headers are ahead of it: " +
++          stuckFull.map(_.render).mkString("; ") + s". All: ${last.map(_.render).mkString("; ")}")
++      else if (laggers.nonEmpty) Diagnosis(NodeLagging,
++        s"heights unchanged for ${LagSpan.toSeconds} s while others gained ${laggers.head._2} blocks (a removed link keeps " +
++          s"its TCP peers listed for minutes, so a peer count is no proof of connectivity): " +
++          laggers.map(_._1.render).mkString("; "))
++      else progress(history, last)
++    }
++  }
++
++  /** Nodes whose full height did not move over `LagSpan` while their headers stayed ahead of it. */
++  def fullStuckBehindHeaders(history: Seq[Seq[NodeSample]]): Seq[NodeSample] = history.lastOption.toSeq.flatMap { last =>
++    val cutoff = last.map(_.atMillis).max - LagSpan.toMillis
++    val window = history.filter(_.exists(_.atMillis >= cutoff))
++    if (window.size < 2 || window.head.map(_.atMillis).min > cutoff + LagSpan.toMillis / 2) Seq.empty
++    else last.filter { n =>
++      val startFull = window.head.find(_.name == n.name).flatMap(_.fullHeight)
++      val behind = (for (h <- n.headersHeight; f <- n.fullHeight) yield h > f).getOrElse(false)
++      n.answered && behind && startFull.nonEmpty && startFull == n.fullHeight
++    }
++  }
++
++  private def progress(history: Seq[Seq[NodeSample]], last: Seq[NodeSample]): Diagnosis = {
++    // judged over the last ProgressSpan, so progress early in a long wait cannot hide a later stall
++    val cutoff = last.map(_.atMillis).max - ProgressSpan.toMillis
++    val window = history.filter(_.exists(_.atMillis >= cutoff))
++    val first = if (window.size >= 2) window.head else history.head
++    val spanSeconds = (last.map(_.atMillis).max - first.map(_.atMillis).min) / 1000.0
++
++    def heights(round: Seq[NodeSample]): Map[String, (Option[Int], Option[Int])] =
++      round.filter(_.answered).map(n => n.name -> ((n.headersHeight, n.fullHeight))).toMap
++
++    val before = heights(first); val now = heights(last)
++    val common = before.keySet intersect now.keySet
++    val moved = history.size >= 2 && common.exists(n => before(n) != now(n))
++    val all = last.map(_.render).mkString("; ")
++
++    if (moved) {
++      // per node, over the nodes present in both rounds (a node that fell silent does not count as a loss)
++      val gains = common.toSeq.flatMap(n => for (a <- before(n)._2; b <- now(n)._2) yield b - a)
++      val perMinute = if (spanSeconds > 0 && gains.nonEmpty) gains.sum.toDouble / gains.size / spanSeconds * 60 else 0.0
++      Diagnosis(StillProgressing,
++        f"heights were still moving ($perMinute%.1f blocks/min per node over the last $spanSeconds%.0f s): " +
++          s"raise the timeout, or the machine is slow. $all")
++    } else if (history.size < 2) {
++      Diagnosis(Unknown, s"one round only, progress cannot be judged. $all")
++    } else {
++      val tips = last.flatMap(_.bestFullId).distinct
++      val fullHeights = last.flatMap(_.fullHeight).distinct
++      val anyoneMining = last.exists(_.mining.contains(true))
++      val stuckBehindHeaders = last.filter(n => (for (h <- n.headersHeight; f <- n.fullHeight) yield h > f).getOrElse(false))
++      val top = last.flatMap(_.fullHeight).reduceOption(_ max _)
++      val lowerAndUnaware = last.filter { n =>
++        n.fullHeight.nonEmpty && n.fullHeight == n.headersHeight && top.exists(t => n.fullHeight.exists(_ < t))
++      }
++      val frozen = f"no height moved for $spanSeconds%.0f s"
++
++      if (stuckBehindHeaders.nonEmpty) Diagnosis(HeadersAheadFullStuck,
++        s"$frozen; headers ahead of full blocks on: ${stuckBehindHeaders.map(_.render).mkString("; ")}. All: $all")
++      else if (tips.size > 1 && fullHeights.size == 1) Diagnosis(EqualHeightTie,
++        s"$frozen; equal heights, different tips, mining=${if (anyoneMining) "on" else "off"}. " +
++          (if (anyoneMining) "A miner is on and no block came: the miner may be wedged. "
++           else "Nothing breaks the tie unless someone mines; with mining off this is a property of the scenario, not a node defect. ") + all)
++      else if (tips.size > 1 && lowerAndUnaware.nonEmpty) Diagnosis(LighterForkNotSwitching,
++        s"$frozen; a lower node never took the higher chain's headers: " +
++          s"${lowerAndUnaware.map(_.render).mkString("; ")}. All: $all")
++      else if (tips.size <= 1) Diagnosis(ChainStalled,
++        s"$frozen and tips agree: nobody is producing blocks (mining=${if (anyoneMining) "on" else "off"}). $all")
++      else Diagnosis(Unknown, s"$frozen. $all")
++    }
++  }
++
++  /** The report a failing test prints: the named cause, then the last rounds in full. */
++  def report(history: Seq[Seq[NodeSample]], goal: String, expectPeers: Boolean = true): String = {
++    val rounds = history.takeRight(PersistRounds).zipWithIndex.map { case (round, i) =>
++      s"  round -${history.takeRight(PersistRounds).size - 1 - i}: " + round.map(_.render).mkString("; ")
++    }
++    s"$goal. CAUSE ${diagnose(history, expectPeers)}\n${rounds.mkString("\n")}"
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/it/util/ConvergenceDiagnosisSpec.scala b/src/test/scala/org/ergoplatform/it/util/ConvergenceDiagnosisSpec.scala
+new file mode 100644
+index 000000000..f55ee31bc
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/it/util/ConvergenceDiagnosisSpec.scala
+@@ -0,0 +1,147 @@
++package org.ergoplatform.it.util
++
++import org.scalatest.flatspec.AnyFlatSpec
++import org.scalatest.matchers.should.Matchers
++
++/** No containers: the classifier is a pure function of sampled state. */
++class ConvergenceDiagnosisSpec extends AnyFlatSpec with Matchers {
++  import ConvergenceDiagnosis._
++
++  private def node(name: String, headers: Int, full: Int, headerId: String, fullId: String,
++                   peers: Int = 1, mining: Boolean = false, state: String = NodeSample.Running,
++                   at: Long = 0L): NodeSample =
++    NodeSample(name, at, state, answered = true, Some(headers), Some(full), Some(headerId), Some(fullId), Some(peers), Some(mining))
++
++  private def silent(name: String, state: String = NodeSample.Running, at: Long = 0L): NodeSample =
++    NodeSample(name, at, state, answered = false, None, None, None, None, None, None)
++
++  /** The same round seen `rounds` times, ten seconds apart (so the 30 s lag/progress spans are covered): nothing moved. */
++  private def frozen(round: Seq[NodeSample], rounds: Int = 5): Seq[Seq[NodeSample]] =
++    (0 until rounds).map(i => round.map(_.copy(atMillis = i * 10000L)))
++
++  // End states below marked "CI" are the ones upstream's own runs ended in (run ids in the comments).
++
++  "A frozen pair" should "be named a tie when heights are equal and tips differ" in {
++    // CI 35356023528, 35522217646, 35522895591 (DeepRollBackSpec): A 231/231, B 231/231, different tips
++    val d = diagnose(frozen(Seq(node("A", 231, 231, "09edb3f9", "09edb3f9"), node("B", 231, 231, "c718c331", "c718c331"))))
++    d.cause shouldBe EqualHeightTie
++    d.evidence should include("mining=off")
++  }
++
++  it should "be named headers-ahead when full blocks stay behind the headers" in {
++    // CI 35579493804 (DeepRollBackSpec): B has A's 260 headers, full height stays at 70 on its own fork
++    val d = diagnose(frozen(Seq(node("A", 260, 260, "a377fa9e", "a377fa9e"), node("B", 260, 70, "a377fa9e", "19dd9a76"))))
++    d.cause shouldBe HeadersAheadFullStuck
++    d.evidence should include("B[running] headers=260:a377fa9e full=70:19dd9a76")
++  }
++
++  it should "be named lighter-fork-not-switching when the lower node never took the higher headers" in {
++    // CI 34744409218, 34745269264 (DeepRollBackSpec): A 249/249, B 70/70, one peer each
++    val d = diagnose(frozen(Seq(node("A", 249, 249, "c1c00bf0", "c1c00bf0"), node("B", 70, 70, "a8eae678", "a8eae678"))))
++    d.cause shouldBe LighterForkNotSwitching
++    d.evidence should include("B[running]")
++  }
++
++  it should "be named a stalled chain when tips agree" in {
++    diagnose(frozen(Seq(node("A", 12, 12, "aa", "aa"), node("B", 12, 12, "aa", "aa")))).cause shouldBe ChainStalled
++  }
++
++  "Infrastructure causes" should "win over chain causes" in {
++    val tie = Seq(node("A", 5, 5, "aa", "aa"), node("B", 5, 5, "bb", "bb"))
++    diagnose(frozen(tie.updated(1, silent("B", "exited(137)")))).cause shouldBe NodeDown
++    // one unanswered `docker inspect` proves nothing
++    diagnose(frozen(tie, 4) :+ tie.updated(1, silent("B", NodeSample.Unknown, at = 40000L))).cause should not be NodeDown
++    diagnose(frozen(tie.updated(1, silent("B", "oom-killed")))).evidence should include("oom-killed")
++    diagnose(frozen(tie.updated(1, silent("B")))).cause shouldBe NodeUnresponsive
++    diagnose(frozen(tie.updated(1, node("B", 5, 5, "bb", "bb", peers = 0)))).cause shouldBe NoPeers
++  }
++
++  "A phase that isolates nodes on purpose" should "not name NO_PEERS" in {
++    val isolated = Seq(node("A", 5, 5, "aa", "aa", peers = 0), node("B", 5, 5, "aa", "aa", peers = 0))
++    diagnose(frozen(isolated)).cause shouldBe NoPeers
++    diagnose(frozen(isolated), expectPeers = false).cause shouldBe ChainStalled
++  }
++
++  "Full blocks stuck while headers advance" should "be named headers-ahead, not lagging or progressing" in {
++    // B takes A's headers but its full height never moves: the live form of CI 35579493804
++    val history = (0 to 40).map { i =>
++      Seq(node("A", 100 + i, 100 + i, s"a$i", s"a$i", at = i * 1000L), node("B", 100 + i, 70, s"a$i", "b70", at = i * 1000L))
++    }
++    diagnose(history).cause shouldBe HeadersAheadFullStuck
++  }
++
++  "Progress early in a long wait" should "not hide a later stall" in {
++    val early = (0 to 3).map(i => Seq(node("A", 10 + i, 10 + i, s"a$i", s"a$i", at = i * 1000L), node("B", 10 + i, 10 + i, s"a$i", s"a$i", at = i * 1000L)))
++    val stalled = (4 to 60).map(i => Seq(node("A", 13, 13, "a3", "a3", at = i * 1000L), node("B", 13, 13, "a3", "a3", at = i * 1000L)))
++    diagnose(early ++ stalled).cause shouldBe ChainStalled
++  }
++
++  "A node that fell silent" should "not count as negative progress" in {
++    val history = (0 to 40).map { i =>
++      Seq(node("A", 10 + i, 10 + i, s"a$i", s"a$i", at = i * 1000L), if (i < 35) node("B", 10 + i, 10 + i, s"a$i", s"a$i", at = i * 1000L) else silent("B", at = i * 1000L))
++    }
++    // the classifier names the silence; and had it judged progress, the gain over nodes present in both
++    // rounds is positive (a silent node is not a negative gain)
++    diagnose(history).cause shouldBe NodeUnresponsive
++    val bothPresent = history.take(35)
++    val d = diagnose(bothPresent.takeRight(31))
++    d.cause shouldBe StillProgressing
++    d.evidence should not include "(-"
++  }
++
++  "A paused container" should "be named unresponsive, not down" in {
++    val d = diagnose(frozen(Seq(node("A", 5, 5, "aa", "aa"), silent("B", NodeSample.Paused))))
++    d.cause shouldBe NodeUnresponsive
++    d.evidence should include("B[paused]")
++  }
++
++  "Idle nodes at height 0" should "be named a stalled chain, not silence" in {
++    val idle = Seq("A", "B").map(n => NodeSample(n, 0L, NodeSample.Running, answered = true, None, None, None, None, Some(1), Some(false)))
++    diagnose(frozen(idle)).cause shouldBe ChainStalled
++  }
++
++  "A node frozen while the others advance" should "be named lagging even with peers listed" in {
++    val history = (0 to 40).map { i =>
++      Seq(node("A", 10 + i, 10 + i, s"a$i", s"a$i", at = i * 1000L), node("B", 12, 12, "b", "b", peers = 2, at = i * 1000L))
++    }
++    val d = diagnose(history)
++    d.cause shouldBe NodeLagging
++    d.evidence should include("B[running]")
++  }
++
++  it should "not be named when the group gained little" in {
++    val history = (0 to 40).map { i =>
++      Seq(node("A", 10 + i / 20, 10 + i / 20, "a", "a", at = i * 1000L), node("B", 10, 10, "a", "a", at = i * 1000L))
++    }
++    diagnose(history).cause should not be NodeLagging
++  }
++
++  "One unanswered round" should "not be named as an unresponsive node" in {
++    val ok = Seq(node("A", 5, 5, "aa", "aa"), node("B", 5, 5, "aa", "aa"))
++    val history = frozen(ok, 4) :+ Seq(node("A", 5, 5, "aa", "aa", at = 40000L), silent("B", at = 40000L))
++    diagnose(history).cause should not be NodeUnresponsive
++  }
++
++  "Issue #525" should "be named when full block and header differ at one height" in {
++    val d = diagnose(frozen(Seq(node("A", 9, 9, "aa", "aa"), node("B", 9, 9, "aa", "bb"))))
++    d.cause shouldBe BestChainInconsistent
++    d.evidence should include("B[running]")
++  }
++
++  it should "not be named while the full chain is only lagging the headers" in {
++    diagnose(frozen(Seq(node("A", 9, 9, "aa", "aa"), node("B", 9, 8, "aa", "bb")))).cause should not be BestChainInconsistent
++  }
++
++  "A moving chain" should "be named still-progressing, with a rate" in {
++    val history = (0 until 5).map(i => Seq(node("A", 10 + i, 10 + i, s"a$i", s"a$i", at = i * 1000L),
++      node("B", 10 + i, 9 + i, s"a$i", s"b$i", at = i * 1000L)))
++    val d = diagnose(history)
++    d.cause shouldBe StillProgressing
++    d.evidence should include("blocks/min")
++  }
++
++  "No samples" should "be unknown, and say so" in {
++    diagnose(Seq.empty).cause shouldBe Unknown
++    report(Seq.empty, "goal") should include("CAUSE UNKNOWN")
++  }
++}

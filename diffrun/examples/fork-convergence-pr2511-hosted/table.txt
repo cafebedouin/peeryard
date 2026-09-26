@@ -1,0 +1,24 @@
+scenario fork-convergence (public)   verdict: SUPPORTS
+n=8 (manifest 8)   min_valid_runs=6   sequential: min 8, cap 12, stopped by rule
+
+role       valid  void  inconcl  pass   expect
+base       8      0     0        true   {"count":{"key":"switched","op":"==","value":false},"cmp":">=","k":2}
+candidate  8      0     0        true   {"all":{"key":"switched","op":"==","value":true}}
+
+run            class                            metrics
+base-1         VALID                            {"switched":false,"s_switched":false,"fork_height":18,"margin":9,"warn_S":15,"warn_L":0,"unresponsive_after":0}
+candidate-1    VALID                            {"switched":true,"s_switched":false,"fork_height":9,"margin":9,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-2         VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":9,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+candidate-2    VALID                            {"switched":true,"s_switched":false,"fork_height":9,"margin":8,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-3         VALID                            {"switched":true,"s_switched":false,"fork_height":17,"margin":10,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+candidate-3    VALID                            {"switched":true,"s_switched":false,"fork_height":17,"margin":16,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-4         VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":8,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+candidate-4    VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":11,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-5         VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":12,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+candidate-5    VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":9,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-6         VALID                            {"switched":true,"s_switched":false,"fork_height":19,"margin":8,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+candidate-6    VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":9,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-7         VALID                            {"switched":false,"s_switched":false,"fork_height":18,"margin":13,"warn_S":15,"warn_L":0,"unresponsive_after":0}
+candidate-7    VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":8,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+base-8         VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":8,"warn_S":0,"warn_L":0,"unresponsive_after":0}
+candidate-8    VALID                            {"switched":true,"s_switched":false,"fork_height":18,"margin":8,"warn_S":0,"warn_L":0,"unresponsive_after":0}

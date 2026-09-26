@@ -1,0 +1,30 @@
+commit a65341679b59f9f667daed340a3bd51e5c1c6423
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Sat Sep 26 08:44:06 2026 -0500
+
+    Do not request announced ADProofs on a node that stores the UTXO set
+    
+    The scheduler leaves UTXO set transformation proofs out when the UTXO set is stored (requiredModifiersForHeader):
+    such a node regenerates them when it applies a block and keeps them for the recent suffix (UtxoState). The
+    announcement path still requested them from peers, so a UTXO node downloaded proofs it would generate itself. It
+    now ignores ADProofs announcements. Announcements are unchanged: the node holds the regenerated proofs and serves
+    them.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 021898dc8..4704a40b0 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -1159,6 +1159,11 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+         if (utxoBootstrapInProgress) {
+           log.debug(s"Ignoring ${invData.ids.length} non-tx invs (of type $modifierTypeId) from $peer: UTXO snapshot bootstrap in progress")
+           Seq.empty
++        } else if (modifierTypeId == ADProofs.modifierTypeId && !settings.nodeSettings.stateType.requireProofs) {
++          // a node that stores the UTXO set regenerates these proofs when it applies the block (UtxoState),
++          // so it does not download them (see requiredModifiersForHeader)
++          log.debug(s"Ignoring ${invData.ids.length} ADProofs invs from $peer: the UTXO set is stored")
++          Seq.empty
+         } else {
+           log.info(s"Processing ${invData.ids.length} non-tx invs (of type $modifierTypeId) from $peer")
+           invData.ids.filter(mid => deliveryTracker.status(mid, modifierTypeId, Seq(hr)) == ModifiersStatus.Unknown)

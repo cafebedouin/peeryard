@@ -1,0 +1,16 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "A", "mining": true, "mine_poll": "2s", "knownPeers": [] },
+    { "name": "B", "mining": false, "knownPeers": ["A", "C", "D"] },
+    { "name": "C", "mining": false, "knownPeers": ["A", "B", "D"], "defer": true },
+    { "name": "D", "mining": false, "knownPeers": ["B", "C"], "defer": true }
+  ],
+  "links": [
+    { "a": "A", "b": "B", "delay_ms": 20 },
+    { "a": "A", "b": "C", "delay_ms": 20 },
+    { "a": "B", "b": "C", "delay_ms": 20 },
+    { "a": "B", "b": "D", "delay_ms": 20 },
+    { "a": "C", "b": "D", "delay_ms": 20 }
+  ]
+}

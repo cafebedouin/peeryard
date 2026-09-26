@@ -1,0 +1,15 @@
+# shellcheck settings for peeryard (`shellcheck -x <script>` from this directory).
+# Each disable below is a deliberate house style, not an unread warning:
+#   SC2086  netem specs ("delay 40ms loss 5%") and single-letter node names (A, C, L, S) are passed unquoted
+#           on purpose: tc needs the words split, and every such value is a program constant, never input.
+#   SC2015  `A && B || C` is used as "B on success, C on failure" where A is a test and B cannot fail.
+#   SC2016  jq programs are written in single quotes; `$ENV`, `$m`, `$runs` there are jq variables.
+#   SC2012  `ls <glob> | head -1` on cache entries whose names the tool itself wrote (no odd characters).
+#   SC2317  rig.sh ends with an explicit exit, and its helper functions are called only from the hook it
+#           sources, so shellcheck sees them as unreachable; they are not.
+#   SC2034  a hook sets rig_verdict, which rig.sh reads after sourcing the hook; shellcheck sees a write
+#           with no read.
+disable=SC2086,SC2015,SC2016,SC2012,SC2317,SC2034
+# Hooks under rig/examples/ and diffrun/scenarios/precheck/lib.sh are sourced, not run: check them with
+#   shellcheck -s bash -e SC2148,SC2154 <hook>
+# (no shebang by design; the rig provides the variables and functions they use).

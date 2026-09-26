@@ -1,0 +1,10 @@
+scenario sibling-fork (public)   verdict: AGAINST   [A/A control: the same jar in both roles; not evidence about a change]
+n=1 (manifest 1)   min_valid_runs=1
+
+role       valid  void  inconcl  pass   expect
+base       1      0     0        true   {"count":{"key":"E_total","op":">","value":0},"cmp":">=","k":1}
+candidate  1      0     0        false  {"all":{"key":"D_total","op":"==","value":0}}
+
+run            class                            metrics
+base-1         VALID                            {"D_total":195,"E_total":2,"agreement":true,"max_height":45,"unresponsive_after":0}
+candidate-1    VALID                            {"D_total":436,"E_total":5,"agreement":true,"max_height":45,"unresponsive_after":0}

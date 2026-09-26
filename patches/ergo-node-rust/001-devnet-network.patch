@@ -1,0 +1,477 @@
+diff --git a/addons/indexer/src/sync.rs b/addons/indexer/src/sync.rs
+index e74801e..e9e4541 100644
+--- a/addons/indexer/src/sync.rs
++++ b/addons/indexer/src/sync.rs
+@@ -70,6 +70,7 @@ pub async fn run(
+     };
+     let network = match info.network.as_str() {
+         "mainnet" => NetworkPrefix::Mainnet,
++        // testnet and devnet share the testnet prefix
+         _ => NetworkPrefix::Testnet,
+     };
+     tracing::info!(
+diff --git a/api/src/handlers.rs b/api/src/handlers.rs
+index 7abe26e..d930e75 100644
+--- a/api/src/handlers.rs
++++ b/api/src/handlers.rs
+@@ -980,7 +980,8 @@ pub async fn get_mining_reward_address(
+         )
+     })?;
+     let prefix = match state.node_info.network.as_str() {
+-        "testnet" => NetworkPrefix::Testnet,
++        // devnet shares testnet's address prefix (Scala `addressPrefix = 16`)
++        "testnet" | "devnet" => NetworkPrefix::Testnet,
+         _ => NetworkPrefix::Mainnet,
+     };
+     let address_str = AddressEncoder::new(prefix).address_to_str(&Address::P2S(tree_bytes));
+diff --git a/chain/src/config.rs b/chain/src/config.rs
+index 352ea88..b1f8db7 100644
+--- a/chain/src/config.rs
++++ b/chain/src/config.rs
+@@ -13,6 +13,9 @@ pub enum Network {
+     Mainnet,
+     /// Testnet (the post-6.0 incarnation, starts at protocol v4).
+     Testnet,
++    /// Private development network (starts at protocol v4, difficulty 1,
++    /// epoch boundaries out of reach). See `ChainConfig::devnet`.
++    Devnet,
+ }
+ 
+ /// Network parameters that affect header chain validation.
+@@ -67,6 +70,25 @@ impl ChainConfig {
+         }
+     }
+ 
++    /// Devnet configuration: the testnet chain with difficulty pinned at 1
++    /// by an unreachable difficulty epoch (`1 << 25` blocks) and a 20 s
++    /// block interval; the forced v2 activation stays testnet's (never
++    /// reached). The Scala side is `networkType = "devnet60"` with
++    /// `epochLength = 33554432`, `blockInterval = 20s`,
++    /// `initialDifficultyHex = "01"`; the mixed Scala/Rust devnet of
++    /// arkadianet/ergo (`scripts/devnet-mixed/genesis.conf`) uses this
++    /// profile.
++    pub fn devnet() -> Self {
++        Self {
++            network: Network::Devnet,
++            epoch_length: 1 << 25,
++            block_interval_ms: 20_000,
++            max_time_drift_ms: 10 * 20_000,
++            voting: VotingConfig::devnet(),
++            ..Self::testnet()
++        }
++    }
++
+     /// Mainnet configuration.
+     pub fn mainnet() -> Self {
+         Self {
+@@ -101,3 +123,26 @@ impl ChainConfig {
+         self.eip37_activation_height.is_some_and(|h| height >= h)
+     }
+ }
++
++#[cfg(test)]
++mod devnet_tests {
++    use super::*;
++
++    #[test]
++    fn devnet_is_testnet_with_difficulty_pinned() {
++        // Scala devnet-mixed genesis.conf: epochLength 33554432, blockInterval 20s,
++        // initialDifficultyHex "01", version2ActivationHeight unreachable.
++        let d = ChainConfig::devnet();
++        let t = ChainConfig::testnet();
++        assert_eq!(d.network, Network::Devnet);
++        assert_eq!(d.epoch_length, 1 << 25);
++        assert_eq!(d.block_interval_ms, 20_000);
++        assert_eq!(d.max_time_drift_ms, 10 * 20_000);
++        assert_eq!(d.initial_n_bits, t.initial_n_bits); // difficulty 1
++        assert_eq!(d.use_last_epochs, t.use_last_epochs);
++        assert_eq!(d.version2_activation_n_bits, None);
++        assert_eq!(d.genesis_id, None);
++        assert_eq!(d.eip37_activation_height, None);
++        assert_eq!(d.voting.voting_length, 1 << 25);
++    }
++}
+diff --git a/chain/src/voting.rs b/chain/src/voting.rs
+index 109c2b3..a101c04 100644
+--- a/chain/src/voting.rs
++++ b/chain/src/voting.rs
+@@ -93,6 +93,17 @@ impl VotingConfig {
+         }
+     }
+ 
++    /// Devnet voting parameters: the testnet thresholds with a voting epoch
++    /// of `1 << 25` blocks, so no parameter or soft-fork vote can be tallied
++    /// within a test chain's lifetime (Scala `votingLength = 33554432`,
++    /// `softForkEpochs = 32`, `activationEpochs = 32`).
++    pub fn devnet() -> Self {
++        Self {
++            voting_length: 1 << 25,
++            ..Self::testnet()
++        }
++    }
++
+     /// `true` iff the given vote count meets the soft-fork supermajority.
+     ///
+     /// JVM `softForkApproved`: `votes > votingLength * softForkEpochs * 9 / 10`
+@@ -193,7 +204,7 @@ fn ordinary_param(id: i8) -> Option<Parameter> {
+ pub fn default_parameters(network: crate::Network) -> Parameters {
+     let block_version = match network {
+         crate::Network::Mainnet => 1,
+-        crate::Network::Testnet => 4,
++        crate::Network::Testnet | crate::Network::Devnet => 4,
+     };
+     let mut params = Parameters::new(
+         block_version,
+@@ -206,7 +217,7 @@ pub fn default_parameters(network: crate::Network) -> Parameters {
+         100,       // DataInputCost
+         100,       // OutputCost
+     );
+-    if matches!(network, crate::Network::Testnet) {
++    if matches!(network, crate::Network::Testnet | crate::Network::Devnet) {
+         params
+             .parameters_table
+             .insert(Parameter::SubblocksPerBlock, SUBBLOCKS_PER_BLOCK_DEFAULT);
+@@ -1375,6 +1386,21 @@ mod tests {
+         assert_eq!(p.block_version(), 1);
+     }
+ 
++    #[test]
++    fn default_parameters_devnet_matches_testnet_launch() {
++        // devnet launches like testnet: protocol v4 with the sub-blocks
++        // parameter present (Scala Devnet60LaunchParameters).
++        let d = default_parameters(crate::Network::Devnet);
++        let t = default_parameters(crate::Network::Testnet);
++        assert_eq!(d.block_version(), 4);
++        assert_eq!(d.parameters_table, t.parameters_table);
++        let v = VotingConfig::devnet();
++        assert_eq!(v.voting_length, 1 << 25);
++        assert_eq!(v.soft_fork_epochs, 32);
++        assert_eq!(v.activation_epochs, 32);
++        assert_eq!(v.version2_activation_height, 0);
++    }
++
+     #[test]
+     fn default_parameters_testnet_includes_subblocks() {
+         // Testnet starts at BlockVersion=4 and JVM Parameters.scala::update
+diff --git a/docs/operator-guide.md b/docs/operator-guide.md
+index 79a23ae..e74a5a3 100644
+--- a/docs/operator-guide.md
++++ b/docs/operator-guide.md
+@@ -122,7 +122,7 @@ installs find it next to the binary.
+ 
+ | Setting | Default | Notes |
+ |---|---|---|
+-| `[proxy].network` | `"testnet"` | Switch to `"mainnet"` requires updating `seed_peers` to mainnet peers (see the example config). |
++| `[proxy].network` | `"testnet"` | Switch to `"mainnet"` requires updating `seed_peers` to mainnet peers (see the example config). `"devnet"` is a private test chain with no public seeds. |
+ | `[node].data_dir` | `./ergo-node-data` | `.deb` installs override this to `/var/lib/ergo-node/data`. |
+ | `[node].state_type` | `"utxo"` | `"utxo"` = full state, can mine. `"digest"` = state root only, smaller footprint, can't mine. `"light"` = NiPoPoW-bootstrapped, headers + sliding window. |
+ | `[node].blocks_to_keep` | `-1` | `-1` = full archive. `0` = at-tip only (pruned). `N` = retain last N blocks. |
+diff --git a/docs/protocol/ergo-p2p-wire-format.md b/docs/protocol/ergo-p2p-wire-format.md
+index 7dbdd7a..c4c4714 100644
+--- a/docs/protocol/ergo-p2p-wire-format.md
++++ b/docs/protocol/ergo-p2p-wire-format.md
+@@ -161,6 +161,7 @@ Rejection results in a permanent ban (~3600 days) in the JVM reference node.
+ ```
+ Mainnet:  [0x01, 0x00, 0x02, 0x04]
+ Testnet:  [0x02, 0x03, 0x02, 0x03]    (changed Feb 2026 testnet reset)
++Devnet:   [0x07, 0x07, 0x07, 0x07]    (private test chain; no public network)
+ ```
+ 
+ The magic bytes appear in:
+diff --git a/ergo.toml.example b/ergo.toml.example
+index 0357729..95e7962 100644
+--- a/ergo.toml.example
++++ b/ergo.toml.example
+@@ -20,8 +20,10 @@
+ # applicable. Commented-out values show the built-in default.
+ 
+ [proxy]
+-# Network: "testnet" or "mainnet". Switching requires reconfiguring
+-# `seed_peers` below to peers on the same network.
++# Network: "testnet", "mainnet", or "devnet" (a private test chain: magic
++# [7,7,7,7], protocol v4 from genesis, difficulty 1, no public seeds; give
++# it your own `seed_peers`). Switching requires reconfiguring `seed_peers`
++# below to peers on the same network.
+ network = "testnet"
+ 
+ # ── Listeners ───────────────────────────────────────────────────────────
+@@ -122,7 +124,8 @@ protocol_version = "6.0.3"
+ # Minimum fee in nanoERG to enter the mempool (1,000,000 = 0.001 ERG).
+ # min_fee = 1000000
+ 
+-# REST API bind address. Defaults depend on network:
++# REST API bind address. Defaults depend on network (devnet: 127.0.0.1:9052,
++# a private chain's API stays local unless configured):
+ #   mainnet → 0.0.0.0:9053
+ #   testnet → 0.0.0.0:9052
+ # api_address = "0.0.0.0:9053"
+diff --git a/facts/config.md b/facts/config.md
+index 9d1c591..47c8a91 100644
+--- a/facts/config.md
++++ b/facts/config.md
+@@ -13,7 +13,7 @@ already drifted:
+ 
+ | Source | State |
+ |---|---|
+-| `src/main.rs` | Correct. mainnet→9053, testnet→9052. |
++| `src/main.rs` | Correct. mainnet→0.0.0.0:9053, testnet→0.0.0.0:9052, devnet→127.0.0.1:9052 (a private chain's API stays local unless configured). |
+ | `ergo.toml.example` | Correct. |
+ | `install.sh` | **Inverted.** mainnet→9052, testnet→9053 — the pre-v0.6.10 values. |
+ | `deploy/ergo.toml` | **testnet**, testnet seeds, `max_peers = 10`. |
+diff --git a/facts/journal-events.md b/facts/journal-events.md
+index 7e9bfec..7adeda4 100644
+--- a/facts/journal-events.md
++++ b/facts/journal-events.md
+@@ -151,7 +151,7 @@ ships.
+ #### `node_starting`
+ - **Level:** INFO
+ - **Marker:** `"Ergo node starting"`
+-- **Fields:** `version` (string), `network` (string: `mainnet`|`testnet`)
++- **Fields:** `version` (string), `network` (string: `mainnet`|`testnet`|`devnet`)
+ - **Since:** 1.0
+ - **Stability:** stable
+ - **Emitted at:** very first line after subscriber init, before any I/O.
+diff --git a/facts/mining.md b/facts/mining.md
+index 66089e4..4226ce7 100644
+--- a/facts/mining.md
++++ b/facts/mining.md
+@@ -108,8 +108,9 @@ pub struct MinerConfig {
+     /// EIP-27 re-emission rules. Carried in config (not derived inside
+     /// `generate_candidate`) so the network-policy decision lives at the
+     /// configuration boundary. Construct from the chain's network type at
+-    /// config-load time. Currently hardcoded to mainnet at the call sites
+-    /// in `src/main.rs` until testnet/devnet network detection is wired in.
++    /// config-load time: `reemission_rules_for(network)` in `src/main.rs`
++    /// (mainnet's rules for mainnet; testnet's, which never activate, for
++    /// testnet and devnet).
+     pub reemission_rules: ReemissionRules,
+ }
+ ```
+diff --git a/facts/p2p-node.md b/facts/p2p-node.md
+index ed087d5..a06e832 100644
+--- a/facts/p2p-node.md
++++ b/facts/p2p-node.md
+@@ -4,6 +4,8 @@
+ 
+ ### `from_toml_str(toml: &str) -> Result<Config>`
+ 
++`[proxy] network` is `mainnet`, `testnet` or `devnet`.
++
+ Parse a `Config` from TOML **already in memory**.
+ 
+ - **Precondition**: none. The caller owns where the text came from.
+diff --git a/facts/p2p-routing.md b/facts/p2p-routing.md
+index 8e018d5..bc3a178 100644
+--- a/facts/p2p-routing.md
++++ b/facts/p2p-routing.md
+@@ -82,7 +82,7 @@
+ ### Bogus address classification
+ 
+ Classification is **network-conditional**. The router is constructed
+-with a `Network` (mainnet or testnet), and the public
++with a `Network` (mainnet, testnet or devnet), and the public
+ `is_bogus_address(addr, network)` entry point combines two
+ sub-predicates:
+ 
+diff --git a/man/ergo-node-rust.conf.5.md b/man/ergo-node-rust.conf.5.md
+index 7eed85b..c34e46f 100644
+--- a/man/ergo-node-rust.conf.5.md
++++ b/man/ergo-node-rust.conf.5.md
+@@ -68,9 +68,11 @@ applicable.
+ 
+ # [proxy]
+ 
+-**network** = *"mainnet" | "testnet"*
++**network** = *"mainnet" | "testnet" | "devnet"*
+ :   Network to join. Determines magic bytes, genesis block, peer
+-    discovery, and default API port. Required.
++    discovery, and default API port. Required. *"devnet"* is a private
++    test chain (protocol v4 from genesis, difficulty 1, no public seeds;
++    give it your own **seed_peers**).
+ 
+ # [listen.ipv6] / [listen.ipv4]
+ 
+diff --git a/p2p/docs/protocol/ergo-p2p-wire-format.md b/p2p/docs/protocol/ergo-p2p-wire-format.md
+index 8936f1c..334fa0a 100644
+--- a/p2p/docs/protocol/ergo-p2p-wire-format.md
++++ b/p2p/docs/protocol/ergo-p2p-wire-format.md
+@@ -161,6 +161,7 @@ Rejection results in a permanent ban (~3600 days) in the JVM reference node.
+ ```
+ Mainnet:  [0x01, 0x00, 0x02, 0x04]
+ Testnet:  [0x02, 0x03, 0x02, 0x03]    (changed Feb 2026 testnet reset)
++Devnet:   [0x07, 0x07, 0x07, 0x07]    (private test chain; no public network)
+ ```
+ 
+ The magic bytes appear in:
+diff --git a/p2p/src/types.rs b/p2p/src/types.rs
+index d6ae23e..ee135ce 100644
+--- a/p2p/src/types.rs
++++ b/p2p/src/types.rs
+@@ -59,6 +59,13 @@ pub enum Direction {
+ pub enum Network {
+     Mainnet,
+     Testnet,
++    /// Private development network: an isolated chain for multi-node tests
++    /// (protocol v4 from genesis, difficulty 1, no public seeds). The
++    /// profile is a Scala `networkType = "devnet60"` node with a fixed
++    /// difficulty and a 20 s interval, the one the mixed Scala/Rust devnet
++    /// of arkadianet/ergo also runs, so nodes of either implementation and
++    /// such a Scala node share one wire.
++    Devnet,
+ }
+ 
+ impl Network {
+@@ -66,6 +73,8 @@ impl Network {
+         match self {
+             Network::Mainnet => [1, 0, 2, 4],
+             Network::Testnet => [2, 3, 2, 3],
++            // No public network uses this magic.
++            Network::Devnet => [7, 7, 7, 7],
+         }
+     }
+ }
+@@ -124,3 +133,22 @@ pub struct NetworkStatus {
+     pub last_incoming_message_ms: Option<u64>,
+     pub current_network_time_ms: u64,
+ }
++
++#[cfg(test)]
++mod devnet_tests {
++    use super::Network;
++
++    #[test]
++    fn devnet_magic_is_private_and_selectable_by_name() {
++        // no public network's magic, and reachable from `[proxy] network = "devnet"`
++        assert_eq!(Network::Devnet.magic(), [7, 7, 7, 7]);
++        assert_ne!(Network::Devnet.magic(), Network::Mainnet.magic());
++        assert_ne!(Network::Devnet.magic(), Network::Testnet.magic());
++        #[derive(serde::Deserialize)]
++        struct Proxy {
++            network: Network,
++        }
++        let p: Proxy = toml::from_str("network = \"devnet\"").expect("parses");
++        assert_eq!(p.network, Network::Devnet);
++    }
++}
+diff --git a/src/main.rs b/src/main.rs
+index 63b5936..3964daf 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -87,7 +87,12 @@ fn build_genesis_boxes(network: enr_p2p::types::Network) -> Vec<([u8; 32], Vec<u
+     let settings = MonetarySettings::default();
+ 
+     let proof_strings = match network {
+-        enr_p2p::types::Network::Testnet => TESTNET_NO_PREMINE_PROOFS,
++        // devnet reuses the testnet genesis boxes: the Scala devnet.conf pins
++        // the testnet genesisStateDigestHex (so does arkadianet/ergo's
++        // scripts/devnet-mixed/genesis.conf)
++        enr_p2p::types::Network::Testnet | enr_p2p::types::Network::Devnet => {
++            TESTNET_NO_PREMINE_PROOFS
++        }
+         enr_p2p::types::Network::Mainnet => MAINNET_NO_PREMINE_PROOFS,
+     };
+ 
+@@ -130,7 +135,11 @@ fn reemission_rules_for(
+ ) -> ergo_mining::emission::ReemissionRules {
+     match network {
+         enr_p2p::types::Network::Mainnet => ergo_mining::emission::ReemissionRules::mainnet(),
+-        enr_p2p::types::Network::Testnet => ergo_mining::emission::ReemissionRules::testnet(),
++        // devnet: re-emission never activates (Scala devnet overrides
++        // `reemission.activationHeight = 100000001`, as testnet does)
++        enr_p2p::types::Network::Testnet | enr_p2p::types::Network::Devnet => {
++            ergo_mining::emission::ReemissionRules::testnet()
++        }
+     }
+ }
+ 
+@@ -2073,6 +2082,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+     let chain_config = match network {
+         enr_p2p::types::Network::Testnet => ChainConfig::testnet(),
+         enr_p2p::types::Network::Mainnet => ChainConfig::mainnet(),
++        enr_p2p::types::Network::Devnet => ChainConfig::devnet(),
+     };
+ 
+     // Wall-clock start, surfaced as `launchTime` on GET /info (see
+@@ -2088,6 +2098,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+         network = match network {
+             enr_p2p::types::Network::Testnet => "testnet",
+             enr_p2p::types::Network::Mainnet => "mainnet",
++            enr_p2p::types::Network::Devnet => "devnet",
+         },
+         "Ergo node starting"
+     );
+@@ -2674,7 +2685,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+ 
+     // Genesis state root — needed for fresh start or revalidation
+     let genesis_digest_hex = match network {
+-        enr_p2p::types::Network::Testnet => TESTNET_GENESIS_DIGEST,
++        enr_p2p::types::Network::Testnet | enr_p2p::types::Network::Devnet => {
++            TESTNET_GENESIS_DIGEST
++        }
+         enr_p2p::types::Network::Mainnet => MAINNET_GENESIS_DIGEST,
+     };
+     let genesis_bytes = hex::decode(genesis_digest_hex).expect("invalid genesis digest hex");
+@@ -3846,6 +3859,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+             .unwrap_or(match network {
+                 enr_p2p::types::Network::Testnet => "0.0.0.0:9052",
+                 enr_p2p::types::Network::Mainnet => "0.0.0.0:9053",
++                // a private network's API stays local unless configured
++                enr_p2p::types::Network::Devnet => "127.0.0.1:9052",
+             })
+             .parse()
+             .expect("invalid api_address");
+@@ -4222,6 +4237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+                 network: match network {
+                     enr_p2p::types::Network::Testnet => "testnet".to_string(),
+                     enr_p2p::types::Network::Mainnet => "mainnet".to_string(),
++                    enr_p2p::types::Network::Devnet => "devnet".to_string(),
+                 },
+                 state_type: match state_type {
+                     StateType::Utxo => "utxo".to_string(),
+@@ -5017,6 +5033,46 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn devnet_genesis_boxes_produce_testnet_digest() {
++        // devnet shares testnet's genesis boxes: the Scala devnet.conf pins
++        // the testnet genesisStateDigestHex, so the digest the node asserts
++        // on at first start is the testnet one.
++        let boxes = build_genesis_boxes(enr_p2p::types::Network::Devnet);
++        let testnet = build_genesis_boxes(enr_p2p::types::Network::Testnet);
++        assert_eq!(boxes, testnet, "devnet genesis boxes differ from testnet's");
++        let resolver: ergo_avltree_rust::batch_node::Resolver =
++            Arc::new(|digest: &[u8; 32]| Node::LabelOnly(NodeHeader::new(Some(*digest), None)));
++        let tree = AVLTree::with_resolver(resolver, 32, None);
++        let mut prover = BatchAVLProver::new(tree, false);
++        for (id, value) in &boxes {
++            prover
++                .perform_one_operation(&Operation::Insert(KeyValue {
++                    key: Bytes::copy_from_slice(id),
++                    value: Bytes::copy_from_slice(value),
++                }))
++                .expect("genesis box insert failed");
++        }
++        let digest = prover.digest().expect("prover has no digest");
++        assert_eq!(
++            hex::encode(&digest),
++            TESTNET_GENESIS_DIGEST,
++            "devnet genesis state digest mismatch"
++        );
++    }
++
++    #[test]
++    fn devnet_reemission_never_activates_like_testnet() {
++        let d = reemission_rules_for(enr_p2p::types::Network::Devnet);
++        let t = reemission_rules_for(enr_p2p::types::Network::Testnet);
++        assert_eq!(d.activation_height, t.activation_height);
++        assert_eq!(d.activation_height, 100_000_001);
++        assert_ne!(
++            d.activation_height,
++            reemission_rules_for(enr_p2p::types::Network::Mainnet).activation_height
++        );
++    }
++
+     #[test]
+     fn mainnet_genesis_boxes_produce_correct_digest() {
+         let boxes = build_genesis_boxes(enr_p2p::types::Network::Mainnet);

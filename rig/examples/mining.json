@@ -1,0 +1,10 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "knownPeers": []
+    }
+  ],
+  "links": []
+}

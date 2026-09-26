@@ -1,0 +1,15 @@
+{
+  "name": "txload",
+  "description": "Real payments from a miner's wallet on a two-node network: accepted, confirmed into the recipient's balance, counted in blocks.",
+  "script": "txload.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "accepted": "number", "confirmed": "number", "txs_in_blocks": "number", "unresponsive_after": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base":      { "all": { "key": "confirmed", "op": "==", "value": 10 } },
+    "candidate": { "all": { "key": "confirmed", "op": "==", "value": 10 } }
+  }
+}

@@ -1,0 +1,37 @@
+commit 3d6c3db979d777d1382d10d08ce3abc2db266d39
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Sat Sep 26 12:55:52 2026 -0500
+
+    Drop a requested modifier that is already in history instead of judging it invalid
+    
+    A reply can arrive for a modifier the node has already applied, when it was applied from another source while the
+    request was outstanding (and the event that marks it held had not been handled yet). validateAndSetStatus then failed
+    the fatal alreadyApplied rule, marked the modifier id invalid and penalized the peer that answered the request. When
+    that failure is for a modifier already in history, it is now dropped as a duplicate, without a penalty.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 021898dc8..3a3b1b7d8 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -1234,11 +1234,18 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+   }
+ 
+   /**
+-    * Move `pmod` to `Invalid` if it is permanently invalid, to `Received` otherwise
++    * Move `pmod` to `Held` if it is already in history (a duplicate, dropped), to `Invalid` if it is permanently
++    * invalid, to `Received` otherwise. Returns whether `pmod` should be passed on for application.
+     */
+   @SuppressWarnings(Array("org.wartremover.warts.IsInstanceOf"))
+   def validateAndSetStatus(hr: ErgoHistory, remote: ConnectedPeer, pmod: BlockSection): Boolean = {
+     hr.applicableTry(pmod) match {
++      case Failure(e) if e.isInstanceOf[MalformedModifierError] && hr.contains(pmod.id) =>
++        // already in history, e.g. applied from another source while this request was outstanding: a duplicate of a
++        // valid modifier, not an invalid one, so it is dropped without penalizing the peer that answered the request
++        log.debug(s"Modifier ${pmod.encodedId} is already in history, dropping the copy from $remote")
++        deliveryTracker.setHeld(pmod.id, pmod.modifierTypeId)
++        false
+       case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
+         log.warn(s"Modifier ${pmod.encodedId} is permanently invalid", e)
+         deliveryTracker.setInvalid(pmod.id, pmod.modifierTypeId)

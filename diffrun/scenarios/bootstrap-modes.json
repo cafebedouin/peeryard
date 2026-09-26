@@ -1,0 +1,15 @@
+{
+  "name": "bootstrap-modes",
+  "description": "A miner with two followers on this role's jar, one in digest mode and one pruning full blocks: do both settle on the miner's chain and state root, and is pruning visible (an old full block served by the miner, not by the pruned node)?",
+  "script": "bootstrap-modes.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "settled": "boolean", "state_agree": "boolean", "pruned_visible": "boolean", "height": "number", "unresponsive_after": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base":      { "all": { "key": "state_agree", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "state_agree", "op": "==", "value": true } }
+  }
+}

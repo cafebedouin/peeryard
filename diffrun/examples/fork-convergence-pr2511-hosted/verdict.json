@@ -1,0 +1,441 @@
+{
+  "verdict_schema_version": 1,
+  "scenario": "fork-convergence",
+  "tier": "public",
+  "verdict": "SUPPORTS",
+  "precedence": [
+    "DEGENERATE",
+    "AGAINST",
+    "NULL",
+    "SUPPORTS"
+  ],
+  "same_jar": false,
+  "provenance": {
+    "scenario_script_sha256": "0a6e70f6571f7903e66c5b9ae2f9bec3c02cd89c155a3758478c4263c9a54b90",
+    "precheck_sha256": null,
+    "env": {
+      "PREFIX_MIN": 14,
+      "LMIN": 17,
+      "TMAX": 300,
+      "DELTA": 8
+    },
+    "runner_rev": "782ae59"
+  },
+  "precheck": null,
+  "n_manifest": 8,
+  "n_min": 8,
+  "n_run": 8,
+  "n_overridden": false,
+  "min_valid_runs": 6,
+  "sequential": {
+    "max_n": 12,
+    "stop_when": {
+      "base": {
+        "count": {
+          "key": "switched",
+          "op": "==",
+          "value": false
+        },
+        "cmp": ">=",
+        "k": 2
+      }
+    },
+    "stopped_by": "rule"
+  },
+  "expect": {
+    "base": {
+      "count": {
+        "key": "switched",
+        "op": "==",
+        "value": false
+      },
+      "cmp": ">=",
+      "k": 2
+    },
+    "candidate": {
+      "all": {
+        "key": "switched",
+        "op": "==",
+        "value": true
+      }
+    }
+  },
+  "jars": {
+    "base": {
+      "jar_sha256": "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323",
+      "expected_app_version": "6.0.6"
+    },
+    "candidate": {
+      "jar_sha256": "65096f45933a7b073fa0d0179b7e1eaaf2a8c61a4269200f366ac789d82ea307",
+      "expected_app_version": "6.0.6-1-69e96ea7-SNAPSHOT"
+    }
+  },
+  "per_role": {
+    "base": {
+      "valid": 8,
+      "void": 0,
+      "inconclusive": 0,
+      "pass": true
+    },
+    "candidate": {
+      "valid": 8,
+      "void": 0,
+      "inconclusive": 0,
+      "pass": true
+    }
+  },
+  "runs": [
+    {
+      "role": "base",
+      "index": 1,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": false,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 9,
+        "warn_S": 15,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 1,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 9,
+        "margin": 9,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 2,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 9,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 2,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 9,
+        "margin": 8,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 3,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 17,
+        "margin": 10,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 3,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 17,
+        "margin": 16,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 4,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 8,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 4,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 11,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 5,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 12,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 5,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 9,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 6,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 19,
+        "margin": 8,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 6,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 9,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 7,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": false,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 13,
+        "warn_S": 15,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 7,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 8,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "base",
+      "index": 8,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6",
+        "C": "6.0.6",
+        "L": "6.0.6",
+        "S": "6.0.6"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 8,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    },
+    {
+      "role": "candidate",
+      "index": 8,
+      "class": "VALID",
+      "reason": null,
+      "precheck": null,
+      "versions": {
+        "A": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "C": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "L": "6.0.6-1-69e96ea7-SNAPSHOT",
+        "S": "6.0.6-1-69e96ea7-SNAPSHOT"
+      },
+      "metrics": {
+        "switched": true,
+        "s_switched": false,
+        "fork_height": 18,
+        "margin": 8,
+        "warn_S": 0,
+        "warn_L": 0,
+        "unresponsive_after": 0
+      }
+    }
+  ]
+}

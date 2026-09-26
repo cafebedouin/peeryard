@@ -1,0 +1,40 @@
+{
+  "name": "fork-convergence",
+  "description": "SMOKE: one pair, no cited verdict; the only expectation is that every node still answers afterwards. A follower on a lighter, static fork is connected to a peer holding a heavier fork: does it switch?",
+  "script": "fork-convergence.sh",
+  "tier": "public",
+  "env": {
+    "PREFIX_MIN": 14,
+    "LMIN": 17,
+    "TMAX": 300,
+    "DELTA": 8
+  },
+  "metrics": {
+    "switched": "boolean",
+    "s_switched": "boolean",
+    "fork_height": "number",
+    "margin": "number",
+    "warn_S": "number",
+    "warn_L": "number",
+    "unresponsive_after": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "unresponsive_after",
+        "op": "==",
+        "value": 0
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "unresponsive_after",
+        "op": "==",
+        "value": 0
+      }
+    }
+  }
+}

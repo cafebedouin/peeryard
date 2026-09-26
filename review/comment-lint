@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Lint an outward comment / review / PR description against review/GUIDE.md ("rule N" = its Rules list).
+
+usage: review/comment-lint --kind inline|reply|review|pr <file> [...]
+FAIL lines make the exit status non-zero; WARN lines do not. It checks form only: whether the text
+is true and whether it should be posted are the gates' job (review/GUIDE.md, then review/GATES.md).
+Text inside code fences, inline code, blockquotes and <details> blocks is not scanned for voice or
+phrases.
+"""
+import argparse, os, re, sys
+
+BUDGET = {"inline": 120, "reply": 80, "review": 400, "pr": 250}
+LABELS = r"(Blocking|Likely bug|Possible bug|Maintainability|Observability|Integration|Nit|P[0-9])"
+CREDIT = re.compile(r"^(Review carried out by|Prepared (with|by)|Carried out by|Reply by)", re.I)
+# The marker every peeryard post carries in its credit line, so all of them can be found with one search
+# (GitHub: `"using peeryard" in:comments repo:<owner>/<repo>`), for analysis or for withdrawal.
+MARKER = "using peeryard"
+FIRST_PERSON = re.compile(r"\b(I|I'm|I've|I'd|my|we|we're|we've|our|ours)\b")  # not 'mine': it is a verb in this codebase
+BANNED = [
+    (r"would you be open to", "rule 6: state the recommendation; ask only about an intentional requirement"),
+    (r"\bI do not think\b|\bI don't think\b", "rule 4: state the invariant and its falsifier instead"),
+    (r"\b(roughly|about|only|just)\s+\w+\s+lines\b", "rule 3: line counts are not an argument"),
+    (r"the cost lands on", "rule 3: merge-cost rhetoric"),
+    (r"AI-assisted (node )?audit|surfaced by the", "rule 12: credit once in the first line, not in passing"),
+    # Terms from peeryard's own method docs that a recipient has no way to know. This is about being understood,
+    # not about hiding how the work was done: the credit line names the tool and the model (rule 12).
+    (r"\b(outside model|the seat|frame-free|brace-bounded|prereg(istration)?|lens(es)?|gauge)\b",
+     "rule 15: a term from peeryard's own docs the recipient will not know; say what was done in plain words"),
+    (r"\b(the outside|another) model (found|raised|missed|did not)", "rule 12: after the credit line, argue from the code and the runs, not from who or what noticed it"),
+]
+HEDGES = re.compile(r"\b(might|may|could|possibly|perhaps|potentially|seems?|appears?)\b", re.I)
+
+
+def prose_only(text):
+    text = re.sub(r"<details>.*?</details>", " ", text, flags=re.S)
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"`[^`\n]*`", " CODE ", text)
+    text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
+    return re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+
+
+def lint(path, kind):
+    raw = open(path, encoding="utf-8").read()
+    # never publish a session link or a Claude-Session trailer: nobody else can open one
+    for m in re.finditer(r"claude\.ai/code/session[^\s)>\]]*|\bClaude-Session\s*:|\bsession_[0-9A-Za-z]{16,}", raw):
+        out_session = ("FAIL", f"session link or trailer: '{m.group(0)[:60]}' (remove it; session links are never published)")
+        break
+    else:
+        out_session = None
+    prose = prose_only(raw)
+    out = []
+    if out_session:
+        out.append(out_session)
+    lines = [l for l in prose.splitlines() if l.strip()]
+    words = len(prose.split())
+
+    if kind == "inline":
+        head = lines[0] if lines else ""
+        if not re.match(r"^\*\*\[" + LABELS + r"\]", head):
+            out.append(("FAIL", "rule 1: first line must be **[<label>] <headline>** "
+                                "(Blocking | Likely bug | Possible bug | Maintainability | Observability | Integration | Nit | P<n>)"))
+        if len(re.findall(r"^\*\*\[" + LABELS + r"\]", prose, flags=re.M)) > 1:
+            out.append(("FAIL", "rule 2: more than one labelled finding in one comment"))
+        if not re.search(r"^(\*\*)?Recommended:", prose, flags=re.M) and not re.search(r"\bRecommended:", prose):
+            out.append(("WARN", "rule 6: no 'Recommended:' line — is the requested action explicit?"))
+    if kind in ("review", "pr", "reply"):
+        if lines and CREDIT.match(lines[0]) and MARKER not in lines[0].lower():
+            out.append(("FAIL", f"credit line lacks the marker '{MARKER}' (templates/{kind}.md): posts must be findable as a set"))
+        if lines and CREDIT.match(lines[0]) and MARKER in lines[0].lower() and not re.search(r"using peeryard v\d+\.\d+", lines[0], re.I):
+            out.append(("WARN", "rule 12: credit line has no peeryard version (review/provenance.sh prints 'peeryard v<version> on <nodes>')"))
+        if kind == "reply" and not (lines and CREDIT.match(lines[0])):
+            out.append(("FAIL", f"a reply opens with its credit line and the marker '{MARKER}' (templates/reply.md)"))
+    if kind in ("review", "pr"):
+        if not (lines and CREDIT.match(lines[0])):
+            out.append(("WARN", "rule 12: first line is not the credit line (Review carried out by … / Prepared with …)"))
+
+    for m in FIRST_PERSON.finditer(prose):
+        ln = prose[: m.start()].count("\n") + 1
+        out.append(("FAIL", f"rule 13: first person '{m.group(0)}' (prose line ~{ln})"))
+        break
+    for pat, why in BANNED:
+        m = re.search(pat, prose, flags=re.I)
+        if m:
+            out.append(("FAIL", f"{why}: '{m.group(0)}'"))
+
+    if words > BUDGET[kind]:
+        sev = "WARN" if words <= 2 * BUDGET[kind] else "FAIL"
+        out.append((sev, f"rule 14: {words} words of prose; budget for {kind} is {BUDGET[kind]} "
+                         "(a review whose detail was asked for may exceed it)"))
+    h = len(HEDGES.findall(prose))
+    if words and h / words > 0.03 and h >= 4:
+        out.append(("WARN", f"hedge density {h}/{words} words — pick 'Likely' or 'Possible' once and drop the rest"))
+    cited = re.search(r"\b(executed|reproduced|ran|run on|compiled|fails? with|passes?)\b", prose, flags=re.I) or re.search(r":\d+\b", prose)
+    if kind != "pr" and not cited:
+        out.append(("WARN", "rule 7: nothing says whether this was executed or read, and no file:line is cited"))
+    if re.search(r"—[^—\n]{0,160}\d[^—\n]{0,160}—", prose):
+        out.append(("WARN", "a number sits inside an em-dash aside; load-bearing facts belong in the main clause"))
+
+    outside = re.sub(r"<details>.*?</details>", " ", raw, flags=re.S)
+    longest = max([b.count("\n") for b in re.findall(r"```.*?```", outside, flags=re.S)] or [0])
+    if longest > 60:
+        out.append(("FAIL", f"R1: a {longest}-line code block sits outside <details>; collapse it, or link a gist/branch file with its sha256"))
+    elif longest > 25:
+        out.append(("WARN", f"R1: a {longest}-line code block sits in the reading path; consider <details>"))
+
+    terms = os.path.join(os.path.dirname(os.path.abspath(__file__)), "embargo_terms.txt")
+    if os.path.exists(terms):
+        for t in (x.strip() for x in open(terms, encoding="utf-8")):
+            if not t or t.startswith("#"):
+                continue
+            soft = t.startswith("soft:")
+            t = t[len("soft:"):] if soft else t
+            if re.search(re.escape(t), raw, flags=re.I):
+                out.append(("WARN" if soft else "FAIL",
+                            f"{'broad stem' if soft else 'embargo term'} present: '{t}' (embargo_terms.txt beside the linter, optional)"))
+    return words, out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--kind", required=True, choices=sorted(BUDGET))
+    ap.add_argument("files", nargs="+")
+    a = ap.parse_args()
+    bad = False
+    for f in a.files:
+        words, res = lint(f, a.kind)
+        fails = [r for r in res if r[0] == "FAIL"]
+        bad |= bool(fails)
+        print(f"{f}: {words} words, {len(fails)} FAIL, {len(res) - len(fails)} WARN")
+        for sev, msg in res:
+            print(f"  {sev}  {msg}")
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()

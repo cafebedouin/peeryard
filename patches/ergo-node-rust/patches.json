@@ -1,0 +1,46 @@
+{
+  "repo": "mwaddip/ergo-node-rust",
+  "base": "v0.8.2",
+  "clone_env": "PEERYARD_ERGO_NODE_RUST_CLONE",
+  "build": "cargo build --release (binary: target/release/ergo-node-rust)",
+  "stack_statuses": [
+    "proposed",
+    "under-review",
+    "merged-unreleased"
+  ],
+  "patches": [
+    {
+      "id": "001",
+      "file": "001-devnet-network.patch",
+      "title": "feat(config): add a private devnet network ([proxy] network = \"devnet\")",
+      "origin": "ours",
+      "upstream_pr": 28,
+      "upstream_head": "14e28b2445",
+      "status": "proposed",
+      "added": "2026-09-23",
+      "fixes": "the released binaries know only mainnet and testnet; the rig's rust-devnet preset needs a devnet network",
+      "needed_by": [
+        "rig ergo-node-rust-follow",
+        "rig ergo-node-rust-follow-magic"
+      ],
+      "witness": "rig examples ergo-node-rust-follow (PASS in the sweep)",
+      "responses": []
+    },
+    {
+      "id": "002",
+      "file": "002-devnet-magic-override.patch",
+      "title": "feat(p2p): [proxy] magic overrides the devnet's wire magic",
+      "origin": "ours (stacked on 001)",
+      "upstream_pr": 29,
+      "upstream_head": "55688684b4",
+      "status": "proposed",
+      "added": "2026-09-23",
+      "fixes": "a devnet on a magic other than [7,7,7,7]",
+      "needed_by": [
+        "rig ergo-node-rust-follow-magic"
+      ],
+      "witness": "rig example ergo-node-rust-follow-magic (PASS in the sweep)",
+      "responses": []
+    }
+  ]
+}

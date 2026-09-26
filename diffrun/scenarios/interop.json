@@ -1,0 +1,16 @@
+{
+  "name": "interop",
+  "description": "The release jar and the candidate jar on one two-node network: each mines in turn while the other follows; same chain and state root both ways?",
+  "script": "interop.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {},
+  "metrics": { "follow_ab": "boolean", "follow_ba": "boolean", "interop": "boolean", "trickle_ab": "number", "trickle_ba": "number", "unresponsive_after": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base":      { "all": { "key": "interop", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "interop", "op": "==", "value": true } }
+  }
+}

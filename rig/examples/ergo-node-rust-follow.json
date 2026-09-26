@@ -1,0 +1,8 @@
+{
+  "chain": "rust-devnet",
+  "nodes": [
+    { "name": "A", "mining": true, "mine_poll": "2s", "knownPeers": [] },
+    { "name": "B", "kind": "ergo-node-rust", "bin": "${PEERYARD_ERGO_NODE_RUST_BIN}", "knownPeers": ["A"] }
+  ],
+  "links": [ { "a": "A", "b": "B", "delay_ms": 0 } ]
+}

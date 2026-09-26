@@ -1,0 +1,9 @@
+# evidence of runs stays local (a reviewer may be asked follow-up questions about it); only the layout is tracked
+audits/*
+!audits/README.md
+!audits/EXAMPLE_pr-review/
+__pycache__/
+
+# a private issue register never travels with peeryard
+ISSUES.md
+issues.json

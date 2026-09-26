@@ -1,0 +1,18 @@
+{
+  "name": "seq-replay",
+  "description": "Test scenario for the sequential rule: no nodes; replays a scripted switched/not-switched pattern per jar.",
+  "script": "test/seq-replay.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "switched": "boolean" },
+  "n": 3,
+  "max_n": 6,
+  "stop_when": {
+    "base": { "count": { "key": "switched", "op": "==", "value": false }, "cmp": ">=", "k": 2 }
+  },
+  "timeout_seconds": 10,
+  "expect": {
+    "base":      { "count": { "key": "switched", "op": "==", "value": false }, "cmp": ">=", "k": 2 },
+    "candidate": { "all":   { "key": "switched", "op": "==", "value": true } }
+  }
+}

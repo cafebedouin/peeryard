@@ -40,7 +40,7 @@ split and rejoined, inspected, repaired and sent back out.
 - `diffrun/` — the scenario runner: build a candidate jar from a git ref, a patch, or part of a pull request
   (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`.
   Five node scenarios ship (`fork-convergence`, `sibling-fork`, `interop`, `txload`, `bootstrap-modes`); the
-  first two reproduce behaviour that is public in upstream issues or PRs, the other three check agreement.
+  first two reproduce behavior that is public in upstream issues or PRs, the other three check agreement.
 - `regression/` — the same link shaping inside ergo's own Docker integration suite (a sidecar with `NET_ADMIN`,
   node image untouched), with three example specs and a failure classifier, as a patch on v6.0.6 meant to become
   upstream pull requests.
@@ -59,7 +59,7 @@ split and rejoined, inspected, repaired and sent back out.
 - `audits/` — where a run's evidence lives (ignored by git except the layout and an example), so a reviewer
   can answer follow-up questions from what actually ran.
 
-A verdict is **evidence, not proof**: it summarises N runs of one scenario on one machine. Read the known limits
+A verdict is **evidence, not proof**: it summarizes N runs of one scenario on one machine. Read the known limits
 in each component's README before citing one.
 
 ## Scope
@@ -67,7 +67,7 @@ in each component's README before citing one.
 peeryard creates **ordinary network conditions for honest nodes**: delay, loss, partition and heal, crashes and
 restarts, mining control, wallet payments, and different node versions side by side. It contains no attack
 tooling: no crafted or malformed messages, no fuzzer, no misbehaving peers. Its scenarios reproduce node
-behaviour that is already public.
+behavior that is already public.
 
 ## Two tracks
 
@@ -126,7 +126,7 @@ last `[rig]` lines say which. To run several examples and get one line each:
 ```
 PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/run-suite.sh bringup txload     # rig bringup: PASS (SYNC-OK) ...
 ```
-With no names it runs every example in `rig/examples/suite.tsv`, skipping those whose artefacts are not set.
+With no names it runs every example in `rig/examples/suite.tsv`, skipping those whose artifacts are not set.
 
 **A candidate jar.** Built from a clone of ergo with JDK 8 and sbt (set `JAVA8_HOME` if JDK 8 is not found under
 `/usr/lib/jvm`). The example takes the production diff of ergoplatform/ergo#2511 (`master...pr-2511`: from the
@@ -199,7 +199,7 @@ are public devnet test values, not secrets: they unlock only the private devnets
 | `txload` | 2 | are real wallet payments accepted, confirmed and counted in blocks? | agreement check |
 | `bootstrap-modes` | 3 | do a digest-mode follower and a pruning follower settle on the miner's chain and state root? | agreement check |
 
-`fork-convergence` and `sibling-fork` run empty-block devnets, so they observe header and block-section behaviour
+`fork-convergence` and `sibling-fork` run empty-block devnets, so they observe header and block-section behavior
 only; `txload` covers the payment path. The details, the expectations and the known limits of each are in
 `diffrun/README.md`.
 
@@ -216,7 +216,7 @@ asked, a driver that turns review requests into these runs.
 
 The docs: `rig/README.md`, `diffrun/README.md`, `regression/README.md`, `stack/README.md`.
 
-## Credit, licence and security
+## Credit, license and security
 The code, documentation and witnessed runs in this repository were produced by Claude (Anthropic; models Claude
 Fable 5.1 and Claude Opus 5.5) working under a human maintainer's direction and review; the pre-publication reviews
 were run by separate Claude instances and by two outside models, and their findings applied before release. The
@@ -225,5 +225,5 @@ patches of ours under `patches/` are the upstream commits as exported, with thei
 CC0 1.0 Universal (`LICENSE`) for peeryard's own files. The patches under `regression/`, `patches/ergo/` and
 `patches/ergo-matrix/` are derived from ergoplatform/ergo's code, which is also CC0 1.0 Universal; `patches/arkadianet/`
 derives from arkadianet/ergo (Apache-2.0) and `patches/ergo-node-rust/` from mwaddip/ergo-node-rust (MIT), and those
-diffs stay under their projects' licences. Found a vulnerability? Report it privately to the project concerned; see
+diffs stay under their projects' licenses. Found a vulnerability? Report it privately to the project concerned; see
 `SECURITY.md`.

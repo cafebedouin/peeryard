@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # precheck.sh: tests the precheck gate on the no-node stubs diffrun/scenarios/test/precheck-replay.json (the
-# seq-replay script under test/precheck-stub.sh). Each case sets the stub's behaviour per jar through <jar>.precheck.
+# seq-replay script under test/precheck-stub.sh). Each case sets the stub's behavior per jar through <jar>.precheck.
 # A failed or timed-out precheck must make that run INCONCLUSIVE (setup) without running the scenario; a passing
 # one must leave the run untouched. No nodes, well under a minute. Run from the peeryard root:
 #   T=$(mktemp -d) bash tests/precheck.sh

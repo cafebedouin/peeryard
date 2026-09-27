@@ -33,7 +33,7 @@ Labels: use the thread's own convention if it has one; otherwise exactly one of
 ## Rules
 1. **Verdict first.** Label and recommendation open the text; context follows.
 2. **One concern per comment.** A second implication is a second comment or is dropped. A review body
-   summarises; findings live inline at their line.
+   summarizes; findings live inline at their line.
 3. **Argue from semantics**: identity, ownership, invariants, reachable states. Not line counts, not merge cost.
 4. **Name the invariant and its falsifier**: where it is established, where it is relied on, and what result
    would make the conclusion wrong.

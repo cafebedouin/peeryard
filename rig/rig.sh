@@ -615,7 +615,7 @@ wait_up(){ # $1=node: wait up to PEERYARD_UP_TIMEOUT s (default 60) for its REST
 }
 
 # ---- wallet and transactions ----
-# Every node's wallet is initialised and unlocked from its testMnemonic (the rig's default, or a per-node
+# Every node's wallet is initialized and unlocked from its testMnemonic (the rig's default, or a per-node
 # "conf" override of ergo.wallet.testMnemonic so two nodes hold different keys). A miner's rewards land in its
 # wallet and become spendable after REWARD_DELAY blocks. Amounts are nanoERG.
 API_KEY=hello

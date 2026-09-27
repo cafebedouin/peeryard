@@ -8,7 +8,7 @@ heavier chain, a bootstrap that stalls. A scenario that fails for a known, alrea
 new, so peeryard carries the fix as a patch, builds its **reference node** from the release plus those patches,
 and proposes each fix upstream. When upstream merges a fix and a release ships it, the patch leaves the stack.
 
-The release's own behaviour stays visible: every patch names the scenarios that need it, and a scenario can
+The release's own behavior stays visible: every patch names the scenarios that need it, and a scenario can
 always be run on the unpatched release jar (`--base` / `--candidate`, or `PEERYARD_JAR` for the rig).
 
 ## Lifecycle
@@ -99,7 +99,7 @@ Three of the entries are one package, the sync ladder: `ergo/001` (V2 sync summa
 assembled with a fixture fix for `DeepRollBackSpec` on ergoplatform/ergo#2535 (the comment of 2026-09-26 there gives
 the 28-run isolation table on v6.0.7: the spec passes only with a sync-point fix and the scan-back, 20 of 20 with the
 fixture fix). `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7.
-The witness column of `patches.json` summarises runs whose captures are not in this repository (`audits/` is local by
+The witness column of `patches.json` summarizes runs whose captures are not in this repository (`audits/` is local by
 design); a patch of ours is the upstream commit as exported, with its author and co-author trailers.
 
 | repo | id | patch | origin | upstream | status | needed by |

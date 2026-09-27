@@ -5,7 +5,7 @@
 #
 # Each example runs through rig/rig.sh with its timeout and extra environment from suite.tsv; its output goes to
 # DIR/rig_<name>.txt (default DIR: ./suite-out) and the line `rig <name>: PASS (<marker>)` or `rig <name>: FAIL (...)`
-# is printed. An example whose artefacts are not set is reported `SKIP (needs ...)`, not run:
+# is printed. An example whose artifacts are not set is reported `SKIP (needs ...)`, not run:
 #   release          PEERYARD_JAR_RELEASE   the plain release jar (the `mixed` example's follower)
 #   matrix           PEERYARD_MATRIX_JAR    a Matrix (weak-blocks) build
 #   arkadianet       PEERYARD_ARKADIANET_BIN
@@ -23,7 +23,7 @@ want=" $* "; failed=0; ran=0; matched=0
 for n in "$@"; do
   grep -q "^$n"$'\t' "$HERE/examples/suite.tsv" || { echo "run-suite: unknown example '$n' (see rig/examples/suite.tsv)" >&2; exit 2; }
 done
-artefact(){ case "$1" in
+artifact(){ case "$1" in
   release) echo "${PEERYARD_JAR_RELEASE:-}" ;; matrix) echo "${PEERYARD_MATRIX_JAR:-}" ;;
   arkadianet) echo "${PEERYARD_ARKADIANET_BIN:-}" ;; arkadianet-magic) echo "${PEERYARD_ARKADIANET_MAGIC_BIN:-}" ;;
   ergo-node-rust) echo "${PEERYARD_ERGO_NODE_RUST_BIN:-}" ;; *) echo "" ;; esac; }
@@ -37,7 +37,7 @@ while IFS=$'\t' read -r name marker to envs needs; do
   missing=""
   if [[ "$needs" != - ]]; then
     IFS=, read -ra ns <<<"$needs"
-    for n in "${ns[@]}"; do a="$(artefact "$n")"; [[ -n "$a" && -e "$a" ]] || missing+="$n "; done
+    for n in "${ns[@]}"; do a="$(artifact "$n")"; [[ -n "$a" && -e "$a" ]] || missing+="$n "; done
   fi
   if [[ -n "$missing" ]]; then echo "rig $name: SKIP (needs ${missing% })"; continue; fi
   extra=(); [[ "$envs" != - ]] && read -ra extra <<<"$envs"

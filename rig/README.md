@@ -114,7 +114,7 @@ Listed at the top of `rig.sh`. The main ones:
   same with an explicit fee), `wait_balance <node> <min> [s]`, `block_txs <node> <height>`; `txchain <from> <n>`
   (a burst of self-payments forming a dependency chain in the mempool), `mint_boxes <node> <txs> <outputs>` (grow
   the UTXO set, batches left to confirm), `mempool_ids <node>` / `mempool_size <node>` (the unconfirmed pool as
-  the node lists it). Every node's wallet is initialised and unlocked from its test mnemonic; give a
+  the node lists it). Every node's wallet is initialized and unlocked from its test mnemonic; give a
   node its own keys with a `conf` override of `ergo.wallet.testMnemonic` (see `examples/txload.json`).
 - verdict: a hook sets `rig_verdict=PASS`, `FAIL` or `INCONCLUSIVE` (the check could not be exercised, e.g.
   `corruption`, `mempool-evict`); `rig.sh` exits 1 on FAIL, 3 on INCONCLUSIVE and 0 otherwise, so a caller can
@@ -229,7 +229,7 @@ binaries define, and the JVM nodes are configured to match it (see *chain* above
   magic needs). It has no internal miner (`use_external_miner`
   must be true), so with `"mining": true` it serves candidates on `/mining/*` and the hook drives them with the
   rig's `solve_start <node>` / `solve_stop <node>` loop (one fixed solution per candidate, valid at difficulty 1;
-  `examples/arkadianet-mine`). Its wallet (`/wallet/*`) exists but is not initialised by the rig; the JVM wallet
+  `examples/arkadianet-mine`). Its wallet (`/wallet/*`) exists but is not initialized by the rig; the JVM wallet
   helpers are not wired to it.
 - **ergo-node-rust**: needs a build with a devnet network. The released binaries (v0.8.2) know only `mainnet` and
   `testnet`, with magic and genesis compiled in. A small change adding `[proxy] network = "devnet"` (the same

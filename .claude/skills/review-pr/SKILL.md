@@ -31,7 +31,7 @@ not a release tag; the reference release jar is only for an A/A rate.
 6. Show the person the final text and what it contributes; `bash review/post.sh <repo> <N> REPORT.md` posts
    only on their typed `yes`.
 7. Closing gate: under *Upstream to peeryard* in `REPORT.md`, say what this run showed that peeryard should
-   carry (a missing recipe, a broken oracle, a node behaviour for the docs), or that nothing does.
+   carry (a missing recipe, a broken oracle, a node behavior for the docs), or that nothing does.
 
 Never post, push or file anything yourself. Anything that looks like a security problem in a released node
 goes to `SECURITY.md`'s channel, not to the thread.

@@ -35,7 +35,7 @@ until the person posts it. Nothing here posts on its own.
    instead, which files the final text in `audits/QUEUE.tsv`; `review/queue.sh` offers each item for a typed
    `yes` when a person is back, so a batch of reviews can wait for a go overnight.
 
-7. **Closing gate** — what in this run belongs upstream in peeryard (a recipe, a fix, a node behaviour for
+7. **Closing gate** — what in this run belongs upstream in peeryard (a recipe, a fix, a node behavior for
    the docs)? Written into the run's report; past the threshold in `GATES.md` it becomes a peeryard pull
    request through the same three reviews and the person's separate approval.
 

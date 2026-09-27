@@ -69,10 +69,10 @@ look up the end states each case reproduces.
   together with, or after, a fix such as the `isInBestChain` guard that open PR #2313 proposes for
   `FullBlockProcessor.processBetterChain`. Until then it documents the defect; it is not yet a regression guard,
   and it must not be added to a CI job that is expected to be green.
-- **`PartitionHealSpec` and `DelayedMinersAgreeSpec` are the regression detectors:** they test behaviour that
+- **`PartitionHealSpec` and `DelayedMinersAgreeSpec` are the regression detectors:** they test behavior that
   holds today (a cut follower freezes, then catches up; four nodes agree after two miners race across a delayed
   cut), so they are green on v6.0.6 when the host has the netem modules, CANCELED (FAILED under `CI`) otherwise,
-  and red only if the behaviour regresses. `DelayedMinersAgreeSpec` uses the same staging as the #525 spec (the
+  and red only if the behavior regresses. `DelayedMinersAgreeSpec` uses the same staging as the #525 spec (the
   two specs start separate networks, so they observe the same kind of run, not the same run): together they say
   "consensus held, and the #525 race was or was not observed" under that staging. `DelayedMinersAgreeSpec`
   checks that the delay was set (`tc` succeeded), a minimum block count and the final agreement; it does not

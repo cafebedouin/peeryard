@@ -59,7 +59,7 @@ Then the tooling that serves them:
 
 ## How findings are delivered
 
-A behaviour found on a peeryard network is handed over with a node-level test that forces the same state without
+A behavior found on a peeryard network is handed over with a node-level test that forces the same state without
 timing (the node's own test fixtures), so a maintainer can run it in seconds, and with the scenario that found it.
 
 ## Beyond the node

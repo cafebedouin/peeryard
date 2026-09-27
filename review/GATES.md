@@ -24,7 +24,7 @@ A draft that got longer after review is a reason to check for scope drift, not a
 
 4. **Closing gate: what belongs upstream in peeryard?** After the review is posted, or the decision not to
    post, the model is asked one more question: did this run produce anything peeryard itself should carry:
-   a recipe or scenario that did not exist, a fix to a script or an oracle, a node behaviour the docs should
+   a recipe or scenario that did not exist, a fix to a script or an oracle, a node behavior the docs should
    state, a run card that was wrong. The threshold is novelty, a pattern seen twice, or a fix: not "I touched
    it". The answer is written into the run's `REPORT.md` under *Upstream to peeryard*; anything past the
    threshold becomes a pull request to peeryard only through gates 1–3 again and the person's separate

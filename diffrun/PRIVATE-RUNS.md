@@ -4,7 +4,7 @@ Moved out of the runner's README: nothing here is needed to run the public scena
 
 ## Tiers and lint
 
-- `tier: public` covers behaviour that is already public. `tier: private` covers anything else;
+- `tier: public` covers behavior that is already public. `tier: private` covers anything else;
   `run.sh` refuses a private manifest when `CI` or `GITHUB_ACTIONS` is set.
 - For a public manifest, `run.sh` lints the manifest and its script before launching, and lints its own
   `verdict.json` and `table.txt` before writing them; a hit refuses (exit 5) and **withholds those two files

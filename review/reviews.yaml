@@ -16,7 +16,7 @@ smoke:
   report: [the verdict line, unresponsive_after per role, the run card]
   status: implemented (fork-convergence-smoke, sibling-fork-smoke)
 scenario:
-  question: does the candidate change the behaviour the scenario measures (a full paired verdict)?
+  question: does the candidate change the behavior the scenario measures (a full paired verdict)?
   command: bash diffrun/run.sh diffrun/scenarios/<name>.json --base <base.jar> --candidate <cand.jar> --out <dir>
   needs: [as smoke; 1.5-2.5 h for fork-convergence]
   report: [verdict, table.txt, per-role counts, what a SUPPORTS rests on (the base rate), the run card]

@@ -1,6 +1,6 @@
 # The example suite: one row per rig example, run by rig/run-suite.sh (and by the publication sweeps).
 # Columns (tab-separated): name, PASS marker (extended regex matched in the run's output), timeout in seconds,
-# extra environment (space-separated KEY=VALUE, or -), needs: the artefacts beyond PEERYARD_JAR (comma-separated:
+# extra environment (space-separated KEY=VALUE, or -), needs: the artifacts beyond PEERYARD_JAR (comma-separated:
 # release, matrix, arkadianet, arkadianet-magic, ergo-node-rust; or -).
 poscontrol	OBSERVER-POSCTRL PASS	600	-	-
 floor	FLOOR HOLDS	600	-	-

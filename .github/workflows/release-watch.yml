@@ -1,0 +1,51 @@
+# Watches ergoplatform/ergo releases. On a new non-prerelease tag that has no A/A calibration run here yet: checks
+# every carried patch against it (patches/check.sh: NEEDED / CONTAINED / COLLIDES), opens an issue in this
+# repository when the stack needs an edit, and dispatches aa.yml on the new release. Daily, or by hand (which also
+# re-dispatches for the current release when `force` is true). Hand-maintained.
+name: release watch
+on:
+  schedule:
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+    inputs:
+      force: { description: 'dispatch the A/A even if this release already has a run', default: 'false' }
+permissions:
+  contents: read
+  actions: write
+  issues: write
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Newest ergo release, and whether it has an A/A run here
+        id: rel
+        run: |
+          tag="$(gh release view -R ergoplatform/ergo --json tagName --jq .tagName)"
+          asset="$(gh release view -R ergoplatform/ergo "$tag" --json assets --jq '.assets[] | select(.name | test("^ergo-[0-9.]+\\.jar$")) | .name' | head -1)"
+          have="$(gh run list -R "$GITHUB_REPOSITORY" --workflow aa.yml --limit 50 --json displayTitle --jq "[.[] | select(.displayTitle | contains(\"$tag\"))] | length")"
+          echo "tag=$tag asset=$asset aa_runs=$have force=${{ inputs.force || 'false' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo "tag=$tag"; echo "asset=$asset"; echo "have=$have"; } >> "$GITHUB_OUTPUT"
+      - name: Carried patches against the new release
+        if: steps.rel.outputs.have == '0' || inputs.force == 'true'
+        id: chk
+        run: |
+          git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
+          export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone"
+          set +e; bash patches/check.sh ergo "${{ steps.rel.outputs.tag }}" | tee check.txt; rc=$?; set -e
+          { echo '```'; cat check.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+      - name: Open an issue when the stack needs an edit (once per release)
+        if: steps.chk.outputs.rc == '1'
+        run: |
+          t="release ${{ steps.rel.outputs.tag }}: a carried patch is CONTAINED or COLLIDES"
+          n="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$t\" in:title" --json number --jq length)"
+          [ "$n" != 0 ] || gh issue create -R "$GITHUB_REPOSITORY" --title "$t" --body-file check.txt
+      - name: Dispatch the A/A calibration on the new release
+        if: steps.rel.outputs.have == '0' || inputs.force == 'true'
+        run: |
+          gh workflow run aa.yml -R "$GITHUB_REPOSITORY" --ref "${GITHUB_REF_NAME}" -f tag="${{ steps.rel.outputs.tag }}" -f sha256=""
+          echo "dispatched aa.yml for ${{ steps.rel.outputs.tag }}" | tee -a "$GITHUB_STEP_SUMMARY"

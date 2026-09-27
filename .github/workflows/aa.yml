@@ -1,7 +1,7 @@
 # Exported by ci/export-workflows.sh (same steps, paths from this repository's root); if this repository is the
 # source, edit here.
 # A/A calibration of peeryard's rate-based diffrun scenarios on GitHub-hosted runners (an A/A rate is a per-host
-# number, so it is measured on a runner class anyone can re-run). The released reference jar (ergo 6.0.6, sha256
+# number, so it is measured on a runner class anyone can re-run). The released reference jar (the release named by the tag input, sha256
 # pinned below) runs in BOTH roles, so every run observes the release; each shard is its
 # own runner, so the pooled runs are observations of the runner class, not of one machine. The sequential stop rule is
 # removed for calibration (a fixed number of pairs per shard). The pool job reports each rate with an exact 95%
@@ -9,8 +9,12 @@
 name: peeryard A/A calibration
 on:
   workflow_dispatch:
+    inputs:
+      tag: { description: 'ergoplatform/ergo release tag to calibrate (the jar is its ergo-<version>.jar asset)', default: 'v6.0.6' }
+      sha256: { description: 'sha256 of that jar, if known (checked when given)', default: '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }
   push:
     branches: [ 'ci/aa' ]
+run-name: "A/A calibration on ${{ inputs.tag || 'v6.0.6' }}"
 permissions:
   contents: read
 jobs:
@@ -33,7 +37,8 @@ jobs:
           - { scenario: sibling-fork, shard: 4, pairs: 2 }
           - { scenario: sibling-fork, shard: 5, pairs: 2 }
     env:
-      JAR: ${{ github.workspace }}/.cache/ergo-6.0.6.jar
+      TAG: ${{ inputs.tag || 'v6.0.6' }}
+      SHA: ${{ inputs.sha256 || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Host prerequisites
@@ -45,12 +50,13 @@ jobs:
           { uname -r; nproc; free -m | head -2; } | tee host.txt
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '21' }
-      - name: Reference jar (release, sha256-pinned)
+      - name: Reference jar (the release asset; sha256 checked when given; registered as the version the tag names)
         run: |
-          mkdir -p .cache
-          curl -sSL -o "$JAR" https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
-          echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $JAR" | sha256sum -c
-          bash diffrun/register.sh "$JAR" 6.0.6
+          v="${TAG#v}"; mkdir -p .cache; echo "JAR=$PWD/.cache/ergo-$v.jar" >> "$GITHUB_ENV"
+          curl -fsSL -o ".cache/ergo-$v.jar" "https://github.com/ergoplatform/ergo/releases/download/$TAG/ergo-$v.jar"
+          [ -z "$SHA" ] || echo "$SHA  .cache/ergo-$v.jar" | sha256sum -c
+          sha256sum ".cache/ergo-$v.jar"
+          bash diffrun/register.sh ".cache/ergo-$v.jar" "$v"
       - name: A/A manifest (fixed pairs, no stop rule)
         run: |
           s=${{ matrix.scenario }}

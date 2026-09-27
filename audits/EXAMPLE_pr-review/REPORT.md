@@ -1,4 +1,4 @@
-Review carried out by <tool> (<vendor>, <model>) for <person>, using <review/provenance.sh output: peeryard v<version> on <nodes>>; <what was executed, in one clause>.
+Review carried out by <tool> (<vendor>, <model>) for <person>, using peeryard v<version> on <nodes> (the `review/provenance.sh` line); <what was executed, in one clause>.
 
 **<Verdict in one line: what the change does and whether the executed evidence supports it>**
 

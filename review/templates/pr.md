@@ -1,4 +1,4 @@
-Prepared with <tool> (<vendor>, <model>) for <person>, using <review/provenance.sh output: peeryard v<version> on <nodes>>; <what was executed, in one clause>.
+Prepared with <tool> (<vendor>, <model>) for <person>, using peeryard v<version> on <nodes> (the `review/provenance.sh` line); <what was executed, in one clause>.
 
 **<What the change does, as an imperative headline>**
 

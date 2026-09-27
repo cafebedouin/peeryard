@@ -1,23 +1,71 @@
 {
-  "about": "Ranking rules for the review-queue pages (queue/build.py). A pull request's tier is the lowest tier number any of its changed files falls in; within a tier the needs-a-review track orders by age at the current head (oldest first) and then by size (smallest first). Change a rule by pull request; the page shows, per row, the rule lines that placed it.",
-  "default_tier": 4,
-  "tiers": [
-    {"tier": 1, "name": "consensus, sync, state, mining",
-     "paths": ["src/main/scala/org/ergoplatform/nodeView/**", "src/main/scala/org/ergoplatform/network/**", "src/main/scala/org/ergoplatform/mining/**",
-               "src/main/scala/scorex/core/network/**", "src/main/scala/scorex/core/consensus/**", "src/main/scala/org/ergoplatform/modifiers/**",
-               "ergo-core/src/main/**", "avldb/src/main/**", "src/main/scala/org/ergoplatform/settings/**"]},
-    {"tier": 2, "name": "mempool, wallet, REST API",
-     "paths": ["src/main/scala/org/ergoplatform/nodeView/mempool/**", "ergo-wallet/src/main/**", "src/main/scala/org/ergoplatform/http/**",
-               "src/main/scala/org/ergoplatform/local/**", "src/main/resources/**"]},
-    {"tier": 3, "name": "tests, integration suite, CI, build",
-     "paths": ["src/test/**", "src/it/**", "*/src/test/**", ".github/**", "build.sbt", "project/**", "ci/**"]},
-    {"tier": 4, "name": "docs and other",
-     "paths": ["*.md", "docs/**"]}
-  ],
-  "tracks": {
-    "needs_review": "open, not a draft, no review by anyone but the author at the current head, and no peeryard review at that head",
-    "needs_maintainer": "open, not a draft, at least one review at the current head, CI green or absent, mergeable state clean; ordered by days since the last activity",
-    "carried": "open upstream pull requests this tree carries as patches (patches/*/patches.json with an upstream_pr and a status that is not candidate, withdrawn or merged-in-<tag>), ordered by how many examples need them"
+ "about": "Ranking rules for the review-queue pages (queue/build.py). A pull request's tier is the lowest tier number any of its changed files falls in; within a tier the needs-a-review track orders by age at the current head (oldest first) and then by size (smallest first). Change a rule by pull request; the page shows, per row, the rule lines that placed it.",
+ "default_tier": 4,
+ "tiers": [
+  {
+   "tier": 1,
+   "name": "consensus, sync, state, mining",
+   "paths": [
+    "src/main/scala/org/ergoplatform/nodeView/**",
+    "src/main/scala/org/ergoplatform/network/**",
+    "src/main/scala/org/ergoplatform/mining/**",
+    "src/main/scala/scorex/core/network/**",
+    "src/main/scala/scorex/core/consensus/**",
+    "src/main/scala/org/ergoplatform/modifiers/**",
+    "ergo-core/src/main/**",
+    "avldb/src/main/**",
+    "src/main/scala/org/ergoplatform/settings/**"
+   ]
   },
-  "not_a_factor": ["the author (every pull request is scored the same way, peeryard's own included)", "the number of comments", "labels"]
+  {
+   "tier": 2,
+   "name": "mempool, wallet, REST API",
+   "paths": [
+    "src/main/scala/org/ergoplatform/nodeView/mempool/**",
+    "ergo-wallet/src/main/**",
+    "src/main/scala/org/ergoplatform/http/**",
+    "src/main/scala/org/ergoplatform/local/**",
+    "src/main/resources/**"
+   ]
+  },
+  {
+   "tier": 3,
+   "name": "tests, integration suite, CI, build",
+   "paths": [
+    "src/test/**",
+    "src/it/**",
+    "*/src/test/**",
+    ".github/**",
+    "build.sbt",
+    "project/**",
+    "ci/**"
+   ]
+  },
+  {
+   "tier": 4,
+   "name": "docs and other",
+   "paths": [
+    "*.md",
+    "docs/**"
+   ]
+  }
+ ],
+ "tracks": {
+  "needs_review": "open, not a draft, title not marked WIP, head pushed within stale_days, no review by anyone but the author at the current head, and no peeryard review at that head; ordered by tier, then by days at the current head (longest waiting first), then by size",
+  "needs_maintainer": "open, not a draft, at least one review at the current head, CI green or absent, mergeable state clean; ordered by days since the last activity",
+  "carried": "open upstream pull requests this tree carries as patches (patches/*/patches.json with an upstream_pr and a status that is not candidate, withdrawn or merged-in-<tag>), ordered by how many examples need them",
+  "stale": "open pull requests whose head is older than stale_days: listed at the end, unranked, so the work list stays a work list"
+ },
+ "not_a_factor": [
+  "the author (every pull request is scored the same way, peeryard's own included)",
+  "the number of comments",
+  "labels"
+ ],
+ "stale_days": 90,
+ "wip_markers": [
+  "[WIP]",
+  "WIP:",
+  "WIP -",
+  "Draft:"
+ ]
 }

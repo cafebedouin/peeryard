@@ -137,9 +137,16 @@ def collect(repo, token, limit):
     return rows
 
 
+def is_wip(r):
+    t = r["title"].upper()
+    return any(m.upper() in t for m in RULES.get("wip_markers", []))
+
+
 def rank_review(rows):
-    """Needs a review: no review at the current head. Order: tier, then oldest head, then smallest."""
-    todo = [r for r in rows if r["reviews_at_head"] == 0 and not r["peeryard_review"]]
+    """Needs a review: no review at the current head, head pushed within stale_days, not marked WIP. Order: tier,
+    then longest at the current head, then smallest."""
+    stale = RULES.get("stale_days", 90)
+    todo = [r for r in rows if r["reviews_at_head"] == 0 and not r["peeryard_review"] and r["days_at_head"] <= stale and not is_wip(r)]
     todo.sort(key=lambda r: (r["tier"][0], -r["days_at_head"], r["additions"] + r["deletions"]))
     for r in todo:
         r["why"] = [f"tier {r['tier'][0]} ({r['tier'][1]})", f"{r['days_at_head']} days at this head",
@@ -205,6 +212,9 @@ def main():
     by_number = {r["number"]: r for r in rows}
     review = rank_review(rows)
     maint = rank_maintainer(rows)
+    stale_days = RULES.get("stale_days", 90)
+    stale = sorted([r for r in rows if r["days_at_head"] > stale_days], key=lambda r: -r["days_at_head"])
+    wip = [r for r in rows if is_wip(r) and r["days_at_head"] <= stale_days]
     carried = [c for c in carried_patches() if c["repo"] == a.repo]
     carried.sort(key=lambda c: (-len(c["needed_by"]), c["number"]))
     generated = now_utc().strftime("%Y-%m-%d %H:%M UTC")
@@ -218,6 +228,10 @@ def main():
          "the same steps. Pick from the top.", [(pr_cell(r), why_cell(r)) for r in review], cols),
         ("Reviewed with peeryard at this head", "Shown so nobody does the same review twice; the link is the review.",
          [(pr_cell(r), f"<a href='{r['peeryard_review']}'>review</a>") for r in reviewed], ["pull request", "review"]),
+        ("Marked WIP by their authors", "Not ranked; listed so they are not forgotten.",
+         [(pr_cell(r), f"<span class=why>{r['days_at_head']} days at this head</span>") for r in wip], cols),
+        (f"Older than {stale_days} days at their head ({len(stale)})", "Unranked. A pull request comes back into the work list when its author pushes.",
+         [(f"<a href='{r['url']}'>#{r['number']}</a> {html.escape(r['title'])} <small>({html.escape(r['author'])}, {r['days_at_head']} d)</small>", "") for r in stale], ["pull request", ""]),
     ], generated, a.repo)
     carried_rows = []
     for c in carried:

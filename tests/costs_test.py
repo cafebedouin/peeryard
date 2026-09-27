@@ -61,13 +61,19 @@ class AgreeS(unittest.TestCase):
         self.assertEqual(run(s, [heal(1000)])["recovery"][0]["agree_s"], 8.0)
 
     def test_7_event_samples_left_out_of_the_series(self):
-        # an event row with equal tips at 4000 (a mark's sample) must not count as k or k+1: k = 6000 -> 5.0 s
+        # regular: 3000 equal, 6000 unequal, 9000 equal, 12000 equal -> k = 9000 -> 8.0 s. An event row at 4000 with
+        # equal tips must not serve as k+1 for 3000 (which would give 2.0 s).
         s = [row(1000, n("A", "x"), n("B", "y"), event="heal"),
              row(3000, n("A", "z"), n("B", "z")), row(4000, n("A", "q"), n("B", "q"), event="mark"),
-             row(6000, n("A", "q"), n("B", "q")), row(9000, n("A", "q"), n("B", "q"))]
+             row(6000, n("A", "q"), n("B", "r")), row(9000, n("A", "q"), n("B", "q")), row(12000, n("A", "q"), n("B", "q"))]
         ev = [heal(1000), {"t": 3999, "kind": "mark", "a": None, "b": None, "node": None, "detail": "m"}]
-        # 3000 is equal but 6000 differs from it (z vs q): 3000 fails the k+1 rule; k = 6000
-        self.assertEqual(run(s, ev)["recovery"][0]["agree_s"], 5.0)
+        self.assertEqual(run(s, ev)["recovery"][0]["agree_s"], 8.0)
+
+    def test_4b_k_plus_1_equal_to_each_other_not_to_k(self):
+        # a live miner moves both tips on between samples: equal at 3000 (z) and equal again at 6000 (q) -> k = 3000
+        s = [row(1000, n("A", "x"), n("B", "y"), event="heal"),
+             row(3000, n("A", "z"), n("B", "z")), row(6000, n("A", "q"), n("B", "q"))]
+        self.assertEqual(run(s, [heal(1000)])["recovery"][0]["agree_s"], 2.0)
 
     def test_nothing_to_recover(self):
         s = [row(1000, n("A", "x"), n("B", "x"), event="heal"), row(3000, n("A", "x"), n("B", "x"))]
@@ -120,6 +126,17 @@ class Revive(unittest.TestCase):
         self.assertEqual(r["agree_s"], 17.0)          # the maximum: agreement with all of them
         self.assertEqual(r["sync_s"], 12.0)
         self.assertEqual(r["height_gap"], {"A": 8, "C": 8})
+
+
+    def test_peer_restart_closes_the_revive_window(self):
+        # A relaunches at 7000, before B and A are seen equal twice: censored next_event, closed by the relaunch
+        ev = [{"t": 1000, "kind": "revive", "a": None, "b": None, "node": "B", "detail": None},
+              {"t": 7000, "kind": "relaunch", "a": None, "b": None, "node": "A", "detail": None}]
+        s = [row(1000, n("A", "x", full=20), n("B", answered=False, state="down"), event="revive"),
+             row(3000, n("A", "x", full=20), n("B", "o", full=12)), row(6000, n("A", "x", full=20), n("B", "x", full=20)),
+             row(9000, n("A", "x", full=20), n("B", "x", full=20))]
+        r = costs.compute(s, ev, {"nodes": [{"name": "A", "mining": True}, {"name": "B"}]}, CLK)["recovery"][0]
+        self.assertEqual((r["peers"], r["agree_s"], r["reason"], r["closed_by"]), (["A"], None, "next_event", "relaunch"))
 
 
 class Advance(unittest.TestCase):

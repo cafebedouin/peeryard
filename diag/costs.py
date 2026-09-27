@@ -7,15 +7,16 @@ Writes <dir>/costs.json and prints a one-line summary. A report, never a verdict
 
 Per recovery event (heal a b; revive n; relaunch n):
   agree_s        seconds from the event to the first regular sample k at which the pair's bestFullHeaderId are equal
-                 (and non-null) and still equal at the next regular sample (event-time samples are left out of this
+                 (and non-null) and are equal to each other again at the next regular sample, k+1 (a miner may have
+                 moved both on by then; one equal sample alone is not agreement; event-time samples are left out of this
                  series). Its resolution is the sample interval, and under a live miner at 2 s blocks it runs late by a
                  few intervals, since two tips read in one sample are rarely of the same moment. When no such k is in
                  the window: null + censored with one reason, by precedence endpoint_down (a sample in the window went
                  unanswered by either node; after a revive or relaunch, counted from the node's first answer), then
                  next_event (a later event closed the window), then never_agreed. null with status
                  nothing_to_recover when the tips were already equal at the event.
-                 After revive/relaunch n: agreement with each node not restarted in the window and running at the
-                 event, per node; agree_s is the maximum (agreement with all of them), censored if any is.
+                 After revive/relaunch n: agreement with each other node running at the event (a restart of any
+                 node closes the window, so none of them restarts inside it), per node; agree_s is the maximum (agreement with all of them), censored if any is.
   height_gap, tips_equal_at_event, height_at_event   from the event's own sample (a heal), or from the revived node's
                  first answered sample with a non-zero height (a revive or relaunch: it cannot answer at the event,
                  and it answers with height 0 while it reloads its chain). null where a node did not answer.
@@ -32,8 +33,9 @@ Per recovery event (heal a b; revive n; relaunch n):
   The span for the CPU and latency figures runs from the event to agreement, or to the window's end when censored.
 
 Windows: a link event's (partition, heal, link_netem) runs to the next event on the same link, or a crash, revive or
-relaunch of either node; a node event's (crash, revive, relaunch) to the next such event on that node or a link
-event touching it; otherwise to the end of the run. mark and launch events never close a window.
+relaunch of either node; a node event's (crash, revive, relaunch) to the next such event on any node (the peers it is
+measured against are then the same throughout) or a link event touching it; otherwise to the end of the run. mark and
+launch events never close a window.
 
 Per node: cpu_s (sum over its pids of each pid's last observed cumulative ticks, over CLK_TCK; ticks after a pid's
 last sample are lost), rss_mb_max (the maximum over samples; a peak between samples is missed), and unanswered
@@ -105,7 +107,7 @@ def window_end(events: List[dict], i: int) -> Tuple[Optional[int], Optional[dict
                 return later["t"], later
         else:
             n = ev.get("node")
-            if (k in NODE_KINDS and later.get("node") == n) or (k in LINK_KINDS and involves(later, n)):
+            if k in NODE_KINDS or (k in LINK_KINDS and involves(later, n)):
                 return later["t"], later
     return None, None
 
@@ -128,7 +130,8 @@ def agreement(regular: List[dict], a: str, b: str, t0: int, t1: Optional[int], d
     rows = [r for r in regular if in_span(r, t0, t1)]
     for k in range(len(rows) - 1):
         ta, tb = tip(rows[k], a), tip(rows[k], b)
-        if ta is not None and ta == tb and tip(rows[k + 1], a) == ta and tip(rows[k + 1], b) == ta:
+        na, nb = tip(rows[k + 1], a), tip(rows[k + 1], b)
+        if ta is not None and ta == tb and na is not None and na == nb:
             return {"agree_s": round((rows[k]["t"] - t0) / 1000, 3), "censored": False, "agreed_t": rows[k]["t"]}
     if any(r["t"] >= down_from and not (answered(node_of(r, a)) and answered(node_of(r, b))) for r in rows):
         reason = "endpoint_down"

@@ -57,3 +57,10 @@ bootstrap-modes:
   needs: [as smoke]
   report: [settled, state_agree, pruned_visible, height per role]
   status: implemented (on the rig template)
+it-spec:
+  question: does one of ergo's own Docker integration specs (src/it) pass on the PR's tree, as upstream's CI runs it?
+  command: bash review/with-lock.sh -- bash review/it-spec.sh <ergo clone> <ref> <SpecClass> --out <dir>   # or on the fork's Actions: gh workflow run fork-ci.yml -R <your ergo fork> -f ref=<ref> -f jobs=it
+  needs: [Docker usable by this user, JDK 8 + sbt, about 15-40 min per spec (the node image is built first)]
+  report: [PASS/FAIL with the spec's "Tests:" line, the ref, whether the same spec is one upstream tracks as flaky (say which issue), the run's log path or Actions link]
+  status: implemented (review/it-spec.sh; ergo's integration suite is a dependency peeryard calls, not code it carries); use when a PR changes src/it or a multi-node behaviour the rig does not stage (container stop/start under the suite's harness), or to give a flaky upstream spec a second sample on the PR's tree
+

@@ -20,6 +20,10 @@ Rules that bind you here:
 - Nothing is posted, pushed or filed without the person's explicit go on the final text.
 - Do not add attack tooling: no crafted messages, no fuzzers, no misbehaving peers (`CONTRIBUTING.md`).
 - Before any node run: `bash rig/preflight.sh`; one node network at a time on a host.
+- ergo's own Docker integration suite is a dependency you may call, not part of this tree: when a PR changes `src/it`,
+  or a multi-node behaviour the rig does not stage, or an upstream CI spec failed on the PR and is one upstream tracks as
+  flaky, run that spec on the PR's tree with `review/it-spec.sh` (Docker, JDK 8, sbt) or on your ergo fork's Actions
+  (`fork-ci.yml`, jobs `it`), and report the second sample with its link.
 - A hand-written executed command (a direct `sbt testOnly`, a one-off script) goes through
   `bash review/run-captured.sh <capture-file> -- <command>`: it records the command line, working directory,
   git revision and time at the top of the capture, then runs it; a claim about that run cites that file.

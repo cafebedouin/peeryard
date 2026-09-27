@@ -168,7 +168,12 @@ Example output of a finished run is in `diffrun/examples/`.
 - the Matrix examples need the `weak-blocks` reference node (`patches/sigma-snapshot.sh` once, then
   `patches/stack.sh --build ergo-matrix`; `patches/README.md`), and the Rust examples an arkadianet or ergo-node-rust
   binary (`rig/README.md`); `rig/run-suite.sh` skips what is not set;
-- about 1.5 GB of free RAM for a four-node scenario.
+- about 1.5 GB of free RAM for a four-node scenario;
+- **Docker is optional, two ways:** `docker/` builds an image with the whole run card (the rig runs inside it with no
+  root: `docker run --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v "$PWD":/peeryard peeryard`;
+  witnessed: preflight and `bringup` pass inside), for hosts where unprivileged user namespaces are locked; and
+  `review/it-spec.sh` runs one of ergo's own Docker integration specs on a PR's tree, the suite upstream's CI runs,
+  which peeryard treats as a dependency it calls, not code it carries.
 
 A fork-convergence run takes 3–7 minutes; a full verdict takes 8–12 paired runs, 1.5 to 2.5 hours. The timings in
 this README come from a 2019 development host and 2-vCPU GitHub runners; a newer machine is faster. What gets

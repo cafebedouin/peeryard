@@ -55,10 +55,13 @@
 #                                   no internal miner (an arkadianet node with "mining": true): at difficulty 1
 #                                   every nonce solves, so the loop submits a fixed solution per candidate
 #   mempool_ids <node> / mempool_size <node>   the unconfirmed pool's tx ids (in listed order) / its count
+#   mark <label>                    a labelled event in $RIG_LOG_DIR/events.jsonl, beside the rig's own (partition,
+#                                   heal, link_netem, crash, revive, relaunch, launch), each with a sample taken then
 #   and the variables NODES, RIG_LOG_DIR, SCRATCH, CONF_OVR (per-node extra HOCON for a deferred launch).
 #   A hook sets rig_verdict=PASS|FAIL|INCONCLUSIVE; rig.sh exits 1 on FAIL, 3 on INCONCLUSIVE.
 # Env overrides: PEERYARD_CHAIN (preset), PEERYARD_MINE_POLL, PEERYARD_DURATION (hooks read it), PEERYARD_KEEP_DATA=1.
-# The run's effective configuration (jars, chain, links, polls, duration) is written to $RIG_LOG_DIR/effective.json.
+# The run's effective configuration (jars, chain, links, polls, duration, a host card) is written to $RIG_LOG_DIR/effective.json.
+# Per-node "cpus" (taskset list) and "java_opts" (jvm nodes) are optional topology fields; see rig/README.md.
 # Topology "chain": "current" (default) | "matrix" | "devnet" | "rust-devnet", or an object with blockInterval /
 # minerRewardDelay / genesisStateDigestHex, sets the chain parameters all nodes share (see rig/README.md).
 #
@@ -480,11 +483,17 @@ launch_event(){ local n="$1" p="${PID[$1]}" c="" end=$((SECONDS + 10)) applied g
       gc: (if $gc == "" then null else $gc end), java_opts: (if $jo == "" then null else $jo end)}')"
   echo "[rig] $n pid=$p cpus_applied=${applied:-?}${gc:+ gc=$gc}"; }
 # rig_event <kind> <a> <b> <node> <detail> [extra json object]: one line in $RIG_LOG_DIR/events.jsonl, on the
-# sampler's clock (epoch milliseconds): {t, kind, a, b, node, detail} plus the extra fields.
+# sampler's clock (epoch milliseconds): {t, kind, a, b, node, detail} plus the extra fields. Once the hook runs, each
+# event is followed by one sample taken at that moment (sample_row, marked with the event's kind). Events: partition,
+# heal, link_netem (detail: the tc spec), crash, revive, relaunch, launch, mark. EVENT_DETAIL, when set, is the detail
+# of partition and heal events (flap sets "flap i/N").
 rig_event(){ local t; t=$(date +%s%3N)
   jq -cn --argjson t "$t" --arg k "$1" --arg a "$2" --arg b "$3" --arg n "$4" --arg d "$5" --argjson x "${6:-{\}}" \
     'def nn: if . == "" then null else . end; {t: $t, kind: $k, a: ($a | nn), b: ($b | nn), node: ($n | nn), detail: ($d | nn)} + $x' \
-    >> "$RIG_LOG_DIR/events.jsonl"; }
+    >> "$RIG_LOG_DIR/events.jsonl"
+  [[ "${RIG_SAMPLING:-0}" == 1 ]] && sample_row "$1"; return 0; }
+# mark <label>: a labelled event in events.jsonl (and a sample), for a hook's own phases
+mark(){ rig_event mark "" "" "" "$1"; }
 
 # ---- helpers for the hook ----
 rest()   { ip netns exec "${NS[$1]}" curl -s --max-time 4 "http://127.0.0.1:${REST[$1]}$2"; }
@@ -514,17 +523,21 @@ have_link(){ [[ -n "${LINK_OF["$1,$2"]:-}" ]]; }
 HARNESS_FAIL=()
 harness_fail(){ HARNESS_FAIL+=("$1"); echo "[rig] HARNESS-FAIL $1"; }
 link_netem(){ # $1=a $2=b $3=netem spec; replaces the a->b egress qdisc on a's veth
-  have_link "$1" "$2" || { echo "[rig] no link $1<->$2" >&2; return 1; }
+  _netem "$1" "$2" "$3" || return 1; rig_event link_netem "$1" "$2" "" "$3"; }
+_netem(){ have_link "$1" "$2" || { echo "[rig] no link $1<->$2" >&2; return 1; }   # link_netem without the event
   local dev="${VETH["$1,$2"]}"
+  # shellcheck disable=SC2086  # the spec is a word list
   ip netns exec "${NS[$1]}" tc qdisc replace dev "$dev" root netem $3 \
     || { harness_fail "netem '$3' on $1->$2 not applied"; return 1; }
 }
 # partition A B: drop 100% both directions (a soft cut that keeps the TCP sockets, unlike unplugging the link).
 partition(){ have_link "$1" "$2" || { harness_fail "partition $1 $2: no such link"; return 1; }
-  link_netem "$1" "$2" "loss 100%" && link_netem "$2" "$1" "loss 100%" || return 1; PARTITIONED["$1,$2"]=1; PARTITIONED["$2,$1"]=1; echo "[rig] partition $1<->$2 (100% loss)"; }
+  _netem "$1" "$2" "loss 100%" && _netem "$2" "$1" "loss 100%" || return 1; PARTITIONED["$1,$2"]=1; PARTITIONED["$2,$1"]=1
+  rig_event partition "$1" "$2" "" "${EVENT_DETAIL:-}"; echo "[rig] partition $1<->$2 (100% loss)${EVENT_DETAIL:+ ($EVENT_DETAIL)}"; }
 # heal A B: restore the link's configured shaping (delay/loss/jitter/rate), both directions; clean if it had none.
 heal(){ have_link "$1" "$2" || { harness_fail "heal $1 $2: no such link"; return 1; }
-  link_netem "$1" "$2" "${CONFIGURED["$1,$2"]}" && link_netem "$2" "$1" "${CONFIGURED["$2,$1"]}" || return 1; unset 'PARTITIONED[$1,$2]' 'PARTITIONED[$2,$1]'; echo "[rig] heal $1<->$2"; }
+  _netem "$1" "$2" "${CONFIGURED["$1,$2"]}" && _netem "$2" "$1" "${CONFIGURED["$2,$1"]}" || return 1; unset 'PARTITIONED[$1,$2]' 'PARTITIONED[$2,$1]'
+  rig_event heal "$1" "$2" "" "${EVENT_DETAIL:-}"; echo "[rig] heal $1<->$2${EVENT_DETAIL:+ ($EVENT_DETAIL)}"; }
 # ---- state and peer oracles ----
 # same_state A B: the UTXO state root at the tip, compared only when both nodes are at the same full height
 # (roots differ by height): SAME@h:root / DIFF@h:A=..:B=.. / NOHEIGHT, or, when the heights differ,
@@ -651,8 +664,8 @@ crash(){ local n="$1"; local p="${PID[$n]:-}"
   [[ -n "$p" ]] && wait "$p" 2>/dev/null || true
   local t; for t in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$SCRATCH/conf_${n}\.(conf|toml)" >/dev/null 2>&1 || break; sleep 1; done
   pgrep -f "$SCRATCH/conf_${n}\.(conf|toml)" >/dev/null 2>&1 && harness_fail "crash $n: its process still runs after SIGKILL"
-  PID[$n]=""; echo "[rig] crash $n (SIGKILL, left down)"; }
-revive(){ echo "[rig] revive $1"; launch "$1"; wait_up "$1"; }
+  PID[$n]=""; rig_event crash "" "" "$n" ""; echo "[rig] crash $n (SIGKILL, left down)"; }
+revive(){ echo "[rig] revive $1"; rig_event revive "" "" "$1" ""; launch "$1"; wait_up "$1"; }
 wait_up(){ # $1=node: wait up to PEERYARD_UP_TIMEOUT s (default 60) for its REST API
   local n="$1" end=$((SECONDS + ${PEERYARD_UP_TIMEOUT:-60}))
   while [[ $SECONDS -lt $end ]]; do
@@ -789,6 +802,7 @@ relaunch(){ # $1=node: stop, wait for a full exit (RocksDB lock and ports releas
   # a damaged one, is reported and the hook goes on)
   local n="$1"; local p="${PID[$n]:-}" h0 end
   h0=$(full_height "$n" 2>/dev/null); [[ "$h0" =~ ^[0-9]+$ ]] || h0=0
+  rig_event relaunch "" "" "$n" "mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg}"
   if [[ -n "$p" ]]; then
     kill "$p" 2>/dev/null
     for _ in $(seq 1 40); do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done
@@ -987,21 +1001,43 @@ fi
 # ("[rig] CAUSE <NAME>: evidence", also cause.json). A hook that knows its own reason sets rig_cause (printed first).
 # Process state is read by each node's config path (a token only that node's argv holds), since crashes and revives
 # change the rig's pid table after this sampler is forked.
-diag_sampler(){ local n st info
-  while :; do
-    local row="" t; t=$(date +%s%3N)
-    for n in "${NODES[@]}"; do
-      if pgrep -f "$SCRATCH/conf_${n}\\.(conf|toml)" >/dev/null 2>&1; then st=running; else st=down; fi
-      info=""; [[ $st == running ]] && info=$(ip netns exec "${NS[$n]}" curl -s --max-time 2 "http://127.0.0.1:${REST[$n]}/info" 2>/dev/null)
-      row+=$(jq -cn --arg n "$n" --arg st "$st" --argjson t "$t" --arg info "$info" '($info | (try fromjson catch null)) as $i
-        | {name: $n, t: $t, state: $st, answered: ($i != null),
-           headersHeight: $i.headersHeight, fullHeight: $i.fullHeight, bestHeaderId: $i.bestHeaderId,
-           bestFullHeaderId: $i.bestFullHeaderId, peers: $i.peersCount, mining: $i.isMining}')","
-    done
-    echo "{\"t\": $t, \"nodes\": [${row%,}]}" >> "$RIG_LOG_DIR/samples.jsonl"
-    sleep "${PEERYARD_SAMPLE_S:-3}"
-  done; }
+# Per node, beside /info: pid (the newest process holding the node's conf path), loopback_info_ms (the /info call's
+# own time over loopback inside the node's namespace, unshaped by netem: the node's REST responsiveness, not network
+# latency; null with timeout: true when the call hit its 2 s limit), cpu_ticks (utime+stime, cumulative, clock ticks),
+# rss_mb (VmRSS) and io_read_mb / io_write_mb (cumulative, /proc/<pid>/io); per row the host's loadavg1 and
+# mem_available_mb. The measurement load: one /info call per node per sample, plus /proc reads.
+# sample_row [event kind]: one row, appended under a lock (the sampler and the hook's event samples both write).
+# A row taken at a rig event carries "event": <kind>; diagnose.py skips those, so its rounds stay one interval apart.
+sample_row(){ local ev="${1:-}" n p st info ms rc to tmp ticks rss io row="" t la ma
+  t=$(date +%s%3N); read -r la _ < /proc/loadavg; ma=$(awk '/^MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo)
+  for n in "${NODES[@]}"; do
+    p=$(pgrep -n -f "$SCRATCH/conf_${n}\\.(conf|toml)" 2>/dev/null); st=down; [[ -n "$p" ]] && st=running
+    info=""; ms=""; to=false; ticks=""; rss=""; io=""
+    if [[ $st == running ]]; then
+      tmp="$SCRATCH/sample_${n}_$BASHPID.json"
+      ms=$(ip netns exec "${NS[$n]}" curl -s -o "$tmp" -w '%{time_total}' --max-time 2 "http://127.0.0.1:${REST[$n]}/info" 2>/dev/null); rc=$?
+      [[ $rc == 28 ]] && to=true; [[ $rc == 0 ]] || ms=""
+      info=$(cat "$tmp" 2>/dev/null); rm -f "$tmp"
+      ticks=$(awk '{sub(/^.*\) /, ""); print $12 + $13}' "/proc/$p/stat" 2>/dev/null)
+      rss=$(awk '/^VmRSS:/ {printf "%.1f", $2 / 1024}' "/proc/$p/status" 2>/dev/null)
+      io=$(awk '/^read_bytes:/ {r = $2} /^write_bytes:/ {w = $2} END {if (NR) printf "%.1f %.1f", r / 1048576, w / 1048576}' "/proc/$p/io" 2>/dev/null)
+    fi
+    row+=$(jq -cn --arg n "$n" --arg st "$st" --argjson t "$t" --arg info "$info" --arg p "$p" --arg ms "$ms" --argjson to "$to" \
+                  --arg ticks "$ticks" --arg rss "$rss" --arg io "$io" '($info | (try fromjson catch null)) as $i
+      | def num: if . == "" then null else tonumber end;
+        {name: $n, t: $t, state: $st, answered: ($i != null),
+         headersHeight: $i.headersHeight, fullHeight: $i.fullHeight, bestHeaderId: $i.bestHeaderId,
+         bestFullHeaderId: $i.bestFullHeaderId, peers: $i.peersCount, mining: $i.isMining,
+         pid: ($p | num), loopback_info_ms: (if $ms == "" then null else ($ms | tonumber * 1000 | . * 10 | round / 10) end),
+         timeout: $to, cpu_ticks: ($ticks | num), rss_mb: ($rss | num),
+         io_read_mb: ($io | if . == "" then null else (split(" ")[0] | tonumber) end),
+         io_write_mb: ($io | if . == "" then null else (split(" ")[1] | tonumber) end)}')","
+  done
+  row="{\"t\": $t$([[ -n "$ev" ]] && printf ', "event": "%s"' "$ev"), \"loadavg1\": $la, \"mem_available_mb\": $ma, \"nodes\": [${row%,}]}"
+  { flock 9; printf '%s\n' "$row" >&9; } 9>> "$RIG_LOG_DIR/samples.jsonl"; }
+diag_sampler(){ while :; do sample_row; sleep "${PEERYARD_SAMPLE_S:-3}"; done; }
 diag_sampler & DIAG_PID=$!
+RIG_SAMPLING=1   # from here on, every rig event also takes a sample (bring-up launches record their event only)
 trap 'kill "$DIAG_PID" 2>/dev/null; stop_all' EXIT
 
 echo "[rig] === handing off to hook: $HOOK ==="

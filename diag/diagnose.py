@@ -243,6 +243,8 @@ def load(path: str) -> List[List[NodeSample]]:
             if not line:
                 continue
             row = json.loads(line)
+            if row.get("event"):
+                continue  # an out-of-cycle sample taken at a rig event: rounds stay one sampling interval apart
             t = int(row.get("t", 0))
             history.append([NodeSample(name=n["name"], at=int(n.get("t", t)), state=n.get("state", RUNNING),
                                        answered=bool(n.get("answered")), headers=n.get("headersHeight"),

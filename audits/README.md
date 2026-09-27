@@ -1,6 +1,6 @@
 # audits: the evidence of a run, kept next to what it produced
 
-One directory per run, `audits/<date>_<slug>/` (for a pull-request review `<date>_pr-<N>`). Git ignores
+One directory per run, `audits/<date>_<slug>/` (for a pull-request review `<date>_pr-<N>`; the date is UTC). Git ignores
 everything here except this file and the example, so the evidence stays on the machine that made it and can
 answer follow-up questions later. The layout follows the one this tool was built with:
 

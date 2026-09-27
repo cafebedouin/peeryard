@@ -82,7 +82,8 @@ Labels: use the thread's own convention if it has one; otherwise exactly one of
     naming internal parts of the tool. The tool is already named in the credit line, and its exact commands go in
     the reproduction.
 16. **No session links.** No `claude.ai/code/session…` URL and no `Claude-Session:` trailer in a posted text,
-    commit or PR body: nobody else can open one. `comment-lint` FAILs on either.
+    commit or PR body: nobody else can open one. `comment-lint` FAILs on either. The version in the credit line is the jar's own `appVersion` (`review/provenance.sh`): for a jar built on a
+    pull request's merge base that is sbt-dynver's `<last tag>-<commits since>-<sha>-SNAPSHOT`, which is what the node reports.
 
 ## Shipping a reproduction
 - Result first, script last; over ~60 lines, link a gist or a branch file with its sha256.

@@ -56,7 +56,7 @@ if [[ -z "$BASE" ]]; then
   BASE="$(git -C "$CLONE" merge-base "origin/$bref" "pr-$PR")" || { echo "revert-check: no merge base with origin/$bref" >&2; exit 2; }
 fi
 BASE_SHA="$(git -C "$CLONE" rev-parse "$BASE^{commit}")"
-say "revert-check #$PR: head ${HEAD_SHA:0:12} base ${BASE_SHA:0:12} ($(date -u +%FT%TZ)); JDK $J8"
+[[ "${REVERT_CHECK_LOCKED:-0}" == 1 ]] || say "revert-check #$PR: head ${HEAD_SHA:0:12} base ${BASE_SHA:0:12} ($(date -u +%FT%TZ)); JDK $J8"
 
 # split the diff
 mapfile -t ALL < <(git -C "$CLONE" diff --name-only "$BASE_SHA" "$HEAD_SHA")

@@ -6,4 +6,5 @@ names) and write, on your own, what you would say about it: what it changes, wha
 what you would test. Only then open the draft at {{DRAFT}} and answer, with file:line for every claim, under
 three headings **verified / couldn't verify / would cut**: does each finding in the draft stand on the code
 alone, without the draft's framing? Is anything in the code the draft missed that matters more? Is any
-claim stated as executed that you cannot see evidence for in {{CAPTURES}}? Do not run anything.
+claim stated as executed that you cannot see evidence for in {{CAPTURES}}? Do not build or run tests; reading the
+code and `git diff` is expected.

@@ -33,16 +33,19 @@ Rules that bind you here:
 
 Quick start for a review of PR N of ergoplatform/ergo, on the PR's own base:
 ```
-git clone https://github.com/ergoplatform/ergo ~/src/ergo
+git clone --filter=blob:none https://github.com/ergoplatform/ergo ~/src/ergo   # anywhere; a partial clone is fine
 export DIFFRUN_ERGO_CLONE=~/src/ergo
+bash review/pick.sh --repo ergoplatform/ergo [--pr N]        # picks N when none is given (a few minutes: it fetches each PR head
+                                                            # and checks each for a prior review); prints merges@<mb>, the merge base
 bash review/prior.sh ergoplatform/ergo N                     # "current": already reviewed with peeryard at this head; stop
-bash review/pick.sh --repo ergoplatform/ergo --pr N          # prints merges@<mb>: the merge base with the PR's base branch
 bash review/footprint.sh ~/src/ergo <mb> N                   # which scenario rows the diff touches (none is a valid answer)
-bash review/revert-check.sh --pr N --out audits/<date>_pr-N/captures/revert-check   # takes the lock itself, only if it has tests to run
-bash diffrun/build.sh <mb>                                   # the base jar (the PR's own base, not a release tag)
-bash diffrun/build.sh <mb> <mb>...pr-N                       # the candidate jar
+bash review/revert-check.sh --pr N --out audits/<date>_pr-N/captures/revert-check   # takes the lock itself, only if it has tests to run;
+                                                            # when every class is compile-error-without, revert one production hunk: --revert <regex>
+bash diffrun/build.sh <mb>                                   # the base jar (the PR's own base, not a release tag); builds need no lock
+bash diffrun/build.sh <mb> <mb>...pr-N                       # the candidate jar (the first sbt build on a host downloads dependencies: 10-20 min)
 bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/<kind>.json --base <base.jar> --candidate <cand.jar> --out audits/<date>_pr-N/captures/<kind>
 ```
-Every node run goes through `review/with-lock.sh` (one network per host; agents queue). A scenario verdict is
+Every node run and every sbt test run goes through `review/with-lock.sh` (one network per host; agents queue, and
+another agent's run can hold the lock for up to 40 minutes; `--wait` caps the wait, default 6 h). Jar builds do not take it. A scenario verdict is
 quoted with the release's own rate for the same predicate on this host (`diffrun/examples/`, or an A/A run) next
 to it, never alone. Skip a scenario when the fit table says no row answers the PR's question; say so in the report.

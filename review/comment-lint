@@ -39,6 +39,16 @@ def prose_only(text):
     return re.sub(r"<!--.*?-->", " ", text, flags=re.S)
 
 
+def public_part(raw):
+    """The text review/post.sh would post: everything above the first internal heading or marker."""
+    out = []
+    for line in raw.splitlines(keepends=True):
+        if re.match(r"^## (Reviews|Upstream to peeryard|Internal|Not run)", line) or re.match(r"^<!-- internal -->\s*$", line):
+            break
+        out.append(line)
+    return "".join(out)
+
+
 def lint(path, kind):
     raw = open(path, encoding="utf-8").read()
     # never publish a session link or a Claude-Session trailer: nobody else can open one
@@ -47,6 +57,7 @@ def lint(path, kind):
         break
     else:
         out_session = None
+    raw = public_part(raw)   # the same cut as review/post.sh: internal sections are not posted, so they are not counted
     prose = prose_only(raw)
     out = []
     if out_session:

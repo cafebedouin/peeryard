@@ -21,6 +21,7 @@ while read -r f; do
   case "$f" in
     *network/*|*scorex/core/network*) HIT[network]=1 ;;
     *modifierprocessors/*|*nodeView/history/*) HIT[history]=1 ;;
+    *Snapshot*|*UtxoSetSnapshotProcessor*|*DigestState*) HIT[bootstrap]=1 ;;
     *nodeView/state/*) HIT[state]=1 ;;
     *mining/*|*settings/*) HIT[mining]=1 ;;
     *mempool/*|*wallet/*) HIT[mempool-wallet]=1 ;;
@@ -28,12 +29,13 @@ while read -r f; do
     *) HIT[other]=1 ;;
   esac
 done <<< "$files"
-if [[ -n "$ROWS" ]]; then for k in network history state mining mempool-wallet; do [[ -n "${HIT[$k]:-}" ]] && echo "$k"; done; exit 0; fi
+if [[ -n "$ROWS" ]]; then for k in network history state bootstrap mining mempool-wallet; do [[ -n "${HIT[$k]:-}" ]] && echo "$k"; done; exit 0; fi
 echo "production files changed by #$PR on $BASE: $(wc -l <<< "$files")"; while read -r f; do echo "  $f"; done <<< "$files"
 echo; echo "recipes that fit (diffrun/scenarios/FIT.md):"
 [[ -n "${HIT[network]:-}" ]] && echo "  network       -> scenario:fork-convergence (or its smoke), interop"
 [[ -n "${HIT[history]:-}" ]] && echo "  history       -> scenario:sibling-fork (or its smoke), scenario:fork-convergence"
 [[ -n "${HIT[state]:-}" ]]   && echo "  state         -> scenario:fork-convergence (a switch is a rollback), interop"
+[[ -n "${HIT[bootstrap]:-}" ]] && echo "  snapshot/digest -> bootstrap-modes (one pair; there is no smoke manifest, the scenario is one pair already)"
 [[ -n "${HIT[mining]:-}" ]]  && echo "  mining/params -> interop (no review kind covers the retarget; the rig example soak measures block rate across it, run by hand: rig/run-suite.sh soak)"
 [[ -n "${HIT[mempool-wallet]:-}" ]] && echo "  mempool/wallet -> txload"
 [[ -n "${HIT[api]:-}" ]]     && echo "  api           -> none (the scenarios poll /info and /blocks/at; a change there can VOID runs)"

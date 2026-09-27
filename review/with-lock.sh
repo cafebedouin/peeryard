@@ -31,4 +31,4 @@ until [[ "$(oldest_live)" == "$(basename "$TICKET")" ]] && flock -n 9; do
 done
 rm -f "$TICKET"   # holder no longer queues; the flock is what it holds
 truncate -s 0 "$LOCK"; printf '%s pid %s: %s\n' "$(date -u +%FT%TZ)" "$$" "$*" >&9
-"$@"; exit $?
+"$@"; rc=$?; truncate -s 0 "$LOCK"; exit $rc   # the holder line is cleared on release

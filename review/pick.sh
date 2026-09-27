@@ -21,7 +21,7 @@ git -C "$CLONE" fetch -q origin 2>/dev/null || true
 if [[ -n "$PR" ]]; then list="$(gh pr view "$PR" -R "$REPO" --json number,title,isDraft,reviews,baseRefName -q '[.] | .[] | [.number, .isDraft, (.reviews | length), .baseRefName, .title] | @tsv')"
 else list="$(gh pr list -R "$REPO" --state open --limit "$LIMIT" --json number,title,isDraft,reviews,baseRefName -q '.[] | [.number, .isDraft, (.reviews | length), .baseRefName, .title] | @tsv')"; fi
 echo "# repo $REPO  base ${BASE:-own base branch per PR}  seed $SEED  $(date -u +%FT%TZ)"
-printf '%-6s %-6s %-5s %-18s %-10s %-8s %-6s %s\n' pr draft revs merges@base fit prior agent title
+printf '%-6s %-6s %-5s %-18s %-28s %-8s %-6s %s\n' pr draft revs merges@base fit prior agent title
 cands=(); FPERR="$(mktemp)"; trap 'rm -f "$FPERR"' EXIT
 while IFS=$'\t' read -r n draft revs baseref title; do
   [[ -z "$n" ]] && continue

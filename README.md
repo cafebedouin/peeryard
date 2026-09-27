@@ -134,7 +134,8 @@ PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/run-suite.sh bringup txload     # rig bri
 ```
 With no names it runs every example in `rig/examples/suite.tsv`, skipping those whose artifacts are not set.
 
-**A candidate jar.** Built from a clone of ergo with JDK 8 and sbt (set `JAVA8_HOME` if JDK 8 is not found under
+**A candidate jar.** Built from a clone of ergo with JDK 8 and sbt (the first build on a host downloads sbt's dependencies: 10 to 20 minutes;
+later builds are cached by the diff's hash) (set `JAVA8_HOME` if JDK 8 is not found under
 `/usr/lib/jvm`). The example takes the production diff of ergoplatform/ergo#2511 (`master...pr-2511`: from the
 PR's merge base with master to its head) and applies it onto v6.0.6, as the hosted CI example does;
 `-- <paths>` restricts the diff to those paths (hunk isolation by file). The example holds while #2511 is open; once it

@@ -40,6 +40,7 @@
 #   rss_mb <node> / data_mb <node>   resident memory and data-directory size in MB
 #   link_netem <a> <b> <spec>       replace netem on the a->b direction, e.g. link_netem A B "delay 40ms loss 5%"
 #   partition <a> <b> / heal <a> <b>  cut a link (100% loss both ways) / restore its configured shaping
+#   flap <a> <b> <down_s> <up_s> <cycles>   partition/heal on a schedule, in the hook's shell (events "flap i/N")
 #   launch <node>; wait_up <node>   first launch of a node declared with "defer": true
 #   relaunch <node>                 stop and restart a node (its chain is kept)
 #   crash <node> / revive <node>    SIGKILL a node and leave it down / bring it back (chain restored from disk)
@@ -538,6 +539,20 @@ partition(){ have_link "$1" "$2" || { harness_fail "partition $1 $2: no such lin
 heal(){ have_link "$1" "$2" || { harness_fail "heal $1 $2: no such link"; return 1; }
   _netem "$1" "$2" "${CONFIGURED["$1,$2"]}" && _netem "$2" "$1" "${CONFIGURED["$2,$1"]}" || return 1; unset 'PARTITIONED[$1,$2]' 'PARTITIONED[$2,$1]'
   rig_event heal "$1" "$2" "" "${EVENT_DETAIL:-}"; echo "[rig] heal $1<->$2${EVENT_DETAIL:+ ($EVENT_DETAIL)}"; }
+# flap <a> <b> <down_s> <up_s> <cycles>: a link that goes down and comes back on a schedule, run in the hook's own
+# shell (it returns after the last up period): partition, down_s, heal, up_s, cycles times. Edges are scheduled from
+# the flap's start, so the time an edge's event and sample take does not accumulate. Each partition and heal event
+# carries detail "flap i/N"; a harness failure (a netem change not applied) counts as usual.
+flap(){ local a="$1" b="$2" down="$3" up="$4" cyc="$5" i t0 at
+  t0=$(date +%s%3N)
+  for ((i = 1; i <= cyc; i++)); do
+    at=$((t0 + (i - 1) * (down + up) * 1000)); _sleep_until "$at"
+    EVENT_DETAIL="flap $i/$cyc" partition "$a" "$b"
+    _sleep_until $((at + down * 1000)); EVENT_DETAIL="flap $i/$cyc" heal "$a" "$b"
+  done
+  FLAP_LAST_HEIGHT=$(full_height "$a")   # <a>'s full height at the last edge, for the caller's margin
+  _sleep_until $((t0 + cyc * (down + up) * 1000)); }
+_sleep_until(){ local now; now=$(date +%s%3N); (( $1 > now )) && sleep "$(awk -v d=$(( $1 - now )) 'BEGIN {printf "%.3f", d / 1000}')"; return 0; }
 # ---- state and peer oracles ----
 # same_state A B: the UTXO state root at the tip, compared only when both nodes are at the same full height
 # (roots differ by height): SAME@h:root / DIFF@h:A=..:B=.. / NOHEIGHT, or, when the heights differ,

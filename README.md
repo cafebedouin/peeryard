@@ -52,8 +52,8 @@ split and rejoined, inspected, repaired and sent back out.
   upstream pull requests.
 - `stack/` — a companion for the review queue: which open PRs share text and which one to land first. Git
   only; triage, not authority (see its README's Known issue).
-- `patches/` — node fixes peeryard carries until they land upstream (ours and adopted PRs; eight open-PR patches on
-  6.0.6 today, seven in the default stack), the reference node built from the release plus those patches, and a check that flags a patch a new
+- `patches/` — node fixes peeryard carries until they land upstream (ours and adopted PRs; nine open-PR patches on
+  6.0.6 today, eight in the default stack), the reference node built from the release plus those patches, and a check that flags a patch a new
   release has made redundant. A pull-request review builds both jars on the PR's own merge base, never on this stack.
 - `ROADMAP.md` — what is covered by layer, what is planned next, the scenario backlog, and what is out of scope.
 - `review/` — reviewing a pull request with all of the above: pick a PR, run the recipes that fit it, write the

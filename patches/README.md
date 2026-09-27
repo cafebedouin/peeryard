@@ -98,7 +98,7 @@ Three of the entries are one package, the sync ladder: `ergo/001` (V2 sync summa
 `ergo-matrix/004` (the genesis anchor and scan-back, #2529) and `ergo/005` (the near-tip floor, #2581, issue #2575),
 assembled with a fixture fix for `DeepRollBackSpec` on ergoplatform/ergo#2535 (the comment of 2026-09-26 there gives
 the 28-run isolation table on v6.0.7: the spec passes only with a sync-point fix and the scan-back, 20 of 20 with the
-fixture fix). `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7.
+fixture fix). `ergo/004` (#2596) is the pruned-digest NiPoPoW stall; `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7.
 The witness column of `patches.json` summarizes runs whose captures are not in this repository (`audits/` is local by
 design); a patch of ours is the upstream commit as exported, with its author and co-author trailers.
 
@@ -107,6 +107,7 @@ design); a patch of ours is the upstream commit as exported, with its author and
 | ergo | 001 | Key V2 sync summaries by selected tip and requested mode | A. Shannon (production diff only) | ergoplatform/ergo#2511 | under-review | `diffrun fork-convergence`, `diffrun sibling-fork` |
 | ergo | 002 | MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors | ours | ergoplatform/ergo#2573 | proposed | `rig reorg-mempool` |
 | ergo | 003 | Prevent bestFullBlock/bestHeader divergence on sibling forks | jozanek (production diff only) | ergoplatform/ergo#2313 | under-review, `only_for` sibling-fork | `diffrun sibling-fork` |
+| ergo | 004 | Do not start full block download inside a NiPoPoW headers gap | ours | ergoplatform/ergo#2596 | proposed | `rig nipopow-bootstrap (pruned digest variant, to be added)` |
 | ergo | 005 | Do not scan below minimal full block height for block sections near the tip | ours | ergoplatform/ergo#2581 | proposed | `rig nipopow-bootstrap` |
 | ergo | 006 | Check a header's age against its parent's own height, not the height index | ours | ergoplatform/ergo#2580 | proposed | `diffrun fork-convergence (loaded hosts)` |
 | ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | proposed | none (a fix the stack carries) |

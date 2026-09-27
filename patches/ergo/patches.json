@@ -64,6 +64,23 @@
       ]
     },
     {
+      "id": "004",
+      "file": "004-nipopow-gap-floor.patch",
+      "title": "Do not start full block download inside a NiPoPoW headers gap",
+      "origin": "ours",
+      "upstream_pr": 2596,
+      "fixes": "a pruned digest node bootstrapped from a NiPoPoW proof latches its full-block floor inside the proof's sparse prefix and never applies a full block (issue #2595)",
+      "status": "proposed",
+      "needed_by": [
+        "rig nipopow-bootstrap (pruned digest variant, to be added)"
+      ],
+      "witness": "unit: PopowProcessorSpecification, four properties (gap, numeric clamp, mid-epoch round-up with no downloads below the floor, continuous-chain regression): on v6.0.7 with the tests alone the first three fail and the regression passes; with the change 6 of 6, history specs 74 of 74 (CI A/B on GitHub-hosted runners to follow); network run of the fixed node not yet done",
+      "added": "2026-09-27",
+      "responses": [
+        "2026-09-27: issue #2595 and PR #2596 opened against v6.0.7"
+      ]
+    },
+    {
       "id": "005",
       "file": "005-scan-floor-near-tip.patch",
       "title": "Do not scan below minimal full block height for block sections near the tip",

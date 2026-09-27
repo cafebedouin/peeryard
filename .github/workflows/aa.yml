@@ -12,13 +12,42 @@ on:
     inputs:
       tag: { description: 'ergoplatform/ergo release tag to calibrate (the jar is its ergo-<version>.jar asset)', default: 'v6.0.6' }
       sha256: { description: 'sha256 of that jar, if known (checked when given)', default: '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }
+      node: { description: 'release (the tag asset in both roles) or reference (the release plus the carried patches, built here; sibling-fork on its own set)', default: 'release' }
   push:
     branches: [ 'ci/aa' ]
-run-name: "A/A calibration on ${{ inputs.tag || 'v6.0.6' }}"
+run-name: "A/A calibration on ${{ inputs.tag || 'v6.0.6' }} (${{ inputs.node || 'release' }})"
 permissions:
   contents: read
 jobs:
+  build:
+    name: reference nodes (release plus the carried patches)
+    if: inputs.node == 'reference'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/diffrun/builds
+          key: peeryard-stacks-${{ hashFiles('patches/**', 'diffrun/build.sh') }}
+      - name: ergo clone
+        run: git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
+      - name: Build the reference node and the sibling-fork set
+        run: |
+          export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
+          out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
+          put(){ cp "$2" "$out/$1.jar"; cp "$2.json" "$out/$1.jar.json"; cp "$2.stack.json" "$out/$1.stack.json" 2>/dev/null || true; }
+          put reference "$(bash patches/stack.sh --build ergo | tail -1)"
+          put sibling-fork "$(bash patches/stack.sh --build --for sibling-fork ergo | tail -1)"
+          { echo '```'; sha256sum "$out"/*.jar; for s in "$out"/*.stack.json; do echo "$(basename "$s"): $(jq -c '[.patches[].id]' "$s")"; done; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: reference-jars, path: jars/, retention-days: 30 }
   aa:
+    needs: build
+    if: always() && needs.build.result != 'failure' && needs.build.result != 'cancelled'
     name: ${{ matrix.scenario }} shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
@@ -39,6 +68,7 @@ jobs:
     env:
       TAG: ${{ inputs.tag || 'v6.0.6' }}
       SHA: ${{ inputs.sha256 || '' }}
+      NODE: ${{ inputs.node || 'release' }}
     steps:
       - uses: actions/checkout@v4
       - name: Host prerequisites
@@ -50,7 +80,16 @@ jobs:
           { uname -r; nproc; free -m | head -2; } | tee host.txt
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '21' }
-      - name: Reference jar (the release asset; sha256 checked when given; registered as the version the tag names)
+      - uses: actions/download-artifact@v4
+        if: env.NODE == 'reference'
+        with: { name: reference-jars, path: jars }
+      - name: Reference node jar (built by the build job; the sidecar beside it names its stack)
+        if: env.NODE == 'reference'
+        run: |
+          j="$PWD/jars/reference.jar"; [ "${{ matrix.scenario }}" = sibling-fork ] && j="$PWD/jars/sibling-fork.jar"
+          echo "JAR=$j" >> "$GITHUB_ENV"; sha256sum "$j"; jq -c '[.patches[].id]' "$j.stack.json" 2>/dev/null || true
+      - name: Release jar (the release asset; sha256 checked when given; registered as the version the tag names)
+        if: env.NODE != 'reference'
         run: |
           v="${TAG#v}"; mkdir -p .cache; echo "JAR=$PWD/.cache/ergo-$v.jar" >> "$GITHUB_ENV"
           curl -fsSL -o ".cache/ergo-$v.jar" "https://github.com/ergoplatform/ergo/releases/download/$TAG/ergo-$v.jar"
@@ -62,7 +101,7 @@ jobs:
           s=${{ matrix.scenario }}
           jq --argjson n ${{ matrix.pairs }} 'del(.stop_when, .max_n) | .n = $n' "diffrun/scenarios/$s.json" > "diffrun/scenarios/aa-$s.json"
           jq -c '{n, stop_when, precheck}' "diffrun/scenarios/aa-$s.json"
-      - name: Run (the release in both roles)
+      - name: Run (the same jar in both roles)
         run: |
           s=${{ matrix.scenario }}; o="$RUNNER_TEMP/out/$s"
           bash diffrun/run.sh "diffrun/scenarios/aa-$s.json" --base "$JAR" --candidate "$JAR" --out "$o" || echo "run.sh exit $?"
@@ -94,6 +133,7 @@ jobs:
       - name: Pooled A/A rates
         run: |
           {
+            echo "node: ${{ inputs.node || 'release' }}  tag: ${{ inputs.tag || 'v6.0.6' }}"
             echo '```'
             python3 diffrun/aa_pool.py --when 'switched==true' --when 'switched==false' shards/aa-fork-convergence-*/verdict.json || true
             python3 diffrun/aa_pool.py --when 'E_total>0' --when 'D_confirmed==0' --when 'D_total==0' shards/aa-sibling-fork-*/verdict.json || true

@@ -47,5 +47,6 @@ bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/<kind>.json --
 ```
 Every node run and every sbt test run goes through `review/with-lock.sh` (one network per host; agents queue, and
 another agent's run can hold the lock for up to 40 minutes; `--wait` caps the wait, default 6 h). Jar builds do not take it. A scenario verdict is
-quoted with the release's own rate for the same predicate on this host (`diffrun/examples/`, or an A/A run) next
-to it, never alone. Skip a scenario when the fit table says no row answers the PR's question; say so in the report.
+quoted with an A/A rate for the same predicate next to it, never alone: a review builds on the PR's merge base and an
+A/A per merge base is too expensive, so the quoted rate is the release's (and the reference node's) on the GitHub
+runner class from `aa.yml`, named as a proxy in the report (`diffrun/README.md`); a host A/A when you have one. Skip a scenario when the fit table says no row answers the PR's question; say so in the report.

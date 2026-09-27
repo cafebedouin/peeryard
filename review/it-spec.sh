@@ -23,7 +23,10 @@ is_jdk8(){ local v; [[ -x "$1/bin/java" ]] && v="$("$1/bin/java" -version 2>&1)"
 J8="${JAVA8_HOME:-}"
 if [[ -z "$J8" ]]; then for c in /usr/lib/jvm/java-8-* /usr/lib/jvm/java-1.8.0* /usr/lib/jvm/temurin-8-* /usr/lib/jvm/zulu8* /usr/lib/jvm/jdk1.8.0* /usr/lib/jvm/openjdk-8*; do is_jdk8 "$c" && { J8="$c"; break; }; done; fi
 [[ -n "$J8" ]] && is_jdk8 "$J8" || { echo "it-spec: no JDK 8 (set JAVA8_HOME)" >&2; exit 2; }
-W="$(mktemp -d "${TMPDIR:-/tmp}/it-spec.XXXXXX")"; trap 'git -C "$clone" worktree remove --force "$W/wt" >/dev/null 2>&1; rm -rf "$W"' EXIT
+W="$(mktemp -d "${TMPDIR:-/tmp}/it-spec.XXXXXX")"
+# the suite's containers write node data under the worktree's tmp as root; a throwaway container removes it
+cleanup(){ docker run --rm -v "$W:/w" busybox rm -rf /w/wt/tmp >/dev/null 2>&1; git -C "$clone" worktree remove --force "$W/wt" >/dev/null 2>&1; rm -rf "$W"; }
+trap cleanup EXIT
 git -C "$clone" worktree add -q --detach "$W/wt" "$ref" || { echo "it-spec: worktree failed" >&2; exit 2; }
 sha="$(git -C "$W/wt" rev-parse HEAD)"; mkdir -p "$W/wt/tmp"
 export JAVA_HOME="$J8" XDG_RUNTIME_DIR="${DIFFRUN_RUNTIME_DIR:-/tmp/sr-$(id -u)}"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"

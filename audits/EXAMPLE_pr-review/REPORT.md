@@ -2,7 +2,7 @@ Review carried out by <tool> (<vendor>, <model>) for <person>, using <review/pro
 
 **<Verdict in one line: what the change does and whether the executed evidence supports it>**
 
-Executed: `<scenario or command>` on <base version> and this branch at `<sha>`: <the one-sentence result, numbers in the main clause>. The release's own rate on this host: <A/A rate, or "not measured">. Not run: <list>.
+Executed: `<scenario or command>` on <base version> and this branch at `<sha>`: <the one-sentence result, numbers in the main clause>. The release's own rate on this host: <A/A rate, or "not measured">. Logs: <what else differs between the arms' node logs, or "no feature separates the arms; no new message">. Not run: <list>.
 
 **[<label>] <one concern, imperative headline>**
 

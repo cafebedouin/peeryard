@@ -81,6 +81,8 @@ def lint(path, kind):
             out.append(("WARN", "rule 12: credit line has no peeryard version (review/provenance.sh prints 'peeryard v<version> on <nodes>')"))
         if kind == "reply" and not (lines and CREDIT.match(lines[0])):
             out.append(("FAIL", f"a reply opens with its credit line and the marker '{MARKER}' (templates/reply.md)"))
+    if kind in ("review", "pr") and re.search(r"^Executed:", prose, re.M) and not re.search(r"\bLogs:", prose):
+        out.append(("WARN", "rule 11c: an executed A/B states its log profile difference (a 'Logs:' clause: what else differs between the arms, or 'no feature separates the arms; no new message')"))
     if kind in ("review", "pr"):
         if not (lines and CREDIT.match(lines[0])):
             out.append(("WARN", "rule 12: first line is not the credit line (Review carried out by … / Prepared with …)"))

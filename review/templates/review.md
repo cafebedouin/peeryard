@@ -2,7 +2,7 @@ Review carried out by <tool> (<vendor>, <model>) for <person>, using <review/pro
 
 **<Verdict in one line: what the change does and whether the executed evidence supports it>**
 
-Executed: `<scenario or command>` on <base version> and this branch at `<sha>`: <the one-sentence result, numbers in the main clause>. The release's own rate on this host for the same predicate: <A/A figure, from `diffrun/examples/` or a run on this host>. Not run: <what the fit table skipped and why; the revert check; other platforms>.
+Executed: `<scenario or command>` on <base version> and this branch at `<sha>`: <the one-sentence result, numbers in the main clause>. Logs: <what else differs between the arms' node logs: the features that separate them and the messages new on the candidate (logab), or "no feature separates the arms; no new message">. The release's own rate on this host for the same predicate: <A/A figure, from `diffrun/examples/` or a run on this host>. Not run: <what the fit table skipped and why; the revert check; other platforms>.
 
 **[<label>] <one concern, imperative headline>**
 

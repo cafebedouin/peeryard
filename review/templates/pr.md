@@ -10,7 +10,7 @@ Invariant kept: <what does not change for existing users>. Falsifier: <what woul
 
 Recommended: <merge as is | merge after …>.
 
-Executed: <tests and their results; each new test shown to fail when its rule is broken>. Not run: <list>.
+Executed: <tests and their results; each new test shown to fail when its rule is broken>. Logs: <for any network run, what else differs between the arms' node logs (logab), or "no feature separates the arms; no new message">. Not run: <list>.
 
 Evidence: `<verdict line>`: <one sentence on what it shows>.
 

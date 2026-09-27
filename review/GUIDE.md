@@ -68,6 +68,14 @@ Labels: use the thread's own convention if it has one; otherwise exactly one of
     supported). From a fork, do not emulate stacks by hand (PRs carrying the layers below them, drafts held until the
     lower one merges, rebases down the chain). Before opening any PR, look at the open PRs touching the same files,
     anyone's: when one overlaps, build on it (a PR into its branch) rather than beside it.
+11c. **A/B the logs, not only the predicate.** A before/after shows the fault without the change and its absence with it;
+    it does not show what else the change did. Every executed A/B therefore states its log profile difference in one
+    clause after `Executed:` (`Logs:`): the per-run features that separate the candidate's node logs from the base's
+    and the messages new on the candidate (`diffrun/logab.sh` writes them after every diffrun verdict;
+    `review/logab-runs.sh` does the same for rig runs kept with `PEERYARD_KEEP_LOGS=1` and for a CI fork's
+    integration-suite artifacts), or "no feature separates the arms; no new message". A difference is a lead to read,
+    not a finding; a finding needs its own executed witness.
+
 12. **Credit in the first line, always.** Every text opens with a credit line that names the tool and the model
     that prepared it, the peeryard version and the node builds that were run: "Prepared with <tool> (<vendor>,
     <model>) for <person>, using peeryard v0.1.0 on reference node v6.0.6+001 (1a2b3c4d5e6f)", the part after

@@ -55,8 +55,11 @@ while IFS=$'\t' read -r name marker to envs needs; do
       124) why="TIMEOUT after ${to}s" ;; *) why="exit $rc" ;; esac
     if [[ -n "$exp" ]]; then echo "rig $name: FAIL$exp ($why; not counted; see $OUT/rig_$name.txt)"
     else echo "rig $name: FAIL ($why; see $OUT/rig_$name.txt)"; failed=$((failed + 1)); fi
-    # keep the node logs of a run that did not PASS beside its output (the rig's scratch is not deleted, but a CI
-    # artifact carries only --out): <OUT>/logs_<name>/<node>.log and the rig's probe.log
+  fi
+  # keep the node logs beside the output: of a run that did not PASS (the rig's scratch is not deleted, but a CI artifact
+  # carries only --out), or of every run when PEERYARD_KEEP_LOGS=1 (the material for a log A/B, review/logab-runs.sh):
+  # <OUT>/logs_<name>/<node>.log and the rig's probe.log
+  if [[ $rc -ne 0 || "${PEERYARD_KEEP_LOGS:-0}" == 1 ]] || ! grep -qE "$marker" "$OUT/rig_$name.txt"; then
     sc="$(grep -m1 -o '^\[rig\] scratch: .*' "$OUT/rig_$name.txt" | cut -d' ' -f3)"
     if [[ -n "$sc" && -d "$sc" ]]; then mkdir -p "$OUT/logs_$name"
       for l in "$sc"/rt_*/ergo.log "$sc"/rt_*/*.log "$sc"/probe.log; do [[ -f "$l" ]] || continue

@@ -7,3 +7,6 @@ __pycache__/
 # a private issue register never travels with peeryard
 ISSUES.md
 issues.json
+
+# rendered review-queue pages (queue/build.py output; deployed by the workflow, never committed)
+site/

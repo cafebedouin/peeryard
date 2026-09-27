@@ -1,22 +1,34 @@
 # peeryard
 
-**Status: EXPERIMENTAL (alpha).** peeryard tests Ergo nodes as a **network**, on one Linux machine, with no
-root and no Docker: several real node processes, one network namespace each, links you can delay, drop,
-partition and heal, nodes you can crash and revive, different node versions side by side, and real
-transactions in the blocks. On top of that it runs a scenario against a **release jar and a candidate build**
-N times each and returns one verdict. Many node defects only appear with several nodes and imperfect links
-(forks that never resolve, followers that never switch to the heavier chain, sync that stalls after a reorg),
-and they are hard to reproduce on one machine and flaky in CI. peeryard makes them runnable and repeatable,
-and gives a pull request a before/after measurement to read next to the code. The measurement is noisy: in an
-A/A calibration on one development host, the unchanged 6.0.6 release failed to switch forks in 8 of 16
+**Status: EXPERIMENTAL (alpha).** peeryard exists so that a reviewer who cannot read the node's language can still
+execute its claims. Its author is not a Scala programmer. Every review made with it says which of its statements were
+executed and which were read, and every number in it can be re-run from the command that produced it. That is the
+whole idea: the node is tested as a **network** on one Linux machine, with no root and no Docker (several real node
+processes, one network namespace each, links you can delay, drop, partition and heal, nodes you can crash and revive,
+different versions and implementations side by side, real transactions in the blocks), and a pull request gets a
+before/after measurement to read next to its code instead of an opinion.
+
+**Who it is for.**
+- Ergo node maintainers: not to run, unless you want to. What reaches you is the output: an issue with a reproduction,
+  a pull request whose test fails on the release and passes with the fix, a review that says what was executed. The
+  `regression/` track is the one part meant for your own tree: link shaping inside `src/it`, no image change.
+- Contributors with open pull requests: a before/after on your own change, built on its merge base, with the release's
+  own base rate beside it (`review/`, `diffrun/`).
+- Anyone who wants to help with node development and does not know where to start: `AGENTS.md` and `review/` are a
+  procedure, not a skill. A laptop, a model and a public pull request produce a review a maintainer can act on, in a
+  form that stays the same whoever runs it.
+- Models: an agent asked to review a pull request starts at `AGENTS.md`; a person starts at the quick start below.
+
+**What it is not.** peeryard checks whether a change does what it says and whether it holds under bad network
+conditions. It does not judge whether a change is the right design, and it has nothing to say about cryptography or
+protocol choices; those stay with the maintainers. A verdict is evidence, not proof, and it is noisy: in an A/A
+calibration on one development host, the unchanged 6.0.6 release failed to switch forks in 8 of 16
 `fork-convergence` runs, and the shipped decision rule for that scenario gives a false `SUPPORTS` in about 13% of
 cases when the release switches 85% of the time (`diffrun/README.md`). Read a verdict with those rates beside it.
-
-Code review reads one node. The defects that matter for a network are in how nodes interact, and peeryard creates
-those conditions on demand instead of waiting for them to occur, on a network that can mix the Scala node, the two Rust
-nodes and the Matrix line. It is a lab for a reviewer, not a replacement for one.
-
-An agent asked to review a pull request starts at `AGENTS.md`; a person starts at the quick start below.
+Many node defects only appear with several nodes and imperfect links (forks that never resolve, followers that never
+switch to the heavier chain, sync that stalls after a reorg); they are hard to reproduce on one machine and flaky in
+CI, and peeryard makes them runnable and repeatable on a network that can mix the Scala node, the two Rust nodes and
+the Matrix line. It is a lab for a reviewer, not a replacement for one.
 
 The name is meant like a railyard or a shipyard: a place where the vessels, here peers, are brought in, marshalled,
 split and rejoined, inspected, repaired and sent back out.

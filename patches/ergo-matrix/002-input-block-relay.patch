@@ -1,3 +1,5 @@
+# peeryard patch ergo-matrix/002: Relay a received input block by id to eligible sub-block peers (receive-side guard + relay)
+# upstream: ergoplatform/ergo#2566 (proposed); origin, witness and responses in patches.json
 diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 index 0ca45c317..8d06b5ef3 100644
 --- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala

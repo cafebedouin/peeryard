@@ -1,3 +1,5 @@
+# peeryard patch ergo/005: Do not scan below minimal full block height for block sections near the tip
+# upstream: ergoplatform/ergo#2581 (proposed); origin, witness and responses in patches.json
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
 index e0ba076f8..41b9d98b8 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala

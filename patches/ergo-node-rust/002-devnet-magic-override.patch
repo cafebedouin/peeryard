@@ -1,3 +1,5 @@
+# peeryard patch ergo-node-rust/002: feat(p2p): [proxy] magic overrides the devnet's wire magic
+# upstream: mwaddip/ergo-node-rust#29 (proposed); origin, witness and responses in patches.json
 diff --git a/ergo.toml.example b/ergo.toml.example
 index 95e7962..cbbaa53 100644
 --- a/ergo.toml.example

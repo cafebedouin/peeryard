@@ -1,3 +1,5 @@
+# peeryard patch ergo/009: Log a cached copy of a stored modifier as a duplicate, not as permanently invalid
+# upstream: ergoplatform/ergo#2593 (proposed); origin, witness and responses in patches.json
 commit 4ea8e18e4d01ad300c9d4250d9ef6a267b83bb3d
 Author: cafebedouin <cafebedouin@gmail.com>
 Date:   Sat Sep 26 12:55:52 2026 -0500

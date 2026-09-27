@@ -249,7 +249,7 @@ jql -n --slurpfile m "$MAN" --slurpfile runs "$OUT/runs.jsonl" --argjson minv "$
     --arg bsha "${SHA[base]}" --arg csha "${SHA[candidate]}" --arg bv "${EXPV[base]}" --arg cv "${EXPV[candidate]}" \
     --arg ssha "$(sha256sum "$SCRIPT" | cut -d' ' -f1)" --arg psha "$([[ -n "$PRECHECK" ]] && sha256sum "$PRECHECK" | cut -d' ' -f1)" \
     --arg rev "$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)" --argjson host "$HOSTJ" \
-    --arg fbv "$(tr -d '[:space:]' < "$HERE/../VERSION" 2>/dev/null || echo unknown)" '
+    --arg pyv "$(tr -d '[:space:]' < "$HERE/../VERSION" 2>/dev/null || echo unknown)" '
   include "diffrun";
   $m[0] as $m
   | { base: role_summary($m; "base"; $runs), candidate: role_summary($m; "candidate"; $runs) } as $pr
@@ -257,7 +257,7 @@ jql -n --slurpfile m "$MAN" --slurpfile runs "$OUT/runs.jsonl" --argjson minv "$
       precedence: ["DEGENERATE", "AGAINST", "NULL", "SUPPORTS"],
       same_jar: ($bsha == $csha),
       provenance: { scenario_script_sha256: $ssha, precheck_sha256: (if $psha == "" then null else $psha end),
-                    env: ($m.env // {}), peeryard_version: $fbv, runner_rev: $rev, host: $host },
+                    env: ($m.env // {}), peeryard_version: $pyv, runner_rev: $rev, host: $host },
       precheck: (if $m | has("precheck") then { script: $m.precheck, failed: ([$runs[] | select(.precheck == "fail")] | length) } else null end),
       n_manifest: $m.n, n_min: $nmin, n_run: $n, n_overridden: ($nmin != $m.n), min_valid_runs: $minv,
       sequential: (if $m | has("stop_when") then { max_n: $m.max_n, max_n_effective: $maxn, stop_when: $m.stop_when, stopped_by: $stopped } else null end),

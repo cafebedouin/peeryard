@@ -42,12 +42,34 @@ cleared), which wedges `fork-convergence`. The goal is no exceptions (one refere
 as fixes land upstream: each exception is reported upstream and removed as soon as the upstream change stops breaking
 the other scenarios.
 
+## A fix you cannot publish yet: the private overlay
+
+You will find node defects with this tool, and some will be security problems that go to the project's private channel
+(`SECURITY.md`). Until such a report is public, its fix must not appear in a public tree, and a patch file is a
+location: it names the file, the lines and the condition. Carry it outside this repository instead. `stack.sh` and
+`check.sh` take `PEERYARD_PATCHES_EXTRA=<dir>`, a directory with the same layout as `patches/` (`<repo dir>/patches.json`
+plus the patch files) whose entries are stacked after this tree's own, so the reference node you test on carries the
+fix while the public tree does not:
+
+```
+mkdir -p ~/peeryard-private/ergo
+# ~/peeryard-private/ergo/patches.json: {"repo": "ergoplatform/ergo", "base": "<same tag as patches/ergo>",
+#   "clone_env": "DIFFRUN_ERGO_CLONE", "build": "diffrun/build.sh", "stack_statuses": ["proposed"],
+#   "patches": [{"id": "101", "file": "101-my-fix.patch", "title": "(private)", "status": "proposed", "needed_by": []}]}
+PEERYARD_PATCHES_EXTRA=~/peeryard-private bash patches/stack.sh --build ergo
+```
+
+Keep the overlay out of any public repository and out of run outputs you share (`review/post.sh` posts only the public
+part of a report; `diffrun/lint.sh` can refuse a run that mentions your own private terms, `DIFFRUN_TERMS`). When the
+report is public and the PR exists, the patch moves into `patches/` with its upstream reference.
+
 ## Commands (from the peeryard root)
 
 ```
 DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/check.sh ergo [<release tag>]   # still needed? collides? landed?
 DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/stack.sh [--build] ergo [<base>]  # combined diff, or the reference jar
 DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/stack.sh --build --for sibling-fork ergo   # a scenario's own set
+PEERYARD_PATCHES_EXTRA=<overlay dir> bash patches/stack.sh --build ergo            # plus a private overlay (see above)
 PEERYARD_ERGO_NODE_RUST_CLONE=<clone> bash patches/check.sh ergo-node-rust
 PEERYARD_ARKADIANET_CLONE=<clone> bash patches/check.sh arkadianet
 ```

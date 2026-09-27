@@ -22,7 +22,7 @@ for w in sweep aa; do
   { echo "# Exported by ci/export-workflows.sh (same steps, paths from this repository's root); if this repository is the"
     echo "# source, edit here."
     sed -E -e 's#cd peeryard && ##g' -e 's#; cd peeryard$##' -e "s#'peeryard/#'#g" -e 's#peeryard/##g' \
-           -e "s#ci/peeryard-$w#ci/$w#g" "$in"; } > "$tmp"
+           -e "s#ci/peeryard-$w#ci/$w#g" -e '/PEERYARD_PATCHES_EXTRA/d' "$in"; } > "$tmp"
   if grep -qE "peeryard/|cd peeryard" "$tmp"; then echo "export-workflows: a peeryard/ path survived in $out:" >&2; grep -nE "peeryard/|cd peeryard" "$tmp" >&2; exit 2; fi
   if (( check )); then
     if [[ -f "$out" ]] && cmp -s "$tmp" "$out"; then echo "export-workflows: $out up to date"; else echo "export-workflows: $out is STALE (run ci/export-workflows.sh)"; rc=1; fi

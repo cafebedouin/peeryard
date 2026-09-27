@@ -1,3 +1,5 @@
+# peeryard patch ergo/002: MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors
+# upstream: ergoplatform/ergo#2573 (proposed); origin, witness and responses in patches.json
 diff --git a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala b/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
 index d46670287..f40a1821e 100644
 --- a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala

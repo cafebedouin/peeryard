@@ -13,14 +13,16 @@ if unshare -Urmn true 2>/dev/null; then ok "user namespaces" "(unshare -Urmn)"
 else miss "user namespaces" "(unshare -Urmn failed; Ubuntu 23.10+: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0)"; fi
 if unshare -Urmn bash -c 'ip link add v0 type veth peer name v1 && tc qdisc add dev v0 root netem delay 1ms loss 1%' 2>/dev/null; then ok "netem in a namespace" "(veth + tc qdisc netem)"
 else miss "netem in a namespace" "(sudo modprobe sch_netem; iproute2 with tc)"; fi
-if unshare -Urmn bash -c 'mount --make-rprivate / 2>/dev/null; mount -t tmpfs tmpfs /run && mkdir -p /run/netns && ip netns add fbpreflight && ip netns del fbpreflight' 2>/dev/null
+if unshare -Urmn bash -c 'mount --make-rprivate / 2>/dev/null; mount -t tmpfs tmpfs /run && mkdir -p /run/netns && ip netns add pypreflight && ip netns del pypreflight' 2>/dev/null
 then ok "tmpfs /run + ip netns" "(mount -t tmpfs over /run in the namespace)"
 else miss "tmpfs /run + ip netns" "(mount -t tmpfs tmpfs /run or ip netns add failed inside unshare -Urmn)"; fi
 for c in jq curl unzip ip tc unshare nsenter mount pkill pgrep ps timeout sha256sum realpath; do command -v "$c" >/dev/null && ok "command $c" "($(command -v "$c"))" || miss "command $c" ""; done
 if command -v "$JAVA_BIN" >/dev/null; then ok "java" "($("$JAVA_BIN" -version 2>&1 | head -1); the node is built and tested on JDK 8, published runs used 21)"
 else miss "java" "($JAVA_BIN not found; set PEERYARD_JAVA)"; fi
 avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0); need=$((N * 350))
-if [ "$avail" -ge "$need" ]; then ok "memory for $N nodes" "(${avail} MB available, ~${need} MB needed)"; else miss "memory for $N nodes" "(${avail} MB available, ~${need} MB needed)"; fi
+if [ "$avail" -ge "$need" ]; then ok "memory for $N nodes" "(${avail} MB available, ~${need} MB needed)"
+elif [ "$avail" -ge 700 ]; then ok "memory for 2 nodes" "(${avail} MB available; the ${N}-node examples need ~${need} MB, the two-node ones ~700 MB)"
+else miss "memory for $N nodes" "(${avail} MB available, ~${need} MB needed)"; fi
 [ -w "${TMPDIR:-/tmp}" ] && ok "scratch dir" "(${TMPDIR:-/tmp})" || miss "scratch dir" "(${TMPDIR:-/tmp} not writable)"
 [ $fail = 0 ] && echo "PREFLIGHT: OK" || echo "PREFLIGHT: FAIL"
 exit $fail

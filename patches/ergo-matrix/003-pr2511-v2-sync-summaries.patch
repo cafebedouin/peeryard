@@ -1,3 +1,5 @@
+# peeryard patch ergo-matrix/003: Key V2 sync summaries by selected tip and requested mode (#2511, as patches/ergo/001)
+# upstream: ergoplatform/ergo#2511 (under-review); origin, witness and responses in patches.json
 diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 index 021898dc8..1c830dac4 100644
 --- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala

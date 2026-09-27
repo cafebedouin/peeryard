@@ -32,14 +32,22 @@ if [[ -n "${2:-}" ]]; then tag="$2"; elif [[ -n "$branch" ]]; then tag="peeryard
 else tag="$(gh release view -R "$repo" --json tagName --jq .tagName)"; fi
 git -C "$clone" rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null || git -C "$clone" rev-parse -q --verify "$tag^{commit}" >/dev/null \
   || { echo "tag $tag not found in $clone"; exit 2; }
-W="$(mktemp -d)"; trap 'git -C "$clone" worktree remove --force "$W/wt" >/dev/null 2>&1; rm -rf "$W"' EXIT
+W="$(mktemp -d)"; trap 'git -C "$clone" worktree remove --force "$W/wt" >/dev/null 2>&1; rm -rf "$W" "$MJ"' EXIT
 git -C "$clone" worktree add -q --detach "$W/wt" "$tag"
 if [[ -n "$branch" && -z "${2:-}" ]]; then echo "$repo branch $branch at $(git -C "$W/wt" rev-parse --short=12 HEAD) (patches based on $(jq -r .base "$J"))"
 else echo "$repo release $tag (patches based on $(jq -r .base "$J"))"; fi
 printf '%-4s %-18s %-10s %-14s %s\n' id status verdict "upstream PR" title
+# PEERYARD_PATCHES_EXTRA: a second patches directory with the same layout (<dir>/patches.json and files), whose entries
+# are stacked after this tree's own. It lets a checkout carry patches that are not part of this repository (a private
+# fix under disclosure, a local experiment) without editing the tree. Each patch is resolved to its own directory.
+MJ="$(mktemp)"; trap 'rm -f "$MJ"' EXIT
+jq --arg pd "$(realpath "$PD/$d")" '.patches |= map(. + {path: ($pd + "/" + .file)})' "$J" > "$MJ"
+if [[ -n "${PEERYARD_PATCHES_EXTRA:-}" && -f "$PEERYARD_PATCHES_EXTRA/$d/patches.json" ]]; then
+  jq -s --arg xd "$(realpath "$PEERYARD_PATCHES_EXTRA/$d")" '.[0] as $b | .[1] as $x | $b | .patches += ($x.patches | map(. + {path: ($xd + "/" + .file)}))' "$MJ" "$PEERYARD_PATCHES_EXTRA/$d/patches.json" > "$MJ.2" && mv "$MJ.2" "$MJ"
+fi
 bad=0; stack=" $(jq -r '.stack_statuses | join(" ")' "$J") "
 while IFS=$'\t' read -r id file status pr title; do
-  f="$(realpath "$PD/$d/$file")"
+  f="$file"
   if git -C "$W/wt" apply --check "$f" 2>/dev/null; then v=NEEDED
   elif git -C "$W/wt" apply --reverse --check "$f" 2>/dev/null; then v=CONTAINED
   else v=COLLIDES; fi
@@ -48,5 +56,5 @@ while IFS=$'\t' read -r id file status pr title; do
   if [[ "$stack" == *" $status "* ]]; then
     if [[ $v == NEEDED ]]; then git -C "$W/wt" apply "$f"; else bad=1; fi
   fi
-done < <(jq -r '.patches | sort_by(.id)[] | [.id, .file, .status, (.upstream_pr|tostring), .title] | @tsv' "$J")
+done < <(jq -r '.patches | sort_by(.id)[] | [.id, .path, .status, (.upstream_pr|tostring), .title] | @tsv' "$MJ")
 exit $bad

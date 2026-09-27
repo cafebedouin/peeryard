@@ -19,6 +19,11 @@ JAR="$1"; VER="${2:-}"
 [[ -f "$JAR" ]] || { echo "register: no jar: $JAR" >&2; exit 2; }
 TGT="$(readlink -f "$JAR")"; BUILT=""
 [[ "$TGT" != "$(realpath -s "$JAR")" && -f "$TGT.json" ]] && BUILT="$(jq -r '.expected_app_version // empty' "$TGT.json")"
+# a built jar addressed directly (or a copy of one with its sidecar) carries a build sidecar beside it: same rule
+[[ -z "$BUILT" && -f "$JAR.json" && "$(jq -r '.kind // empty' "$JAR.json" 2>/dev/null)" == build ]] && BUILT="$(jq -r '.expected_app_version // empty' "$JAR.json")"
+if [[ -z "$VER" && $FORCE == 0 && -f "$JAR.json" && "$(jq -r '.kind // empty' "$JAR.json" 2>/dev/null)" == build ]]; then
+  echo "register: $JAR.json is the build sidecar (expected_app_version $BUILT); nothing to write (-f replaces it with a registration)" >&2; exit 0
+fi
 if [[ -z "$VER" ]]; then
   [[ -n "$BUILT" ]] || { echo "register: no version given and $JAR does not resolve to a jar with a sidecar" >&2; exit 2; }
   VER="$BUILT"

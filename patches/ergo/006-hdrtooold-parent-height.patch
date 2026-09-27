@@ -1,3 +1,5 @@
+# peeryard patch ergo/006: Check a header's age against its parent's own height, not the height index
+# upstream: ergoplatform/ergo#2580 (proposed); origin, witness and responses in patches.json
 commit 7072145e6415a03896528c1ab9264804e5d620e9
 Author: cafebedouin <cafebedouin@gmail.com>
 Date:   Sat Sep 26 07:20:38 2026 -0500

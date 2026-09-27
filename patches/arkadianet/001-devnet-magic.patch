@@ -1,3 +1,5 @@
+# peeryard patch arkadianet/001: [chain] devnet_magic overrides the devnet's wire magic
+# upstream: arkadianet/ergo#362 (merged-in-v0.9.0); origin, witness and responses in patches.json
 diff --git a/docs/configuration.md b/docs/configuration.md
 index 0f38ce4..5c4298f 100644
 --- a/docs/configuration.md

@@ -1,3 +1,5 @@
+# peeryard patch ergo-matrix/004: Full V2 sync summaries also carry the genesis header, so a peer always finds a common point
+# upstream: ergoplatform/ergo#2529 (under-review); origin, witness and responses in patches.json
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
 index 9f7a45f0f..82798e354 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala

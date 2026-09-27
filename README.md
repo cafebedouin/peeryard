@@ -32,8 +32,8 @@ split and rejoined, inspected, repaired and sent back out.
   upstream pull requests.
 - `stack/` — a companion for the review queue: which open PRs share text and which one to land first. Git
   only; triage, not authority (see its README's Known issue).
-- `patches/` — node fixes peeryard carries until they land upstream (ours and adopted PRs; seven open-PR patches on
-  6.0.6 today), the reference node built from the release plus those patches, and a check that flags a patch a new
+- `patches/` — node fixes peeryard carries until they land upstream (ours and adopted PRs; eight open-PR patches on
+  6.0.6 today, seven in the default stack), the reference node built from the release plus those patches, and a check that flags a patch a new
   release has made redundant. A pull-request review builds both jars on the PR's own merge base, never on this stack.
 - `ROADMAP.md` — what is covered by layer, what is planned next, the scenario backlog, and what is out of scope.
 - `review/` — reviewing a pull request with all of the above: pick a PR, run the recipes that fit it, write the
@@ -73,6 +73,7 @@ git clone https://github.com/cafebedouin/peeryard && cd peeryard
 **Host setup, once.** Installing the packages and two commands need `sudo`; nothing else in peeryard does.
 ```
 sudo apt-get install -y jq iproute2 util-linux procps coreutils curl unzip git python3 default-jre-headless   # Debian/Ubuntu names
+sudo apt-get install -y openjdk-8-jdk   # only to build candidate jars; sbt too: https://www.scala-sbt.org/download
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # Ubuntu 23.10+ only; see below
 sudo modprobe sch_netem
 unshare -Urmn true && echo "user namespaces ok"
@@ -90,7 +91,7 @@ checks them and fails closed).
 ```
 # the ergo-<version>.jar asset of the GitHub release (ergo v6.0.6 reports appVersion 6.0.6), and its sha256
 curl -fsSL -o ~/ergo-6.0.6.jar https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
-echo '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  '~/ergo-6.0.6.jar | sha256sum -c
+echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $HOME/ergo-6.0.6.jar" | sha256sum -c
 
 # a two-node network: A mines, B syncs; checks the rig itself (about a minute)
 PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh
@@ -135,11 +136,12 @@ PEERYARD_JAR=~/ergo-6.0.6.jar PEERYARD_JAR_B="$CAND" bash rig/devnet.sh up rig/e
 bash rig/devnet.sh curl B /info two           # then: status | logs B | down | up (same command) | wipe
 ```
 
-**A scenario verdict**: release vs candidate, N paired runs, one verdict. The registered version must be exactly
+**A scenario verdict**: release vs candidate. Below, one paired run of the smoke manifest (about ten minutes); a verdict
+to cite comes from the full `fork-convergence.json` (8–12 pairs, 1.5–2.5 hours). The registered version must be exactly
 the appVersion the node reports in `/info`, or every run is VOID.
 ```
 bash diffrun/register.sh ~/ergo-6.0.6.jar 6.0.6
-bash diffrun/run.sh diffrun/scenarios/fork-convergence.json --base ~/ergo-6.0.6.jar --candidate "$CAND" --out ~/fc-2511
+bash diffrun/run.sh diffrun/scenarios/fork-convergence-smoke.json --base ~/ergo-6.0.6.jar --candidate "$CAND" --out ~/fc-2511
 ```
 Example output of a finished run is in `diffrun/examples/`.
 

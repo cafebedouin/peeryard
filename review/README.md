@@ -28,7 +28,7 @@ until the person posts it. Nothing here posts on its own.
    reads it as the maintainer would. Their reports sit beside the draft; the draft is fixed, not defended.
 6. **The person posts** — `review/post.sh <owner/repo> <pr> <report.md>` shows the final text, says what it
    contributes (which recipes ran, on which jars, with which verdicts) and asks; only a typed `yes` runs
-   `gh pr comment`. Only the public part is posted: the text above the first `## Upstream to peeryard`,
+   `gh pr comment`. Only the public part is posted: the text above the first `## Reviews`, `## Upstream to peeryard`,
    `## Internal` or `## Not run` heading or `<!-- internal -->` line; nothing else ends it. If `gh` fails,
    `post.sh` exits non-zero with gh's error and saves nothing as posted; on success the posted text is saved
    beside the report with the comment URL. An unattended run uses `post.sh … --queue`

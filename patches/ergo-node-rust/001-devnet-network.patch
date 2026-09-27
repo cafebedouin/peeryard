@@ -1,3 +1,5 @@
+# peeryard patch ergo-node-rust/001: feat(config): add a private devnet network ([proxy] network = "devnet")
+# upstream: mwaddip/ergo-node-rust#28 (proposed); origin, witness and responses in patches.json
 diff --git a/addons/indexer/src/sync.rs b/addons/indexer/src/sync.rs
 index e74801e..e9e4541 100644
 --- a/addons/indexer/src/sync.rs

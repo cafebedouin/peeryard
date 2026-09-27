@@ -16,7 +16,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # (and the internal "## Not run"/"## Internal" sections that follow it), or above an explicit marker line
 # `<!-- internal -->`, whichever comes first. Nothing else cuts: a horizontal rule or an ordinary HTML comment
 # is part of the post. The cut text is what is linted and saved.
-PUB="$(mktemp)"; trap 'rm -f "$PUB"' EXIT; awk '/^## (Upstream to peeryard|Internal|Not run)/{exit} /^<!-- internal -->[[:space:]]*$/{exit} {print}' "$FILE" > "$PUB"
+PUB="$(mktemp)"; trap 'rm -f "$PUB"' EXIT; awk '/^## (Reviews|Upstream to peeryard|Internal|Not run)/{exit} /^<!-- internal -->[[:space:]]*$/{exit} {print}' "$FILE" > "$PUB"
 [[ -s "$PUB" ]] || { echo "post: nothing above the closing-gate section in $FILE" >&2; exit 2; }
 cmp -s "$PUB" "$FILE" || echo "post: internal sections cut; posting the $(wc -l < "$PUB") lines above the first internal heading or marker"
 python3 "$HERE/comment-lint" --kind "$KIND" "$PUB" || { echo "post: the lint FAILed; fix the text first" >&2; exit 3; }

@@ -94,6 +94,11 @@ nodes, apply the combined diff to a checkout of the base and `cargo build --rele
 ## Current list
 
 Run `patches/check.sh` for the live view; this table is `patches.json` as of the last edit (titles, PRs and statuses come from there):
+Three of the entries are one package, the sync ladder: `ergo/001` (V2 sync summaries keyed by tip and mode, #2511),
+`ergo-matrix/004` (the genesis anchor and scan-back, #2529) and `ergo/005` (the near-tip floor, #2581, issue #2575),
+assembled with a fixture fix for `DeepRollBackSpec` on ergoplatform/ergo#2535 (the comment of 2026-09-26 there gives
+the 28-run isolation table on v6.0.7: the spec passes only with a sync-point fix and the scan-back, 20 of 20 with the
+fixture fix). `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7.
 The witness column of `patches.json` summarises runs whose captures are not in this repository (`audits/` is local by
 design); a patch of ours is the upstream commit as exported, with its author and co-author trailers.
 

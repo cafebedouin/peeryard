@@ -199,7 +199,8 @@ node's switch rate is thin data (the A/A calibration in `examples/fork-convergen
 switched on 6.0.6 on one development host, exact 95% interval 0.25–0.75; on GitHub-hosted `ubuntu-24.04` runners,
 the citable class, 23 of 40 switched, interval 0.41–0.73, `aa.yml` run 36289967948 of 2026-09-27; on the reference node,
 the release plus the carried patches, 40 of 40 switched, interval 0.91–1.00, run 36299847716: a candidate is compared
-against the line that applies to the jar it was built on) and has to be re-measured on each release and host
+against the line that applies to the jar it was built on; a second 8-pair run on the development host, under other load, gave
+5 of 16, interval 0.11–0.59: the host number moves, the runner-class number is the one to cite) and has to be re-measured on each release and host
 (an A/A run, the same jar in both roles, measures it), so the rule is chosen to hold across the range. Simulated with `tests/stop_rule_sim.py
 --trials 200000 --seed 1` (standard library only, about 10 s on one development host; the table below is its output for the
 shipped rule):

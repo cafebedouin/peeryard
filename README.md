@@ -19,6 +19,12 @@ before/after measurement to read next to its code instead of an opinion.
   form that stays the same whoever runs it.
 - Models: an agent asked to review a pull request starts at `AGENTS.md`; a person starts at the quick start below.
 
+**Review queue:** [cafebedouin.github.io/peeryard](https://cafebedouin.github.io/peeryard/) lists the open ergoplatform/ergo
+pull requests that need a review, ranked by public rules (`queue/rules.json`), and
+[`/maintainers`](https://cafebedouin.github.io/peeryard/maintainers/) the ones waiting on a maintainer, opening with the
+PRs this test suite depends on. Generated daily from public GitHub data; a disagreement with a rank is a pull request
+against the rules.
+
 **What it is not.** peeryard checks whether a change does what it says and whether it holds under bad network
 conditions. It does not judge whether a change is the right design, and it has nothing to say about cryptography or
 protocol choices; those stay with the maintainers. A verdict is evidence, not proof, and it is noisy: in an A/A

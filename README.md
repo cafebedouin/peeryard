@@ -16,6 +16,8 @@ Code review reads one node. The defects that matter for a network are in how nod
 those conditions on demand instead of waiting for them to occur, on a network that can mix the Scala node, the two Rust
 nodes and the Matrix line. It is a lab for a reviewer, not a replacement for one.
 
+An agent asked to review a pull request starts at `AGENTS.md`; a person starts at the quick start below.
+
 The name is meant like a railyard or a shipyard: a place where the vessels, here peers, are brought in, marshalled,
 split and rejoined, inspected, repaired and sent back out.
 

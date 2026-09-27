@@ -188,6 +188,7 @@ derive_genesis_digest(){
 }
 RIG_LOG_DIR="$(jq -r --arg d "$SCRATCH/out" '.log_dir // $d' "$CFG")"
 mkdir -p "$SCRATCH" "$RIG_LOG_DIR"
+RIG_AFFINITY="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/$$/status)"   # the CPUs this rig may use (a `taskset` around it narrows them)
 mapfile -t NODES < <(jq -r '.nodes[].name' "$CFG")
 # Per-node jar (nodes[].jar, else the top-level jar / PEERYARD_JAR; "${VAR}" expanded from the environment), and a
 # per-node working directory: the node resolves some fallback configs relative to its CWD, so each node gets its
@@ -801,11 +802,27 @@ jars_json="$(for n in "${NODES[@]}"; do printf '%s\t%s\t%s\t%s\n' "$n" "$(basena
   | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {(.[0]): {kind: .[3], jar: .[1], jar_sha256_16: .[2]}}) | add // {}')"
 JAVA_VERSION="$("$JAVA_BIN" -version 2>&1 | head -1)"
 echo "[rig] java: $JAVA_VERSION ($JAVA_BIN, opts: $JAVA_OPTS)"
+# The host card: what machine the run had, so a number measured here can be read as a fact about this host. affinity
+# is the rig's own CPU mask (a run under `taskset` shows it); cpus_online is the host's count. tcp_* are read inside
+# a node's namespace (each namespace has its own). scratch_virtual_disk: under WSL2 the scratch filesystem sits on a
+# virtual disk file, so its speed is the host's, filtered.
+host_card(){ local virt ns="${NS[${NODES[0]}]}"
+  if grep -qi microsoft /proc/version 2>/dev/null; then virt=wsl2; else virt="$(systemd-detect-virt 2>/dev/null)"; [[ -z "$virt" || "$virt" == none ]] && virt=""; fi
+  jq -n --arg kernel "$(uname -r)" --arg online "$(getconf _NPROCESSORS_ONLN)" --arg aff "$RIG_AFFINITY" \
+        --arg mem "$(awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo)" \
+        --arg model "$(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)" --arg virt "$virt" \
+        --arg fs "$(stat -fc %T "$SCRATCH" 2>/dev/null)" \
+        --arg cc "$(ip netns exec "$ns" cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" \
+        --arg r2 "$(ip netns exec "$ns" cat /proc/sys/net/ipv4/tcp_retries2 2>/dev/null)" '
+    def nn: if . == "" then null else . end;
+    { kernel: $kernel, cpus_online: ($online | tonumber), affinity: $aff, mem_mb: ($mem | tonumber),
+      cpu_model: ($model | nn), virt: ($virt | nn), scratch_fs: ($fs | nn), scratch_virtual_disk: ($virt == "wsl2"),
+      tcp_cc: ($cc | nn), tcp_retries2: (if $r2 == "" then null else ($r2 | tonumber) end) }'; }
 jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --arg preset "$CHAIN_PRESET" --arg bi "$BLOCK_INTERVAL" --arg rd "$REWARD_DELAY" \
       --arg gd "$GENESIS_DIGEST" --argjson magic "$MAGIC" --arg poll "$DEFAULT_POLL" --arg dur "${PEERYARD_DURATION:-}" --arg keep "${PEERYARD_KEEP_DATA:-0}" \
-      --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" '
+      --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" '
   $cfg[0] as $c
-  | { effective_schema_version: 1,
+  | { effective_schema_version: 1, host: $host,
       chain: { preset: $preset, blockInterval: (if $bi == "" then "jar default" else $bi end),
                minerRewardDelay: (if $rd == "" then "jar default" else ($rd | tonumber) end),
                genesisStateDigestHex: (if $gd == "" then null else $gd end) },

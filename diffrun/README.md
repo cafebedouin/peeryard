@@ -197,7 +197,9 @@ twice, cap 12. It requires base `count(switched == false) >= 2` and candidate `a
 A false SUPPORTS is the expensive error, because SUPPORTS is the verdict that gets cited. The released
 node's switch rate is thin data (the A/A calibration in `examples/fork-convergence-aa-6.0.6/`: 8 of 16 runs
 switched on 6.0.6 on one development host, exact 95% interval 0.25–0.75; on GitHub-hosted `ubuntu-24.04` runners,
-the citable class, 23 of 40 switched, interval 0.41–0.73, `aa.yml` run 36289967948 of 2026-09-27) and has to be re-measured on each release and host
+the citable class, 23 of 40 switched, interval 0.41–0.73, `aa.yml` run 36289967948 of 2026-09-27; on the reference node,
+the release plus the carried patches, 40 of 40 switched, interval 0.91–1.00, run 36299847716: a candidate is compared
+against the line that applies to the jar it was built on) and has to be re-measured on each release and host
 (an A/A run, the same jar in both roles, measures it), so the rule is chosen to hold across the range. Simulated with `tests/stop_rule_sim.py
 --trials 200000 --seed 1` (standard library only, about 10 s on one development host; the table below is its output for the
 shipped rule):
@@ -241,7 +243,7 @@ Known limits:
   `D_confirmed` (its table judges `D_total`, one pair). The rate measured on the development host on 2026-09-25 was
   15 of 16 release runs with a confirmed divergence, and 0 of 16 on the reference node (`patches/ergo/patches.json`,
   003); on GitHub-hosted runners the release diverged in 20 of 20 runs (`D_confirmed > 0`, interval 0.83–1.00, the
-  same `aa.yml` run). It is a per-host number, so run an A/A on your host before citing a `sibling-fork` verdict.
+  same `aa.yml` run) and the reference node with #2313 in 0 of 20 (interval 0.00–0.17, run 36299847716). It is a per-host number, so run an A/A on your host before citing a `sibling-fork` verdict.
 - The shipped manifests declare no `precheck`; add one when the host or the jar is new.
 - **Setup INCONCLUSIVEs happen.** `fork-convergence` stages its fork with timed waits (a holder must lead by
   `DELTA` blocks within its window); on the authors' host about one base run in six ended `INCONCLUSIVE

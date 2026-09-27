@@ -199,8 +199,25 @@ declare -A NODE_JAR RT_CWD KIND
 # shellcheck disable=SC2016  # a jq program: $ENV is jq's, not the shell's
 JAR_XP='def xp: if type == "string" then gsub("\\$\\{(?<v>[A-Za-z_][A-Za-z0-9_]*)\\}"; ($ENV[.v] // "")) else . end;'
 RUNTIME_CWD="$(jq -r '.runtime_cwd // empty' "$CFG")"
+# Per-node CPUs and JVM options. "cpus" (taskset list syntax, e.g. "2-3" or "0,4") pins every launch of the node with
+# `taskset -c`; the JVM sizes its GC and compiler threads from that mask, so it is both the limit and the JVM's view of
+# it (-XX:ActiveProcessorCount alone changes only the view: give it through "java_opts"). A list outside the rig's own
+# mask is refused, never silently unpinned. "java_opts" is appended after PEERYARD_JAVA_OPTS, for jvm nodes only.
+declare -A NODE_CPUS NODE_JOPTS
+cpu_ids(){ local IFS=, part; for part in $1; do if [[ "$part" == *-* ]]; then seq "${part%-*}" "${part#*-}"; else echo "$part"; fi; done; }
+declare -A RIG_CPU_OK; for c in $(cpu_ids "$RIG_AFFINITY"); do RIG_CPU_OK[$c]=1; done
+for n in "${NODES[@]}"; do
+  NODE_CPUS[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).cpus) // "" | tostring' "$CFG")"
+  NODE_JOPTS[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).java_opts) // ""' "$CFG")"
+  if [[ -n "${NODE_CPUS[$n]}" ]]; then
+    [[ "${NODE_CPUS[$n]}" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || { echo "FAIL: node $n: cpus '${NODE_CPUS[$n]}' is not a CPU list (e.g. \"2-3\" or \"0,4\")"; exit 2; }
+    for c in $(cpu_ids "${NODE_CPUS[$n]}"); do
+      [[ -n "${RIG_CPU_OK[$c]:-}" ]] || { echo "FAIL: cpus outside rig affinity: node=$n requested=${NODE_CPUS[$n]} allowed=$RIG_AFFINITY"; exit 2; }; done
+  fi
+done
 for n in "${NODES[@]}"; do
   KIND[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).kind) // "jvm"' "$CFG")"
+  [[ -n "${NODE_JOPTS[$n]}" && "${KIND[$n]}" != jvm ]] && { echo "FAIL: node $n: java_opts is for jvm nodes only (kind ${KIND[$n]})"; exit 2; }
   if [[ "${KIND[$n]}" == jvm ]]; then
     j="$(jq -r --arg n "$n" "$JAR_XP"' first(.nodes[]|select(.name==$n).jar // empty) | xp' "$CFG")"
     NODE_JAR[$n]="$(readlink -f "${j:-$JAR}")"
@@ -422,22 +439,52 @@ launch() {
   # subshell, or FRESH_DONE would never be recorded and every relaunch would wipe the chain.
   if [[ -z "${FRESH_DONE[$n]:-}" ]]; then [[ "${PEERYARD_KEEP_DATA:-0}" == 1 ]] || rm -rf "$SCRATCH/data_$n"; FRESH_DONE[$n]=1; fi
   conf="$(gen_conf "$n")"
-  echo "==== [rig] (re)launch $n $(date -Iseconds) kind=${KIND[$n]} jar=$(basename "${NODE_JAR[$n]}") mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg} ====" >> "$RIG_LOG_DIR/node_$n.log"
+  echo "==== [rig] (re)launch $n $(date -Iseconds) kind=${KIND[$n]} jar=$(basename "${NODE_JAR[$n]}") mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg} cpus=${NODE_CPUS[$n]:-rig} ====" >> "$RIG_LOG_DIR/node_$n.log"
+  # "cpus": taskset between `ip netns exec` and the node; every step execs, so the pid below is the node's own
+  local pin=(); [[ -n "${NODE_CPUS[$n]}" ]] && pin=(taskset -c "${NODE_CPUS[$n]}")
   case "${KIND[$n]}" in
     jvm)
       # Per-node java.io.tmpdir: at startup the node copies <network>.conf from its jar into tmpdir and deletes it
       # on exit, so nodes sharing one tmpdir can read each other's network type.
       mkdir -p "$SCRATCH/tmp_$n"
-      ip netns exec "${NS[$n]}" bash -c "cd '${RT_CWD[$n]}' && exec '$JAVA_BIN' $JAVA_OPTS -Djava.io.tmpdir='$SCRATCH/tmp_$n' -jar '${NODE_JAR[$n]}' $NET_ARGS -c '$conf'" \
+      ip netns exec "${NS[$n]}" "${pin[@]}" bash -c "cd '${RT_CWD[$n]}' && exec '$JAVA_BIN' $JAVA_OPTS ${NODE_JOPTS[$n]} -Djava.io.tmpdir='$SCRATCH/tmp_$n' -jar '${NODE_JAR[$n]}' $NET_ARGS -c '$conf'" \
         >> "$RIG_LOG_DIR/node_$n.log" 2>&1 & ;;
     arkadianet)
-      ip netns exec "${NS[$n]}" bash -c "cd '${RT_CWD[$n]}' && exec '${NODE_JAR[$n]}' --config '$conf'" >> "$RIG_LOG_DIR/node_$n.log" 2>&1 & ;;
+      ip netns exec "${NS[$n]}" "${pin[@]}" bash -c "cd '${RT_CWD[$n]}' && exec '${NODE_JAR[$n]}' --config '$conf'" >> "$RIG_LOG_DIR/node_$n.log" 2>&1 & ;;
     ergo-node-rust)
-      ip netns exec "${NS[$n]}" bash -c "cd '${RT_CWD[$n]}' && exec '${NODE_JAR[$n]}' '$conf'" >> "$RIG_LOG_DIR/node_$n.log" 2>&1 & ;;
+      ip netns exec "${NS[$n]}" "${pin[@]}" bash -c "cd '${RT_CWD[$n]}' && exec '${NODE_JAR[$n]}' '$conf'" >> "$RIG_LOG_DIR/node_$n.log" 2>&1 & ;;
   esac
   PID[$n]=$!
   echo "[rig] launched $n (ns=${NS[$n]} ip=${IP[$n]} p2p=${P2P[$n]} rest=${REST[$n]} kind=${KIND[$n]} jar=$(basename "${NODE_JAR[$n]}") pid=${PID[$n]})"
+  launch_event "$n"
 }
+# launch_event <node>: the launch as the kernel applied it. Waits (up to 10 s) for the exec chain to reach the node
+# binary, then records its pid, its Cpus_allowed_list (what was applied, not what was asked) and, for a JVM, the
+# collector a -XX:+PrintFlagsFinal probe selects under the same mask and options (one CPU gives SerialGC on JDK 21).
+declare -A GC_PROBE
+launch_event(){ local n="$1" p="${PID[$1]}" c="" end=$((SECONDS + 10)) applied gc="" key
+  while [[ $SECONDS -lt $end ]]; do c="$(cat "/proc/$p/comm" 2>/dev/null)"; [[ -z "$c" || ( "$c" != ip && "$c" != taskset && "$c" != bash ) ]] && break; sleep 0.1; done
+  applied="$(awk '/^Cpus_allowed_list:/ {print $2}' "/proc/$p/status" 2>/dev/null)"
+  if [[ "${KIND[$n]}" == jvm ]]; then
+    key="${NODE_CPUS[$n]}|${NODE_JOPTS[$n]}"
+    if [[ -z "${GC_PROBE[$key]:-}" ]]; then
+      local pin=(); [[ -n "${NODE_CPUS[$n]}" ]] && pin=(taskset -c "${NODE_CPUS[$n]}")
+      # shellcheck disable=SC2086  # the option strings are word lists
+      GC_PROBE[$key]="$("${pin[@]}" "$JAVA_BIN" $JAVA_OPTS ${NODE_JOPTS[$n]} -XX:+PrintFlagsFinal -version 2>/dev/null \
+        | awk '$2 ~ /^Use(Serial|Parallel|G1|Z|Shenandoah|Epsilon)GC$/ && $4 == "true" {sub(/^Use/, "", $2); print $2}' | head -1)"
+    fi
+    gc="${GC_PROBE[$key]}"
+  fi
+  rig_event launch "" "" "$n" "" "$(jq -cn --arg p "$p" --arg req "${NODE_CPUS[$n]}" --arg ap "$applied" --arg gc "$gc" --arg jo "${NODE_JOPTS[$n]}" \
+    '{pid: ($p | tonumber), cpus_requested: (if $req == "" then null else $req end), cpus_applied: (if $ap == "" then null else $ap end),
+      gc: (if $gc == "" then null else $gc end), java_opts: (if $jo == "" then null else $jo end)}')"
+  echo "[rig] $n pid=$p cpus_applied=${applied:-?}${gc:+ gc=$gc}"; }
+# rig_event <kind> <a> <b> <node> <detail> [extra json object]: one line in $RIG_LOG_DIR/events.jsonl, on the
+# sampler's clock (epoch milliseconds): {t, kind, a, b, node, detail} plus the extra fields.
+rig_event(){ local t; t=$(date +%s%3N)
+  jq -cn --argjson t "$t" --arg k "$1" --arg a "$2" --arg b "$3" --arg n "$4" --arg d "$5" --argjson x "${6:-{\}}" \
+    'def nn: if . == "" then null else . end; {t: $t, kind: $k, a: ($a | nn), b: ($b | nn), node: ($n | nn), detail: ($d | nn)} + $x' \
+    >> "$RIG_LOG_DIR/events.jsonl"; }
 
 # ---- helpers for the hook ----
 rest()   { ip netns exec "${NS[$1]}" curl -s --max-time 4 "http://127.0.0.1:${REST[$1]}$2"; }
@@ -829,7 +876,8 @@ jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --arg preset "$CHAIN_PR
       magic: $magic,
       java: { version: $jv, binary: $jb, opts: $jo },
       nodes: [ $c.nodes[] | { name, mining: (.mining // false), mine_poll: (if .mining // false then (.mine_poll // $poll) else null end),
-                              knownPeers: (.knownPeers // []), defer: (.defer // false), conf: (.conf // {}) } + $jars[.name] ],
+                              knownPeers: (.knownPeers // []), defer: (.defer // false), conf: (.conf // {}),
+                              cpus: (if .cpus == null then null else (.cpus | tostring) end), java_opts: (.java_opts // null) } + $jars[.name] ],
       links: [ $c.links[] | { a, b,
                               ab: { delay_ms: (.delay_ms_ab // .delay_ms // 0), loss_pct: (.loss_pct_ab // .loss_pct // 0), jitter_ms: (.jitter_ms_ab // .jitter_ms // 0), rate_kbit: (.rate_kbit_ab // .rate_kbit // 0) },
                               ba: { delay_ms: (.delay_ms_ba // .delay_ms // 0), loss_pct: (.loss_pct_ba // .loss_pct // 0), jitter_ms: (.jitter_ms_ba // .jitter_ms // 0), rate_kbit: (.rate_kbit_ba // .rate_kbit // 0) } } ],

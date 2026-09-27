@@ -44,6 +44,7 @@
 #   launch <node>; wait_up <node>   first launch of a node declared with "defer": true
 #   relaunch <node>                 stop and restart a node (its chain is kept)
 #   crash <node> / revive <node>    SIGKILL a node and leave it down / bring it back (chain restored from disk)
+#   set_cpus <node> <list>          the CPUs of the node's next launch (e.g. before a revive); "" = the rig's mask
 #   stop_mining / start_mining <node> [poll]   restart the node with mining off / on
 #   mine <node> <n> [poll]          mine about n blocks, then stop mining
 #   address <node> / balance <node> / pay <from> <to> <nanoerg> / wait_balance <node> <min> [s] / block_txs <node> <h>
@@ -681,6 +682,14 @@ crash(){ local n="$1"; local p="${PID[$n]:-}"
   pgrep -f "$SCRATCH/conf_${n}\.(conf|toml)" >/dev/null 2>&1 && harness_fail "crash $n: its process still runs after SIGKILL"
   PID[$n]=""; rig_event crash "" "" "$n" ""; echo "[rig] crash $n (SIGKILL, left down)"; }
 revive(){ echo "[rig] revive $1"; rig_event revive "" "" "$1" ""; launch "$1"; wait_up "$1"; }
+# set_cpus <node> <list|"">: the CPUs the node's next launch (revive, relaunch) is pinned to; "" = the rig's own mask.
+# Checked against the rig's mask like the topology field (a list outside it is a harness failure, and nothing changes).
+set_cpus(){ local n="$1" c
+  if [[ -n "$2" ]]; then
+    [[ "$2" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || { harness_fail "set_cpus $n: '$2' is not a CPU list"; return 1; }
+    for c in $(cpu_ids "$2"); do [[ -n "${RIG_CPU_OK[$c]:-}" ]] || { harness_fail "cpus outside rig affinity: node=$n requested=$2 allowed=$RIG_AFFINITY"; return 1; }; done
+  fi
+  NODE_CPUS[$n]="$2"; echo "[rig] $n: next launch pinned to ${2:-the rig mask}"; }
 wait_up(){ # $1=node: wait up to PEERYARD_UP_TIMEOUT s (default 60) for its REST API
   local n="$1" end=$((SECONDS + ${PEERYARD_UP_TIMEOUT:-60}))
   while [[ $SECONDS -lt $end ]]; do

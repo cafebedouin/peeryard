@@ -70,7 +70,7 @@ printf '%s\n' "${TESTS[@]}" > "$OUT/test-files.txt"; printf '%s\n' "${PROD[@]}" 
 # The host lock is taken here, after the early exits, so a PR with no tests never queues for it; callers need not
 # wrap this script in with-lock (doing so is harmless). The locked half gets --out "$OUT" appended (the parser
 # keeps the last --out), so both halves write one directory even when the caller gave no --out.
-if [[ "${REVERT_CHECK_LOCKED:-0}" != 1 ]]; then export REVERT_CHECK_LOCKED=1; exec bash "$HERE/with-lock.sh" -- bash "$0" "${ORIG_ARGS[@]}" --out "$OUT"; fi
+if [[ "${REVERT_CHECK_LOCKED:-0}" != 1 ]]; then export REVERT_CHECK_LOCKED=1 PEERYARD_LOCKED=1; exec bash "$HERE/with-lock.sh" -- bash "$0" "${ORIG_ARGS[@]}" --out "$OUT"; fi
 
 # worktrees
 WT_WITH="$OUT/with"; WT_WITHOUT="$OUT/without"

@@ -1,6 +1,6 @@
 # Gates: what must hold before a comment, a review, an issue or a pull request leaves the machine
 
-Three gates, each catching a different failure; none substitutes for another. They apply to text a person
+Four gates: three before a text leaves the machine, each catching a different failure, none substituting for another, and a closing one afterwards. They apply to text a person
 posts and to text an agent prepared for them.
 
 1. **Independent re-derivation.** Every load-bearing claim is re-derived from the pinned source by a reviewer

@@ -30,5 +30,5 @@ until [[ "$(oldest_live)" == "$(basename "$TICKET")" ]] && flock -n 9; do
   sleep 10
 done
 rm -f "$TICKET"   # holder no longer queues; the flock is what it holds
-truncate -s 0 "$LOCK"; printf '%s pid %s: %s\n' "$(date -u +%FT%TZ)" "$$" "$*" >&9
+truncate -s 0 "$LOCK"; printf '%s pid %s: %s (%s args)\n' "$(date -u +%FT%TZ)" "$$" "$(basename "${1:-?}")" "$(($# - 1))" >&9   # the command's name only: arguments can carry paths
 "$@"; rc=$?; truncate -s 0 "$LOCK"; exit $rc   # the holder line is cleared on release

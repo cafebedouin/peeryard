@@ -30,6 +30,7 @@
 # as unbound under `set -u`.
 set -euo pipefail
 die(){ echo "build: ERROR: $*" >&2; exit 2; }
+ORIG_ARGS=("$@")
 USAGE="usage: $0 [--dry-run] <base-ref> [<patch-file> | <commit> | <a>..<b> | <a>...<b>] [-- <pathspec>...]"
 DRY=0; POS=(); PATHS=()
 while [[ $# -gt 0 ]]; do
@@ -44,6 +45,11 @@ done
 [[ ${#PATHS[@]} == 0 || ${#POS[@]} == 2 ]] || die "a pathspec needs a commit or range to select from; $USAGE"
 for p in ${PATHS[@]+"${PATHS[@]}"}; do [[ -n "$p" ]] || die "empty pathspec"; done
 set -- "${POS[@]}"
+# A build runs sbt for minutes and disturbs a timing-sensitive node run on the same host, so a real build takes the
+# host's run lock (review/with-lock.sh) itself; a dry run does not. DIFFRUN_NO_LOCK=1 skips it (CI runners, one job).
+if [[ $DRY == 0 && "${DIFFRUN_NO_LOCK:-0}" != 1 && "${PEERYARD_LOCKED:-0}" != 1 && -f "$(dirname "${BASH_SOURCE[0]}")/../review/with-lock.sh" ]]; then
+  exec bash "$(dirname "${BASH_SOURCE[0]}")/../review/with-lock.sh" -- env PEERYARD_LOCKED=1 bash "${BASH_SOURCE[0]}" "${ORIG_ARGS[@]}"
+fi
 CLONE="${DIFFRUN_ERGO_CLONE:?set DIFFRUN_ERGO_CLONE to a local clone of ergoplatform/ergo}"
 CACHE="${DIFFRUN_CACHE:-$HOME/.cache/diffrun/builds}"
 # is_jdk8 <home>: its java runs and reports version "1.8.x" (what every JDK 8 prints; 9+ print "9", "17.0.8", ...)

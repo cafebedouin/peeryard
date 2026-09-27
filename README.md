@@ -190,7 +190,7 @@ written, and where:
 - `rig/devnet.sh`: `~/.peeryard/devnet/<name>` (or `PEERYARD_DEVNET_DIR`);
 - `diffrun/run.sh`: its `--out` directory (default a fresh `diffrun.<scenario>.*` directory under `$TMPDIR` or `/tmp`);
 - `diffrun/build.sh`: the jar cache (`DIFFRUN_CACHE`, default `~/.cache/diffrun/builds`), with the temporary build
-  worktree inside it (`$DIFFRUN_CACHE/.tmp.*/wt`; git's bookkeeping for it goes in the ergo clone's `.git`), and
+  worktree inside it; sbt and coursier keep their own caches under `$HOME` (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`) (`$DIFFRUN_CACHE/.tmp.*/wt`; git's bookkeeping for it goes in the ergo clone's `.git`), and
   a short socket directory under `/tmp` that sbt needs;
 - `review/revert-check.sh`: `/tmp/revert-check.*` unless `--out` is given.
 

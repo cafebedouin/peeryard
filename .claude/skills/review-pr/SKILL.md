@@ -11,8 +11,7 @@ seed). The build base is the PR's own merge base with its base branch (`pick.sh`
 not a release tag; the reference release jar is only for an A/A rate.
 
 0. `bash review/prior.sh <repo> <N>`: if it prints `current`, a peeryard review already exists at this head; stop and
-   say so unless the person asked for a second review. If the review site shows the PR as claimed by someone else,
-   stop too.
+   say so unless the person asked for a second review.
 1. `bash rig/preflight.sh` (stop if it fails). Create `audits/<date>_pr-<N>/` and write `PREREGISTRATION.md`
    from `audits/README.md` before any run: which kinds, why, what would count against the PR.
 2. `bash review/pick.sh …` and `bash review/footprint.sh …`; read the PR thread (`gh pr view N -R <repo> --json title,body,comments`; the `--comments` flag fails on older `gh`)

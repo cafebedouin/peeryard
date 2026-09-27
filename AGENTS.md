@@ -42,12 +42,15 @@ bash review/prior.sh ergoplatform/ergo N                     # "current": alread
 bash review/footprint.sh ~/src/ergo <mb> N                   # which scenario rows the diff touches (none is a valid answer)
 bash review/revert-check.sh --pr N --out audits/<date>_pr-N/captures/revert-check   # takes the lock itself, only if it has tests to run;
                                                             # when every class is compile-error-without, revert one production hunk: --revert <regex>
-bash diffrun/build.sh <mb>                                   # the base jar (the PR's own base, not a release tag); builds need no lock
-bash diffrun/build.sh <mb> <mb>...pr-N                       # the candidate jar (the first sbt build on a host downloads dependencies: 10-20 min)
+bash diffrun/build.sh <mb>                                   # the base jar (the PR's own base, not a release tag); build.sh takes the run lock itself
+bash diffrun/build.sh <mb> <mb>...pr-N -- src/main ergo-core/src/main ergo-wallet/src/main avldb/src/main
+                                                            # the candidate jar from the PR's production paths only (tests and any agent-instruction
+                                                            # files stay out of the build); the first sbt build on a host downloads dependencies: 10-20 min
 bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/<kind>.json --base <base.jar> --candidate <cand.jar> --out audits/<date>_pr-N/captures/<kind>
 ```
 Every node run and every sbt test run goes through `review/with-lock.sh` (one network per host; agents queue, and
-another agent's run can hold the lock for up to 40 minutes; `--wait` caps the wait, default 6 h). Jar builds do not take it. A scenario verdict is
+another agent's run can hold the lock for up to 40 minutes; `--wait` caps the wait, default 6 h). `diffrun/build.sh` and
+`review/revert-check.sh` take it themselves. A scenario verdict is
 quoted with an A/A rate for the same predicate next to it, never alone: a review builds on the PR's merge base and an
 A/A per merge base is too expensive, so the quoted rate is the release's (and the reference node's) on the GitHub
 runner class from `aa.yml`, named as a proxy in the report (`diffrun/README.md`); a host A/A when you have one. Skip a scenario when the fit table says no row answers the PR's question; say so in the report.

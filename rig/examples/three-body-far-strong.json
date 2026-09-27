@@ -1,0 +1,45 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "cpus": "4",
+      "mining": false,
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "cpus": "5",
+      "mining": false,
+      "knownPeers": [
+        "A"
+      ]
+    },
+    {
+      "name": "C",
+      "cpus": "0-3",
+      "mining": true,
+      "mine_poll": "2s",
+      "knownPeers": [
+        "A",
+        "B"
+      ]
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 5
+    },
+    {
+      "a": "A",
+      "b": "C",
+      "delay_ms": 150
+    },
+    {
+      "a": "B",
+      "b": "C",
+      "delay_ms": 150
+    }
+  ]
+}

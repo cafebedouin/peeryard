@@ -21,7 +21,7 @@ while read -r f; do
   case "$f" in
     *network/*|*scorex/core/network*) HIT[network]=1 ;;
     *modifierprocessors/*|*nodeView/history/*) HIT[history]=1 ;;
-    *Snapshot*|*UtxoSetSnapshotProcessor*|*DigestState*) HIT[bootstrap]=1 ;;
+    *Snapshot*|*DigestState*) HIT[bootstrap]=1 ;;
     *nodeView/state/*) HIT[state]=1 ;;
     *mining/*|*settings/*) HIT[mining]=1 ;;
     *mempool/*|*wallet/*) HIT[mempool-wallet]=1 ;;

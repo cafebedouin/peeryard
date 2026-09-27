@@ -74,7 +74,9 @@ Labels: use the thread's own convention if it has one; otherwise exactly one of
     and the messages new on the candidate (`diffrun/logab.sh` writes them after every diffrun verdict;
     `review/logab-runs.sh` does the same for rig runs kept with `PEERYARD_KEEP_LOGS=1` and for a CI fork's
     integration-suite artifacts), or "no feature separates the arms; no new message". A difference is a lead to read,
-    not a finding; a finding needs its own executed witness.
+    not a finding; a finding needs its own executed witness. Match outcomes before reading a difference as the
+    change's: compare passing runs with passing runs (and failing with failing); a comparison with more failures on one
+    side shows the failure's features, not the arm's.
 
 12. **Credit in the first line, always.** Every text opens with a credit line that names the tool and the model
     that prepared it, the peeryard version and the node builds that were run: "Prepared with <tool> (<vendor>,

@@ -1057,6 +1057,9 @@ if [[ "${rig_verdict:-}" == FAIL || "${rig_verdict:-}" == INCONCLUSIVE ]]; then
     echo "[rig] CAUSE $(jq -r '"\(.cause): \(.evidence)"' "$RIG_LOG_DIR/cause.json")"
   else echo "[rig] CAUSE UNKNOWN: the classifier could not read $RIG_LOG_DIR/samples.jsonl"; fi
 fi
+# What recovery cost (diag/costs.py -> costs.json): a report on every run, never part of the verdict
+costs_out="$(python3 "$(dirname "${BASH_SOURCE[0]}")/../diag/costs.py" "$RIG_LOG_DIR" 2>&1)" \
+  && echo "[rig] COSTS $costs_out" || echo "[rig] COSTS ERROR (the verdict is unaffected): $(tail -1 <<< "$costs_out")"
 echo "[rig] === hook done (verdict: ${rig_verdict:-none}) ==="
 [[ "${rig_verdict:-}" == FAIL ]] && exit 1
 [[ "${rig_verdict:-}" == INCONCLUSIVE ]] && exit 3

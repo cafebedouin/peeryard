@@ -254,9 +254,11 @@ fi
 # diffrun: nodes whose REST no longer answers after the measurement (recorded, does not void the run)
 UNR=""; for n in A C L S; do [[ "$(f $n appVersion)" == null ]] && UNR+="$n "; done
 [[ -n "$UNR" ]] && echo "[fc] unresponsive after the measurement: $UNR"
-# diffrun: the one machine-readable result line (scenario contract, diffrun/README.md)
+# diffrun: the one machine-readable result line (scenario contract, diffrun/README.md). switch_s: seconds from the
+# L-S link opening to L's (held) switch, at the 5 s polling resolution; null when L did not switch within TMAX (a
+# censored time, to be analysed as time-to-event, not as a plain number)
 echo "RESULT_JSON $(jq -cn --arg jv "$JAVA_VERSION" --arg A "$VA" --arg C "$VC" --arg L "$VL" --arg S "$VS" --argjson u "$(wc -w <<< "$UNR")" \
   --arg mode "$MODE" --arg tL "$tL" --arg tS "$tS" --argjson hf "$HF" --argjson m "$M" --argjson w "$W" --argjson wl "$WL" \
   '{schema_version:1,scenario:("fork-convergence"+(if $mode=="reverse" then "-reverse" else "" end)),runtime:{java:$jv},versions:{A:$A,C:$C,L:$L,S:$S},
-    metrics:{switched:($tL!=""),s_switched:($tS!=""),fork_height:$hf,margin:$m,warn_S:$w,warn_L:$wl,unresponsive_after:$u}}')"
+    metrics:{switched:($tL!=""),s_switched:($tS!=""),switch_s:(if $tL=="" then null else ($tL|tonumber) end),fork_height:$hf,margin:$m,warn_S:$w,warn_L:$wl,unresponsive_after:$u}}')"
 echo "[fc] node logs: $WORKDIR/node_{A,C,L,S}.log"

@@ -188,7 +188,8 @@ retry).
 
 A PASS on the reference node says "nothing broke", not "this would catch a defect", unless the example has been seen to
 fail somewhere. Seen so far, and on what (the patch witnesses are in `patches/*/patches.json`; the diffrun scenarios'
-release base rates are in `diffrun/README.md`):
+release base rates on GitHub runners, 2026-09-27: `fork-convergence` 17 of 40 runs did not switch, `sibling-fork`
+20 of 20 diverged; details in `diffrun/README.md`):
 
 | example | fails on | seen |
 |---|---|---|

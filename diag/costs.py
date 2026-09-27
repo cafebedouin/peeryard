@@ -21,7 +21,9 @@ Per recovery event (heal a b; revive n; relaunch n):
                  first answered sample with a non-zero height (a revive or relaunch: it cannot answer at the event,
                  and it answers with height 0 while it reloads its chain). null where a node did not answer.
   first_answer_s, sync_s   (revive/relaunch) the first answered regular sample; sync_s = agree_s - first_answer_s.
-  headers_advanced_s   per node that does not mine: until its headersHeight first rises above its value at the event.
+  headers_advanced_s   per node that does not mine: until its headersHeight first rises above its value at the event
+                 (after a revive or relaunch: above its value in the restarted node's first answered sample with a
+                 non-zero height, and timed from that sample, so JVM start and chain reload are not counted).
                  An upper bound on link recovery (it includes the wait for the next block and the sample phase), so
                  agree_s - headers_advanced_s approximates catch-up. Censored when it never rises in the window
                  (no block mined, or no recovery) or the event height is unknown.

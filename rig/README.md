@@ -77,6 +77,18 @@ Only `nodes[].name` and `links[].a/b` are required. Other fields:
 - `conf`: extra HOCON lines for one node, as dotted keys.
 - `defer`: when true, the node is not started at bring-up; the hook calls `launch <n>; wait_up <n>`, for example
   after setting `CONF_OVR[n]="ergo.chain.genesisId=…"`.
+- `cpus`: the CPUs this node runs on, in `taskset` list syntax (`"2-3"`, `"0,4"`); every launch of the node (first,
+  relaunch, revive) is wrapped in `taskset -c`. The JVM sizes its GC and compiler threads from that mask (JDK 21 under
+  `taskset -c 0,1`: `ParallelGCThreads` 2), so one field gives both the real limit and the JVM's view of it; it also
+  changes the collector the JVM picks (JDK 21 with `-Xmx512m`: SerialGC under a one-CPU mask, G1 under two), so the
+  collector is part of the condition. A list outside the rig's own mask (a `taskset` around `rig.sh` narrows it) refuses
+  the run with `cpus outside rig affinity: node=<n> requested=<list> allowed=<mask>` (exit 2); it is never silently
+  unpinned. Each launch records what the kernel applied (see *Events* below). `set_cpus <node> <list>` changes it for
+  the node's next launch, e.g. before a revive. On a machine whose virtual CPUs are hyperthread pairs (WSL2 reports
+  0-1, 2-3, ... as siblings), two CPUs may be one physical core: "strong" is then nominal.
+- `java_opts`: extra JVM options for this node (`jvm` nodes only; any other kind that sets it is refused), appended
+  after `PEERYARD_JAVA_OPTS`, e.g. a smaller heap, another collector, or `-XX:ActiveProcessorCount=<n>` (the JVM's view
+  of the CPU count without a real limit).
 
 Each link gets its own `/30`, so a node on several links has one IP per link, and `knownPeers` dials each peer on
 the link the two nodes share. The node settings follow the node's own integration-test devnet template
@@ -125,6 +137,39 @@ Listed at the top of `rig.sh`. The main ones:
   (#525), `HEADERS_AHEAD_FULL_STUCK`, `NODE_LAGGING`, `EQUAL_HEIGHT_TIE`, `LIGHTER_FORK_NOT_SWITCHING`,
   `CHAIN_STALLED`, `STILL_PROGRESSING` or `UNKNOWN`. A hook that knows its own reason sets `rig_cause=<CODE>`
   (printed first, e.g. `STAGING_OVERSHOOT`). `python3 diag/diagnose.py <samples.jsonl>` re-reads any kept run.
+- a link that comes and goes: `flap <a> <b> <down_s> <up_s> <cycles>` runs `partition`, waits `down_s`, `heal`s, waits
+  `up_s`, `cycles` times, in the hook's own shell (it returns after the last up period; edges are scheduled from its
+  start, so they do not drift); its partition and heal events carry `flap i/N`, and it sets `FLAP_LAST_HEIGHT` (the
+  first node's full height at the last edge)
+- phases: `mark <label>` writes a labelled event (below)
+
+### Events, samples and costs
+Beside the node logs, every run keeps three records on one clock (epoch milliseconds):
+- `events.jsonl`: one line per `partition`, `heal`, `link_netem` (detail: the tc spec), `crash`, `revive`, `relaunch`,
+  `launch` and `mark`, as `{t, kind, a, b, node, detail}`. A `launch` event also carries the node's `pid`,
+  `cpus_requested`, `cpus_applied` (its `Cpus_allowed_list` after the exec chain reached the node binary: what was
+  applied, not what was asked), `gc` (the collector a `-XX:+PrintFlagsFinal` probe selects under the same mask and
+  options) and `java_opts`. Once the hook runs, each event is followed by one sample taken at that moment.
+- `samples.jsonl`: every `PEERYARD_SAMPLE_S` (3) s, and at each event (those rows carry `"event": <kind>`; the
+  classifier skips them), per node: `state, answered, headersHeight, fullHeight, bestHeaderId, bestFullHeaderId,
+  peers, mining` from `/info`, and `pid` (the newest process holding the node's conf path), `loopback_info_ms` (that
+  `/info` call's own time over loopback inside the node's namespace, unshaped by netem: the node's REST
+  responsiveness, not network latency; `null` with `timeout: true` when it hit its 2 s limit), `cpu_ticks`
+  (utime+stime, cumulative), `rss_mb`, `io_read_mb` / `io_write_mb` (cumulative, `/proc/<pid>/io`); per row the host's
+  `loadavg1` and `mem_available_mb`. The measurement adds one `/info` call per node per sample, and `/proc` reads.
+- `costs.json` (`diag/costs.py`, run after every hook, whatever the verdict; the rig prints `[rig] COSTS <summary>`,
+  or `[rig] COSTS ERROR ...` without touching the verdict): per `heal`, `revive` and `relaunch`, `agree_s`, the
+  seconds from the event to the first regular sample at which the two nodes' `bestFullHeaderId` are equal and are
+  equal again at the next sample (after a revive or relaunch: with each other running node, and the maximum over
+  them), or `null` and `censored` with a reason (`endpoint_down`, `next_event`, `never_agreed`), or
+  `nothing_to_recover` when the tips were already equal; `height_gap` and `tips_equal_at_event`; after a revive,
+  `first_answer_s` (JVM start to REST) and `sync_s = agree_s - first_answer_s`; `headers_advanced_s` per non-mining
+  node (an upper bound on link recovery: it includes the wait for the next block; after a revive it is timed from the
+  node's first answer with its restored height); CPU seconds and `loopback_info_ms`
+  p50/p95/max in the window. Per node: total CPU seconds, peak RSS, and unanswered samples counted as planned (a crash
+  or relaunch until the node answers again) or unexpected. `agree_s` has the resolution of the sample interval, and
+  under a live miner at 2 s blocks it runs late by a few intervals (two tips read in one sample are rarely of the same
+  moment). `costs.json` is a report: no PASS rule reads it. `python3 diag/costs.py <out dir>` re-reads any kept run.
 
 Link shaping is set in the topology (`delay_ms`, `loss_pct`, `jitter_ms`, `rate_kbit`; jitter needs a nonzero
 delay) and changed live from the hook. `heal` restores exactly what the topology configured for that link. A
@@ -168,6 +213,10 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 | `mempool-evict` | 2 | a 20-transaction mempool sorted by fee per byte: filled with decreasing-fee self-payments, a lower-fee payment is declined, a higher-fee one is accepted and evicts the lowest, the pool drains once mining resumes (`send_fee`); the eviction counts only if A's lowest-fee transaction was in the full pool after the fill and is gone after the high-fee payment with no block in between; INCONCLUSIVE when the probe did not start that way (a self-payment rejected at submission, or a block during the fill or probe) |
 | `corruption` | 2 | **experimental** (see below): the follower's data directory is damaged while it is down (`corrupt`: a truncated or zeroed state file, lost undo data, lost history objects) and it is revived: reports refused / recovered / stuck per injury, and a stuck node's state root is compared with the root in the miner's header at its height; PASS = no damaged node serves a state root that differs from the miner's; INCONCLUSIVE when no injury could be applied, or when every damaged node served state that could not be compared |
 | `utxo-bootstrap` | 3 | with `makeSnapshotEvery = 128` on every node, a late node with `utxoBootstrap` syncs from a UTXO-set snapshot (two peers can serve it): same state root, no block bodies before the snapshot |
+| `loss` | 3 | followers on lossy live links: after bring-up on clean links, A-B gets `PEERYARD_LOSS` % loss both ways (default 3) and A-C 10 % in the block-data direction only (A→C); PASS = within 360 s of the loss, both followers `SAME@h` with A at 30 or more blocks above A's height at the start of the hook, after `settle_follow`; the netem qdiscs are printed from each namespace; costs are reported, not judged |
+| `flap` | 2 | a link that comes and goes: `flap A B 10 30 6` while A mines; PASS = `SAME@h` within the window fixed from the flap's start (6 × 40 s + 150 s) at 3 or more blocks above A's height at the last edge; `costs.json` has `agree_s` per cycle (a censored cycle is one in which B and A were not seen on equal tips at two consecutive samples before the next cut) |
+| `three-body-close-strong`, `three-body-far-strong` | 3 | Luke Graysmith's three-body shapes, one hook (`three-body.sh`): two nodes 5 ms apart and a third 150 ms from both (no jitter), each pinned with `cpus`: A and B (2 CPUs each) mine with C (1 CPU) following; or C (4 CPUs) mines with A and B (1 each) following. (Two miners on unequal CPUs do not mine at unequal rates here: the devnet difficulty stays at its minimum and each internal miner produces one block per poll.) After a floor and a 20-block prefix, C is cut from A and B for 60 s and healed; the miners run on 180 s (`agree_s` after a partition includes TCP's own recovery), then all but one miner pause and `settle_follow` pauses the last; PASS = all three `SAME@h` at 10 or more blocks above the leader's height at the heal. Each miner's count of locally mined blocks is printed. Needs 5 or 6 CPUs, so it is not in `suite.tsv` (the hosted runners have 2) |
+| `revive-headroom` | 2 | what a restart costs a follower with little CPU: A mines (cpus 0-1), B follows (4-7), B is crashed, A mines on 120 s, and B is revived pinned to `REVIVE_CPUS` (`4`, `4-5` or `4-7`); `costs.json` reports `first_answer_s`, `headers_advanced_s`, `agree_s`, `sync_s`, REST time and CPU seconds for the revive, the launch event the collector (SerialGC at one CPU on JDK 21); PASS = `SAME@h` at 10 or more blocks above A's height at the revive, after `settle_follow`. Needs 8 CPUs; not in `suite.tsv` |
 | `nipopow-bootstrap` | 3 | the same with `nipopowBootstrap` (headers from a NiPoPoW proof, then the snapshot); PASS needs the node's own "processed proof" log line |
 
 ## Experimental examples
@@ -196,6 +245,10 @@ release base rates on GitHub runners, 2026-09-27: `fork-convergence` 17 of 40 ru
 | `poscontrol` | by construction: two miners that never peer end on different chains | every run |
 | `magic` | a control where B has no known peer (`NOT_BOTH_DIALED`) | control run, 2026-09-26 |
 | `netsplit` | a control where B's data directory is wiped before the revive: height 0 for the whole window while cut from A | control run, 2026-09-26 |
+| `loss` | a control that partitions A-B instead of the loss (`LOSS_CONTROL=partition`): B never gets a block (`NOHEIGHT`) | control run, 2026-09-27, release 6.0.6 (sha256 `21b90239…`) |
+| `flap` | a control that ends on a cut (`FLAP_CONTROL=down-edge`): B stays at A's last-edge height (123) while A climbs | control run, 2026-09-27, release 6.0.6 |
+| `three-body-*` | a control that skips the heal (`THREEBODY_CONTROL=no-heal`): C stays at 23 while A reaches 244 | control run, 2026-09-27, release 6.0.6 |
+| `revive-headroom` | a control that revives B while it is partitioned from A (`REVIVE_CONTROL=partitioned`) | control run, 2026-09-27, release 6.0.6 |
 | `reorg-mempool` | the 6.0.6 release without `patches/ergo/002`: 3 of 10 payments re-confirmed (10 of 10 with it) | patch witness |
 | `nipopow-bootstrap` | the release without `patches/ergo/005`: stalled 2 of 3 | patch witness |
 | `matrix-tx` | `weak-blocks` without `patches/ergo-matrix/001`: 3 of 3 FAIL | patch witness |
@@ -289,7 +342,11 @@ preset; only `wipe` deletes it.
 
 Every run writes `out/effective.json`: the chain preset and its resolved parameters, the Java runtime (`java
 -version`, the binary, the options), every node's jar and its sha256 prefix, mining and polling, every link's
-shaping, and the duration and keep-data flags. Environment
+shaping, the duration and keep-data flags, and a `host` card: `kernel`, `cpus_online`, `affinity` (the rig's own
+CPU mask; a run under `taskset` shows it), `mem_mb`, `cpu_model`, `virt` (`wsl2` when `/proc/version` names
+Microsoft, else `systemd-detect-virt`), `scratch_fs` (`stat -f` type of `SCRATCH`; ext4 reads `ext2/ext3`),
+`scratch_virtual_disk` (true under WSL2, whose disks are image files), `tcp_cc` and `tcp_retries2` (read inside a
+node's namespace). Environment
 overrides shape a run without editing the topology: `PEERYARD_CHAIN` (preset), `PEERYARD_MINE_POLL` (default
 polling for miners that set none), `PEERYARD_DURATION` (hooks that run for a while read it),
 `PEERYARD_KEEP_DATA=1` (do not wipe data directories on first launch), `PEERYARD_JAVA` (the `java` binary for

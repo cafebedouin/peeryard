@@ -28,8 +28,8 @@ against the rules.
 **What it is not.** peeryard checks whether a change does what it says and whether it holds under bad network
 conditions. It does not judge whether a change is the right design, and it has nothing to say about cryptography or
 protocol choices; those stay with the maintainers. A verdict is evidence, not proof, and it is noisy: in an A/A
-calibration on one development host, the unchanged 6.0.6 release failed to switch forks in 8 of 16
-`fork-convergence` runs, and the shipped decision rule for that scenario gives a false `SUPPORTS` in about 13% of
+calibration on GitHub-hosted runners, the unchanged 6.0.6 release failed to switch forks in 17 of 40
+`fork-convergence` runs (8 of 16 on a development host), and the shipped decision rule for that scenario gives a false `SUPPORTS` in about 13% of
 cases when the release switches 85% of the time (`diffrun/README.md`). Read a verdict with those rates beside it.
 Many node defects only appear with several nodes and imperfect links (forks that never resolve, followers that never
 switch to the heavier chain, sync that stalls after a reorg); they are hard to reproduce on one machine and flaky in

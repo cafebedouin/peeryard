@@ -55,10 +55,12 @@ jobs:
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
           out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
           put(){ cp "$2" "$out/$1.jar"; cp "$2.json" "$out/$1.jar.json"; cp "$2.stack.json" "$out/$1.stack.json" 2>/dev/null || true; }
-          put reference "$(bash patches/stack.sh --build ergo | tail -1)"
-          put sibling-fork "$(bash patches/stack.sh --build --for sibling-fork ergo | tail -1)"
+          # a cold sbt build can lose one dependency download to a transient repository error: one retry
+          stack(){ local j; for attempt in 1 2; do j="$(bash patches/stack.sh "$@" | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "stack $* failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
+          put reference "$(stack --build ergo)"
+          put sibling-fork "$(stack --build --for sibling-fork ergo)"
           # the Matrix stack is optional: a build failure is a warning here, and the Matrix examples are then SKIPped
-          if m="$(bash patches/stack.sh --build ergo-matrix | tail -1)" && [ -f "$m" ]; then put matrix "$m"
+          if m="$(stack --build ergo-matrix)"; then put matrix "$m"
           else echo "::warning::Matrix stack did not build (last line: $m); Matrix examples will be skipped"; fi
           { echo '```'; sha256sum "$out"/*.jar; for s in "$out"/*.stack.json; do echo "$(basename "$s"): $(jq -c '[.patches[].id]' "$s")"; done; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,47 @@
+{
+ "source": "rig/examples/bringup.sh with PEERYARD_WIRE=1, two nodes, 2026-09-28: the capture on ve_A_B, cut 8 s after the first decoded record",
+ "node": {
+  "version": "6.0.6",
+  "jar": "ergo-6.0.6.jar",
+  "jar_sha256_16": "21b9023933b19b98"
+ },
+ "magic": [
+  112,
+  101,
+  101,
+  114
+ ],
+ "names": {
+  "100.64.0.1": "A",
+  "100.64.0.2": "B",
+  "10.9.20.1": "A",
+  "10.9.20.2": "B"
+ },
+ "packets": 161,
+ "expected": {
+  "records": 100,
+  "sha256": "59a81df58d15bc51db226f5797baebd198ea1793b0a9f22fbb1b80559c40ab7b",
+  "summary": {
+   "packets": 161,
+   "other": 8,
+   "tcp": 153,
+   "truncated": 0,
+   "conns": 1,
+   "handshakes": 2,
+   "frames": 98,
+   "checksum_fail": 0,
+   "desync": 0,
+   "resync": 0,
+   "gap": 0,
+   "gap_bytes": 0,
+   "tail": 0,
+   "retransmits": 0,
+   "by_name": {
+    "SyncInfo": 1,
+    "Inv": 36,
+    "RequestModifier": 52,
+    "Modifiers": 9
+   }
+  }
+ }
+}

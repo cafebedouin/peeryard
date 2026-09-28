@@ -2,6 +2,7 @@
 out-of-order, gap), framing (checksum, validated resync, length bound, tail), the unframed handshake, the six
 parsers, and packets that are not IPv4 TCP. Run: python3 -m unittest tests/wire_test.py"""
 import hashlib
+import json
 import os
 import socket
 import struct
@@ -420,6 +421,25 @@ class Pcap(unittest.TestCase):
             self.assertEqual(len(wire.load_messages(os.path.join(d, "messages.jsonl"))), len(recs))
         self.assertEqual([(r["from"], r["to"], r["name"]) for r in frames(recs)], [("A", "B", "GetPeers")])
         self.assertEqual(summ[0]["drops"], None)   # no stats file: unknown, not zero
+
+
+
+class Golden(unittest.TestCase):
+    """The first seconds of a real two-node bringup (tests/fixtures/wire-bringup.*): its decode must not drift."""
+
+    def test_real_capture_decodes_to_the_recorded_digest(self):
+        fx = os.path.join(os.path.dirname(__file__), "fixtures")
+        with open(os.path.join(fx, "wire-bringup.json")) as fh:
+            meta = json.load(fh)
+        recs, summ = wire.decode_pcap(os.path.join(fx, "wire-bringup.pcap"), "A-B", bytes(meta["magic"]), meta["names"])
+        got = {k: v for k, v in summ.items() if k != "link"}
+        self.assertEqual(got, meta["expected"]["summary"])
+        self.assertEqual(len(recs), meta["expected"]["records"])
+        digest = hashlib.sha256(json.dumps(recs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(digest, meta["expected"]["sha256"])
+        hs = [r for r in recs if r["kind"] == "handshake"]
+        self.assertEqual(sorted((h["from"], h["agent"], h["version"], h["session_magic_ok"]) for h in hs),
+                         [("A", "ergoref", meta["node"]["version"], True), ("B", "ergoref", meta["node"]["version"], True)])
 
 
 if __name__ == "__main__":

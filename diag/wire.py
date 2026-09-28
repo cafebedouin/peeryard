@@ -136,7 +136,14 @@ def capture(iface, out, stats_path=None, rcvbuf=None):
         fh.write(pcap_header())
         next_tick = time.time() + 1.0
         ticks = 0
-        while not stop:
+        draining = False
+        while True:
+            if stop and not draining:   # at stop, read what is already queued, so packets = records + drops
+                draining = True
+                drain_end = time.time() + 2.0   # a busy link never empties: bounded
+                s.setblocking(False)
+            if draining and time.time() > drain_end:
+                break
             try:
                 n, anc, _flags, _addr = s.recvmsg_into([buf], ancsize, socket.MSG_TRUNC)
                 now = time.time()
@@ -154,6 +161,8 @@ def capture(iface, out, stats_path=None, rcvbuf=None):
                         skew_sum += sk
                         skew_min = sk if skew_min is None else min(skew_min, sk)
                         skew_max = sk if skew_max is None else max(skew_max, sk)
+            except BlockingIOError:
+                break                  # drained
             except socket.timeout:
                 now = time.time()
             except InterruptedError:

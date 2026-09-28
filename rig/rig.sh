@@ -64,6 +64,9 @@
 # Env overrides: PEERYARD_CHAIN (preset), PEERYARD_MINE_POLL, PEERYARD_DURATION (hooks read it), PEERYARD_KEEP_DATA=1.
 # The run's effective configuration (jars, chain, links, polls, duration, a host card) is written to $RIG_LOG_DIR/effective.json.
 # Per-node "cpus" (taskset list) and "java_opts" (jvm nodes) are optional topology fields; see rig/README.md.
+# Wire observer (opt-in: topology "wire": true or PEERYARD_WIRE=1): a passive capture per link (diag/wire.py, on the
+# link's a end, both directions), started before the nodes launch, stopped after the hook, then decoded into
+# $RIG_LOG_DIR/messages.jsonl (pcaps and per-link drop counts in $RIG_LOG_DIR/wire/). Off by default.
 # Topology "chain": "current" (default) | "matrix" | "devnet" | "rust-devnet", or an object with blockInterval /
 # minerRewardDelay / genesisStateDigestHex, sets the chain parameters all nodes share (see rig/README.md).
 #
@@ -220,6 +223,18 @@ for n in "${NODES[@]}"; do
       [[ -n "${RIG_CPU_OK[$c]:-}" ]] || { echo "FAIL: cpus outside rig affinity: node=$n requested=${NODE_CPUS[$n]} allowed=$RIG_AFFINITY"; exit 2; }; done
   fi
 done
+# Wire observer placement: pinned to the rig's CPUs that no node's "cpus" names, when some node names any and such
+# CPUs remain; otherwise unpinned, and it then shares CPUs with the nodes (recorded in effective.json either way).
+WIRE_ON=0; { [[ "${PEERYARD_WIRE:-}" == 1 ]] || [[ "$(jq -r '.wire // false' "$CFG")" == true ]]; } && WIRE_ON=1
+WIRE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../diag" && pwd)/wire.py"
+WIRE_CPUS=""; WIRE_PIDS=()
+if [[ $WIRE_ON == 1 ]]; then
+  declare -A NODE_CPU_USED=(); for n in "${NODES[@]}"; do for c in $(cpu_ids "${NODE_CPUS[$n]}"); do NODE_CPU_USED[$c]=1; done; done
+  if [[ ${#NODE_CPU_USED[@]} -gt 0 ]]; then
+    free=(); for c in $(cpu_ids "$RIG_AFFINITY"); do [[ -z "${NODE_CPU_USED[$c]:-}" ]] && free+=("$c"); done
+    [[ ${#free[@]} -gt 0 ]] && WIRE_CPUS="$(IFS=,; echo "${free[*]}")"
+  fi
+fi
 for n in "${NODES[@]}"; do
   KIND[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).kind) // "jvm"' "$CFG")"
   [[ -n "${NODE_JOPTS[$n]}" && "${KIND[$n]}" != jvm ]] && { echo "FAIL: node $n: java_opts is for jvm nodes only (kind ${KIND[$n]})"; exit 2; }
@@ -873,6 +888,7 @@ stop_all(){ local n p end
     [[ $p == 0 ]] && break; sleep 1
   done
   for n in "${NODES[@]}"; do pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true; done
+  wire_stop
   wait 2>/dev/null; echo "[rig] all nodes stopped$([[ $p == 1 ]] && echo ' (some killed after the grace period)')"; }
 trap stop_all EXIT
 
@@ -903,7 +919,12 @@ host_card(){ local virt ns="${NS[${NODES[0]}]}"
     { kernel: $kernel, cpus_online: ($online | tonumber), affinity: $aff, mem_mb: ($mem | tonumber),
       cpu_model: ($model | nn), virt: ($virt | nn), scratch_fs: ($fs | nn), scratch_virtual_disk: ($virt == "wsl2"),
       tcp_cc: ($cc | nn), tcp_retries2: (if $r2 == "" then null else ($r2 | tonumber) end) }'; }
-jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --arg preset "$CHAIN_PRESET" --arg bi "$BLOCK_INTERVAL" --arg rd "$REWARD_DELAY" \
+ips_json="$(for n in "${NODES[@]}"; do printf '%s\t%s\n' "$n" "${ID_IP[$n]}"; done | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {(.[0]): .[1]}) | add // {}')"
+lips_json="$(for i in "${!LINK_A[@]}"; do printf '%s\t%s\n' "${LIP["${LINK_A[$i]},$i"]}" "${LIP["${LINK_B[$i]},$i"]}"; done | jq -R -s 'split("\n") | map(select(length > 0) | split("\t"))')"
+wire_json="$(jq -n --argjson on "$([[ $WIRE_ON == 1 ]] && echo true || echo false)" --arg cpus "$WIRE_CPUS" --arg aff "$RIG_AFFINITY" '
+  if $on then {enabled: true, cpus: (if $cpus == "" then $aff else $cpus end), pinned: ($cpus != ""), overlaps_node_cpus: ($cpus == "")}
+  else {enabled: false} end')"
+jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --argjson ips "$ips_json" --argjson lips "$lips_json" --argjson wire "$wire_json" --arg preset "$CHAIN_PRESET" --arg bi "$BLOCK_INTERVAL" --arg rd "$REWARD_DELAY" \
       --arg gd "$GENESIS_DIGEST" --argjson magic "$MAGIC" --arg poll "$DEFAULT_POLL" --arg dur "${PEERYARD_DURATION:-}" --arg keep "${PEERYARD_KEEP_DATA:-0}" \
       --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" '
   $cfg[0] as $c
@@ -915,10 +936,12 @@ jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --arg preset "$CHAIN_PR
       java: { version: $jv, binary: $jb, opts: $jo },
       nodes: [ $c.nodes[] | { name, mining: (.mining // false), mine_poll: (if .mining // false then (.mine_poll // $poll) else null end),
                               knownPeers: (.knownPeers // []), defer: (.defer // false), conf: (.conf // {}),
-                              cpus: (if .cpus == null then null else (.cpus | tostring) end), java_opts: (.java_opts // null) } + $jars[.name] ],
-      links: [ $c.links[] | { a, b,
+                              cpus: (if .cpus == null then null else (.cpus | tostring) end), java_opts: (.java_opts // null),
+                              id_ip: $ips[.name] } + $jars[.name] ],
+      links: [ $c.links | to_entries[] | .key as $i | .value | { a, b, a_ip: $lips[$i][0], b_ip: $lips[$i][1],
                               ab: { delay_ms: (.delay_ms_ab // .delay_ms // 0), loss_pct: (.loss_pct_ab // .loss_pct // 0), jitter_ms: (.jitter_ms_ab // .jitter_ms // 0), rate_kbit: (.rate_kbit_ab // .rate_kbit // 0) },
                               ba: { delay_ms: (.delay_ms_ba // .delay_ms // 0), loss_pct: (.loss_pct_ba // .loss_pct // 0), jitter_ms: (.jitter_ms_ba // .jitter_ms // 0), rate_kbit: (.rate_kbit_ba // .rate_kbit // 0) } } ],
+      wire: $wire,
       duration_s: (if $dur == "" then null else ($dur | tonumber) end), keep_data: ($keep == "1") }' > "$RIG_LOG_DIR/effective.json"
 echo "[rig] effective configuration: $RIG_LOG_DIR/effective.json ($(jq -c '{chain: .chain.preset, nodes: [.nodes[] | .name + ":" + .jar], links: (.links | length)}' "$RIG_LOG_DIR/effective.json"))"
 # ---- prefix fixtures ("snapshot starts") ----
@@ -982,6 +1005,27 @@ if [[ -n "${PEERYARD_FIXTURES:-}" ]]; then
     echo "[fixture] none for this key yet: the hook builds its prefix and saves it ($fx)"
   fi
 fi
+# wire_start: one capture per link on its a end (sees both directions); returns once every pcap is open (the socket is
+# bound before the file is created), so no node's first packet precedes its capture. wire_stop: TERM, then KILL.
+wire_start(){ local i a b f end cmd
+  mkdir -p "$RIG_LOG_DIR/wire"
+  for i in "${!LINK_A[@]}"; do a="${LINK_A[$i]}"; b="${LINK_B[$i]}"
+    cmd=(python3 "$WIRE_PY" capture "ve_${a}_${b}" "$RIG_LOG_DIR/wire/$a-$b.pcap")
+    [[ -n "$WIRE_CPUS" ]] && cmd=(taskset -c "$WIRE_CPUS" "${cmd[@]}")
+    ip netns exec "${NS[$a]}" "${cmd[@]}" 2>> "$RIG_LOG_DIR/wire/capture.log" &
+    WIRE_PIDS+=($!)
+  done
+  end=$((SECONDS + 10))
+  for i in "${!LINK_A[@]}"; do f="$RIG_LOG_DIR/wire/${LINK_A[$i]}-${LINK_B[$i]}.pcap"
+    until [[ -s "$f" ]]; do [[ $SECONDS -ge $end ]] && { echo "FAIL: wire capture $f did not start (see $RIG_LOG_DIR/wire/capture.log)"; exit 2; }; sleep 0.1; done
+  done
+  echo "[rig] wire: ${#WIRE_PIDS[@]} capture(s) on CPUs ${WIRE_CPUS:-unpinned (shared with the nodes)} -> $RIG_LOG_DIR/wire/"; }
+wire_stop(){ local p
+  [[ ${#WIRE_PIDS[@]} -gt 0 ]] || return 0
+  for p in "${WIRE_PIDS[@]}"; do kill "$p" 2>/dev/null; done
+  for p in "${WIRE_PIDS[@]}"; do for _ in $(seq 1 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  WIRE_PIDS=(); }
+[[ $WIRE_ON == 1 ]] && wire_start
 for n in "${NODES[@]}"; do deferred "$n" || launch "$n"; done
 for n in "${NODES[@]}"; do deferred "$n" || wait_up "$n" || { echo "FAIL: node $n never answered on REST within ${PEERYARD_UP_TIMEOUT:-60} s at bring-up (log: $RIG_LOG_DIR/node_$n.log, last lines below); the hook is not run"; grep -v '^\s*at ' "$RIG_LOG_DIR/node_$n.log" | tail -5; exit 2; }; done
 # A restored node answers on REST before it has reloaded its chain (a read in that gap sees height 0 and no genesis):
@@ -1069,6 +1113,12 @@ export NODES RIG_LOG_DIR
 # shellcheck disable=SC1090
 source "$HOOK"
 kill "$DIAG_PID" 2>/dev/null; wait "$DIAG_PID" 2>/dev/null
+# The wire decode (a report, never part of the verdict), before the diagnosis, which reads messages.jsonl
+if [[ $WIRE_ON == 1 ]]; then
+  wire_stop
+  if wire_out="$(python3 "$WIRE_PY" decode "$RIG_LOG_DIR" 2>&1)"; then while IFS= read -r l; do echo "[rig] WIRE $l"; done <<< "$wire_out"
+  else echo "[rig] WIRE decode ERROR (the verdict is unaffected): $(tail -1 <<< "$wire_out")"; fi
+fi
 if [[ ${#HARNESS_FAIL[@]} -gt 0 ]]; then
   echo "[rig] the harness failed ${#HARNESS_FAIL[@]} time(s); verdict ${rig_verdict:-none} -> INCONCLUSIVE; any PASS line above does not count"
   rig_verdict=INCONCLUSIVE; rig_cause="HARNESS: $(IFS='; '; echo "${HARNESS_FAIL[*]}")"

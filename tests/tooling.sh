@@ -67,6 +67,10 @@ else bad "sweep.py: templates and novelty" "see $T/sweep.txt"; fi
 if python3 tests/logmap_test.py > "$T/logmap.txt" 2>&1; then ok "logmap.py: $(grep -oE 'Ran [0-9]+ tests' "$T/logmap.txt")"
 else bad "logmap.py: indexing and matching" "see $T/logmap.txt"; fi
 
+# diag/wire.py: TCP reassembly, framing, validated resync, the unframed handshake, parsers (tests/wire_test.py)
+if python3 tests/wire_test.py > "$T/wire.txt" 2>&1; then ok "wire.py: $(grep -oE 'Ran [0-9]+ tests' "$T/wire.txt")"
+else bad "wire.py: reassembly and framing" "see $T/wire.txt"; fi
+
 # diffrun/logab.sh: base vs candidate node logs (synthetic runs, no node): a line only the candidate logs is novel,
 # identical logs give no novel message
 mkrun(){ mkdir -p "$1/logs"; for i in $(seq 1 30); do echo "10:00:$(printf %02d $((i % 60))).000 INFO  [x] o.e.n.Foo - step $i done"; done > "$1/logs/node_A.log"; }

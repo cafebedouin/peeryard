@@ -12,7 +12,7 @@ on:
     inputs:
       tag: { description: 'ergoplatform/ergo release tag to calibrate (the jar is its ergo-<version>.jar asset)', default: 'v6.0.6' }
       sha256: { description: 'sha256 of that jar, if known (checked when given)', default: '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }
-      node: { description: 'release (the tag asset in both roles) or reference (the release plus the carried patches, built here; sibling-fork on its own set)', default: 'release' }
+      node: { description: 'release (the tag asset in both roles), reference (the release plus the carried patches, built here; sibling-fork on its own set) or pr2511 (the release plus patch 001 alone, ergoplatform/ergo#2511, built here; both scenarios)', default: 'release' }
   push:
     branches: [ 'ci/aa' ]
 run-name: "A/A calibration on ${{ inputs.tag || 'v6.0.6' }} (${{ inputs.node || 'release' }})"
@@ -20,8 +20,8 @@ permissions:
   contents: read
 jobs:
   build:
-    name: reference nodes (release plus the carried patches)
-    if: inputs.node == 'reference'
+    name: reference nodes (release plus the carried patches, or patch 001 alone)
+    if: inputs.node == 'reference' || inputs.node == 'pr2511'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -42,8 +42,15 @@ jobs:
           put(){ cp "$2" "$out/$1.jar"; cp "$2.json" "$out/$1.jar.json"; cp "$2.stack.json" "$out/$1.stack.json" 2>/dev/null || true; }
           # a cold sbt build can lose one dependency download to a transient repository error: one retry
           stack(){ local j; for attempt in 1 2; do j="$(bash patches/stack.sh "$@" | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "stack $* failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
-          put reference "$(stack --build ergo)"
-          put sibling-fork "$(stack --build --for sibling-fork ergo)"
+          if [ "${{ inputs.node }}" = pr2511 ]; then
+            # patch 001 alone on the release tag (the upstream PR's production diff as carried here)
+            j="$(DIFFRUN_NO_LOCK=1 bash diffrun/build.sh v6.0.6 patches/ergo/001-pr2511-v2-sync-summaries.patch | tail -1)"
+            [ -f "$j" ] || { echo "pr2511 build failed" >&2; exit 1; }
+            put pr2511 "$j"
+          else
+            put reference "$(stack --build ergo)"
+            put sibling-fork "$(stack --build --for sibling-fork ergo)"
+          fi
           { echo '```'; sha256sum "$out"/*.jar; for s in "$out"/*.stack.json; do echo "$(basename "$s"): $(jq -c '[.patches[].id]' "$s")"; done; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with: { name: reference-jars, path: jars/, retention-days: 30 }
@@ -83,15 +90,16 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '21' }
       - uses: actions/download-artifact@v4
-        if: env.NODE == 'reference'
+        if: env.NODE != 'release'
         with: { name: reference-jars, path: jars }
       - name: Reference node jar (built by the build job; the sidecar beside it names its stack)
-        if: env.NODE == 'reference'
+        if: env.NODE != 'release'
         run: |
           j="$PWD/jars/reference.jar"; [ "${{ matrix.scenario }}" = sibling-fork ] && j="$PWD/jars/sibling-fork.jar"
+          [ "$NODE" = pr2511 ] && j="$PWD/jars/pr2511.jar"
           echo "JAR=$j" >> "$GITHUB_ENV"; sha256sum "$j"; jq -c '[.patches[].id]' "$j.stack.json" 2>/dev/null || true
       - name: Release jar (the release asset; sha256 checked when given; registered as the version the tag names)
-        if: env.NODE != 'reference'
+        if: env.NODE == 'release'
         run: |
           v="${TAG#v}"; mkdir -p .cache; echo "JAR=$PWD/.cache/ergo-$v.jar" >> "$GITHUB_ENV"
           curl -fsSL -o ".cache/ergo-$v.jar" "https://github.com/ergoplatform/ergo/releases/download/$TAG/ergo-$v.jar"

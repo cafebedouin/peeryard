@@ -183,7 +183,7 @@ Example output of a finished run is in `diffrun/examples/`.
   which peeryard treats as a dependency it calls, not code it carries.
 
 A fork-convergence run takes 3–7 minutes; a full verdict takes 8–12 paired runs, 1.5 to 2.5 hours. The timings in
-this README come from a 2019 development host and 2-vCPU GitHub runners; a newer machine is faster. What gets
+this README come from a 2019 development host and GitHub-hosted runners (2 and 4 vCPUs); a newer machine is faster. What gets
 written, and where:
 - the rig: its scratch directory (`SCRATCH`, default a fresh `mktemp -d` under `$TMPDIR` or `/tmp`, which is not
   deleted afterwards), and node logs under a topology's `log_dir` when it sets one (anywhere it names);

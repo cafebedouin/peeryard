@@ -264,7 +264,7 @@ Known limits:
 `build.sh`, runs the public-tier manifests and uploads only `verdict.json` and `table.txt`.
 `ci/diffrun-hosted.yml.example` is the variant that was actually run: the release jar downloaded as base, the
 candidate built on the runner from a pull request's own diff (`master...pr-N`) or downloaded from another
-release tag. On one GitHub-hosted `ubuntu-24.04` runner (2 vCPUs, 7 GB) the suite of that time
+release tag. On one GitHub-hosted `ubuntu-24.04` runner (2 vCPUs, 8 GB: the private-repository class) the suite of that time
 (`fork-convergence`, `sibling-fork`) ran with its timing intact: the candidate (v6.0.6 + #2511's production
 diff) built in about two minutes; `fork-convergence` ran 8 pairs, 16/16 VALID, stopped by the rule, verdict
 SUPPORTS (base switched 6/8, candidate 8/8); `sibling-fork` ran 3 pairs, 6/6 VALID. Run durations matched the

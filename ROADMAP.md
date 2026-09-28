@@ -73,11 +73,12 @@ Then the tooling that serves them:
 
 ## For contributors with other hardware
 
-peeryard is developed on one small x86 machine and tested on GitHub's 2-CPU runners, and a rate measured on one host
-is a fact about that host. Results from other machines are wanted. Run each example at least three times, and open an
-issue with the run directories' `effective.json` (it carries a host card), the verdicts, and `costs.json` where there is
-one (`.github/ISSUE_TEMPLATE/contributor-run.md` lists them). Label disk- and hardware-dependent results as
-characterizations: drive caches and thermal limits are not controlled variables.
+peeryard is developed on one small x86 machine and tested on GitHub-hosted runners (4 CPUs and 16 GB for a public
+repository), and a rate measured on one host is a fact about that host. Results from other machines are wanted. Run
+each example at least three times, and open an issue with the run directories' `effective.json` (it carries a host
+card), the verdicts, and `costs.json` where there is one (`.github/ISSUE_TEMPLATE/contributor-run.md` lists them).
+Label disk- and hardware-dependent results as characterizations: drive caches and thermal limits are not controlled
+variables.
 
 | you have | run | what it tells us |
 |---|---|---|

@@ -225,9 +225,10 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 not count against the suite. Each has a measured pass rate below 100% and an open investigation; a PASS is still a
 PASS, and an example leaves the list when it passes reliably on the reference node. In the three-repeat sweep on GitHub
 runners (2026-09-26), every example not listed here passed 3 of 3 (`bootstrap-modes` after its pruning read was made to
-retry).
+retry). The runner counts below pool that sweep, on the public repository's runner class (4 vCPU, 16 GB), with an
+earlier one-repeat sweep on the private-repository class (2 vCPU, 8 GB).
 
-| example | development host | GitHub runner (ubuntu-24.04, 2 vCPU) | status |
+| example | development host | GitHub runners (ubuntu-24.04, 2 and 4 vCPU pooled) | status |
 |---|---|---|---|
 | `matrix-fork-deep` | 5 of 5 converged (2026-09-25, Matrix stack with `004`) | 2 of 4 (2026-09-26: `LIGHTER_FORK_NOT_SWITCHING` after the heal in the two that failed) | a node-side cause on the `weak-blocks` line is under investigation and will be reported upstream |
 | `mining` | passes every sweep | 5 of 7 (2026-09-26: twice a sole node produced no block in its 240 s window; no node log was kept for those two, `run-suite.sh` now keeps them) | cause unknown; the next failure on a runner carries its logs |

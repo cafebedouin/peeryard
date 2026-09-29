@@ -1,0 +1,9 @@
+{
+  "chain": { "preset": "matrix", "blockInterval": "20s" },
+  "nodes": [
+    { "name": "A", "mining": true, "jar": "${PEERYARD_MATRIX_JAR}", "knownPeers": [] },
+    { "name": "B", "mining": false, "jar": "${PEERYARD_MATRIX_JAR}", "knownPeers": ["A"],
+      "conf": { "ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\"" } }
+  ],
+  "links": [ { "a": "A", "b": "B", "delay_ms": 0 } ]
+}

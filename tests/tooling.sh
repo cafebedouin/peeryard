@@ -77,6 +77,9 @@ else bad "matrix_prop.py: reach and hop latency" "see $T/matrix_prop.txt"; fi
 # diag/matrix_tx.py: Matrix input-block transaction paths and request/answer pairing (tests/matrix_tx_test.py)
 if python3 tests/matrix_tx_test.py > "$T/matrix_tx.txt" 2>&1; then ok "matrix_tx.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_tx.txt")"
 else bad "matrix_tx.py: transaction paths and pairing" "see $T/matrix_tx.txt"; fi
+# diag/matrix_paychain.py: dependent / lost payments of matrix-paychain (tests/matrix_paychain_test.py)
+if python3 tests/matrix_paychain_test.py > "$T/matrix_paychain.txt" 2>&1; then ok "matrix_paychain.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_paychain.txt")"
+else bad "matrix_paychain.py: dependent and lost payments" "see $T/matrix_paychain.txt"; fi
 
 # diag/wire.py: TCP reassembly, framing, validated resync, the unframed handshake, parsers (tests/wire_test.py)
 if python3 tests/wire_test.py > "$T/wire.txt" 2>&1; then ok "wire.py: $(grep -oE 'Ran [0-9]+ tests' "$T/wire.txt")"

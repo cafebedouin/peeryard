@@ -4,7 +4,7 @@
   "script": "fork-convergence.sh",
   "tier": "public",
   "env": { "PREFIX_MIN": 14, "LMIN": 17, "TMAX": 300, "DELTA": 8 },
-  "metrics": { "switched": "boolean", "s_switched": "boolean", "switch_s": "number or null (no switch within TMAX)", "fork_height": "number", "margin": "number",
+  "metrics": { "switched": "boolean", "s_switched": "boolean", "fork_height": "number", "margin": "number",
                "warn_S": "number", "warn_L": "number", "unresponsive_after": "number" },
   "n": 8,
   "max_n": 12,

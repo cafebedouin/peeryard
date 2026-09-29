@@ -116,6 +116,12 @@ else ok "logab.sh: identical logs give no new message"; fi
 if python3 tests/aa_pool_test.py > "$T/aa_pool.txt" 2>&1; then ok "aa_pool.py: exact interval and pooling"
 else bad "aa_pool.py: exact interval and pooling" "see $T/aa_pool.txt"; fi
 
+# every diffrun manifest validates (run.sh rejects one that does not, before any run)
+inval=""; for m in $(find diffrun/scenarios -name '*.json' | sort); do
+  [[ "$(jq -r 'has("script") and has("expect")' "$m")" == true ]] || continue   # topologies under hooks/ are not manifests
+  e="$(jq -L diffrun/lib -c 'include "diffrun"; validate_manifest' "$m")"; [[ "$e" == "[]" ]] || inval+="$m: $e; "; done
+[[ -z "$inval" ]] && ok "diffrun manifests: all validate" || bad "diffrun manifests: all validate" "$inval"
+
 # diffrun/pool.sh: one verdict over sharded run.sh outputs (tests/diffrun_pool.sh: synthetic shards, no node)
 if T="$T/pool" bash tests/diffrun_pool.sh > "$T/pool.txt" 2>&1; then ok "pool.sh: $(grep ' ok$' "$T/pool.txt" | grep -vc '^pool tests') cases (verdicts, lost shards, refusals, falsifier)"
 else bad "pool.sh: pooled verdict over shards" "see $T/pool.txt"; fi

@@ -37,8 +37,11 @@ Every jar handed to `run.sh` needs a sidecar `<jar>.json` (`sidecar_schema_versi
   `<jar>.patch` (the full diff of the production dirs `src/main`, `ergo-core/src/main`,
   `ergo-wallet/src/main`, `avldb/src/main` between base and build commit). The entry is moved into
   place with one rename and is never overwritten; a repeat build re-derives the patch commit, checks it
-  against the entry and serves the cached jar. Builds are not byte-reproducible, so the jar sha is
-  never compared across builds.
+  against the entry and serves the cached jar. ergo builds with `sbt-reproducible-builds`, and in practice the
+  jar is byte-identical across builds of the same inputs: source builds of the v6.0.6 and v6.0.7 tags match the
+  release assets' sha256, and GitHub-runner (Temurin 8) and local (OpenJDK 8) builds of the same base and patch
+  match each other. Other JDK majors are untested, so run.sh still checks each jar against its own sidecar rather
+  than across builds.
 - `register.sh` writes a sidecar with only the jar sha256 and the claimed appVersion. The claim is
   checked on every run, so a wrong registration VOIDs that jar's runs. A sidecar sits next to the path
   given, so register a symlink to keep sidecars out of a shared jar directory.

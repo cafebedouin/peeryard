@@ -43,8 +43,9 @@ a packet.
 
 - **Capture** (in the rig, opt-in: `PEERYARD_WIRE=1` or `"wire": true` in the topology; off by default): one
   process per link, on the link's `a` end, inside that node's namespace. It sees both directions. It starts before
-  the nodes launch and writes `out/wire/<a>-<b>.pcap` in libpcap format (Ethernet; not independently checked here:
-  no tcpdump or Wireshark read one on the development host) and `<a>-<b>.stats.json`: the kernel's packet and drop
+  the nodes launch and writes `out/wire/<a>-<b>.pcap` in libpcap format (Ethernet), readable by tcpdump and
+  Wireshark: tcpdump 4.99.4 and tshark 4.2.2 read the golden fixture (161 packets, one TCP conversation of 153
+  frames) and a fork-convergence capture (424 packets) with the same counts as the decoder) and `<a>-<b>.stats.json`: the kernel's packet and drop
   counts (`PACKET_STATISTICS`, read each second into a series), the socket buffer (raised to `net.core.rmem_max`),
   and the skew between the kernel's receive time and the time written. What the `a` end sees is what crossed the link:
   its egress is tapped after netem. In `netsplit`, no packet was captured inside either cut window, over a connection

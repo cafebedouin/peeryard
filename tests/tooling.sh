@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tooling.sh: tests patches/check.sh, patches/stack.sh, diffrun/register.sh and review/provenance.sh on local
+# tooling.sh: tests patches/check.sh, patches/stack.sh, diffrun/register.sh, diffrun/pool.sh and review/provenance.sh on local
 # fixtures (a throwaway git repository and fake jars); no network, no node. Run from the peeryard root:
 #   T=$(mktemp -d) bash tests/tooling.sh
 set -uo pipefail
@@ -100,6 +100,10 @@ else ok "logab.sh: identical logs give no new message"; fi
 # diffrun/aa_pool.py: pooled A/A rates with an exact interval (tests/aa_pool_test.py)
 if python3 tests/aa_pool_test.py > "$T/aa_pool.txt" 2>&1; then ok "aa_pool.py: exact interval and pooling"
 else bad "aa_pool.py: exact interval and pooling" "see $T/aa_pool.txt"; fi
+
+# diffrun/pool.sh: one verdict over sharded run.sh outputs (tests/diffrun_pool.sh: synthetic shards, no node)
+if T="$T/pool" bash tests/diffrun_pool.sh > "$T/pool.txt" 2>&1; then ok "pool.sh: $(grep ' ok$' "$T/pool.txt" | grep -vc '^pool tests') cases (verdicts, lost shards, refusals, falsifier)"
+else bad "pool.sh: pooled verdict over shards" "see $T/pool.txt"; fi
 
 fx proposed
 out="$(PEERYARD_PATCHES_DIR="$T/patches" FX_CLONE="$R" TMPDIR="$T" bash patches/stack.sh fx 2>/dev/null)"

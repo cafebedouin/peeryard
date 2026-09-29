@@ -9,6 +9,7 @@ effect, and the candidate should not.
 bash diffrun/build.sh <base-ref> [<patch>] [-- <pathspec>...]  # build + cache a jar (prints its path)
 bash diffrun/register.sh <jar> <expected-appVersion>          # or register a pre-built jar
 bash diffrun/run.sh <manifest.json> --base <jar> --candidate <jar> [-n N] [--out DIR]
+bash diffrun/pool.sh --out DIR --shards S --pairs K <dir>    # one verdict over S runners' run.sh outputs
 bash diffrun/lint.sh [file ...]                               # term-list lint (no args: public-tier scenarios)
 ```
 
@@ -166,6 +167,20 @@ only for VOID and INCONCLUSIVE runs; a precheck's `WORKDIR` only when it failed.
 Exit codes: 0 verdict written (any verdict); 2 runner ERROR (unparseable or rejected manifest, a jar whose
 sha256 does not match its sidecar, a workdir failure, a leftover process) and **no `verdict.json`**;
 4 refused before launching (tier guard, input lint); 5 refused to write outputs (output lint).
+
+**Pooled verdict over shards (`pool.sh`).** A hosted before/after run can be split over S runners, each a
+`run.sh --out` of K pairs (so each runner's host variance hits both arms), collected as `<dir>/shard-<k>/`.
+`pool.sh` pools every shard's runs (each keeps its `role` and `index` and gains `shard`) and applies the same
+`role_summary`/`decide` once, over P = S*K dispatched pairs, with the manifest's `min_valid_runs` or else
+ceil(2P/3). A vote over per-shard verdicts would be a different test (`tests/diffrun_pool.sh` has a case where
+every shard is NULL and the pool is SUPPORTS). A shard with no readable `verdict.json` or `manifest.json`, or
+with fewer than K pairs, is **lost**: it adds K `INCONCLUSIVE (lost-shard)` runs per role, so it counts against
+`min_valid_runs` instead of shrinking the denominator. Shards that differ in the manifest snapshot, a jar sha256,
+`same_jar` or provenance (the host aside), a shard that ran the sequential rule or more than K pairs, and a pool
+with no shard present are refused (exit 2, no verdict). The pooled `verdict.json` adds `pooled` (per shard
+present/runs, `pairs_dispatched`, `min_valid_source`), `provenance.hosts` (one per present shard) and
+`pooled_n_differs` (P differs from the manifest's `n`: a SUPPORTS is labelled "pooled n differs: not citable";
+per-shard `-n K` is expected, so `n_overridden` is false).
 
 ## Private runs
 

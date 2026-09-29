@@ -221,6 +221,29 @@ class Reassembly(unittest.TestCase):
         self.assertEqual((s["gap"], s["gap_bytes"]), (1, 9 + 4 + 34))
         self.assertIn("resync", kinds(recs))
 
+    def test_direction_never_captured_is_a_gap_from_the_other_sides_acks(self):
+        w = Wire().open()
+        w.send(A, handshake())
+        w.send(B, handshake(name="nodeB"))
+        w.send(A, frame(55, bytes([101]) + vlq(1) + b"\x01" * 32))
+        w.send(B, frame(22, bytes([101]) + vlq(1) + b"\x01" * 32))   # acknowledges all of A's bytes
+        sent = w.off[A]
+        w.recs = [(t, p) for t, p in w.recs if p[26:30] != socket.inet_aton(A)]   # none of A's packets captured
+        recs, s = decode(w)
+        self.assertEqual([r["name"] for r in frames(recs)], ["RequestModifier"])
+        self.assertEqual((s["gap"], s["gap_bytes"]), (1, sent))
+        g = [r for r in recs if r["kind"] == "gap"][0]
+        self.assertEqual((g["from"], g["to"], g["conn"], g["unseen"]), ("A", "B", 1, True))
+
+    def test_silent_direction_with_no_acked_bytes_is_no_gap(self):
+        w = Wire().open()
+        w.send(B, handshake(name="nodeB"))   # A sends nothing: B's acks never advance past A's SYN
+        w.ack(A)
+        w.recs = [(t, p) for t, p in w.recs if p[26:30] != socket.inet_aton(A) or not p[47] & SYN]
+        recs, s = decode(w)
+        self.assertEqual(s["gap"], 0)
+        self.assertEqual(kinds(recs), ["handshake"])
+
     def test_hole_filled_by_retransmission_is_no_gap(self):
         w = Wire().open()
         w.send(A, handshake())

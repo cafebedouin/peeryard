@@ -7,6 +7,9 @@ Reads each run's messages.jsonl (diag/wire.py with the Matrix parsers; the rig c
   dup_AB / dup_BC  frames per id on each link (1 = no duplicates)
   the same for ordering-block announcements (OrderingBlock 106); an ordering block also travels by the ordinary
   header path, so its reach here counts announcements only.
+A run whose capture lost bytes on a counted direction (a `gap` or `desync` record from A on A-B or from B on B-C,
+including a direction never captured at all) is reported and left out of its arm's pool: an absence there may be a loss
+of capture, not of traffic.
 One line per run, then one pooled line per arm (a run dir's basename up to its last '-', e.g. base-d150-1 -> base-d150).
 Used by .github/workflows/matrix-relay.yml. Standard library only."""
 import json
@@ -39,6 +42,8 @@ def per_run(msgs):
         out[code] = {"sent_AB": len(ab), "sent_BC": len(bc), "relayed": len(relayed),
                      "reach_C": (len(relayed) / len(ab)) if ab else None, "hop_ms": hop,
                      "dup_AB": [len(v) for v in ab.values()], "dup_BC": [len(v) for v in bc.values()]}
+    out["capture_loss"] = sum(1 for m in msgs if m.get("kind") in ("gap", "desync")
+                              and (m.get("link"), m.get("from")) in (("A-B", "A"), ("B-C", "B")))
     return out
 
 
@@ -53,13 +58,18 @@ def main(runs):
     pooled = defaultdict(lambda: {100: defaultdict(list), 106: defaultdict(list)})
     for run in runs:
         r = per_run(load(run))
-        arm = os.path.basename(os.path.normpath(run)).rsplit("-", 1)[0]
+        name_ = os.path.basename(os.path.normpath(run))
+        arm = name_.rsplit("-", 1)[0]
+        if r["capture_loss"]:
+            print(f"{name_} EXCLUDED: {r['capture_loss']} capture gap(s) or desync(s) on A->B or B->C")
         for code, name in ((100, "input"), (106, "ordering")):
             x = r[code]
             reach = "n/a" if x["reach_C"] is None else f"{x['reach_C']:.2f}"
             print(f"{os.path.basename(os.path.normpath(run))} {name}: A->B {x['sent_AB']}, B->C {x['sent_BC']}, "
                   f"relayed {x['relayed']}, reach_C {reach}; hop_ms {q(x['hop_ms'])}; "
                   f"dup_AB max {max(x['dup_AB'], default=0)}, dup_BC max {max(x['dup_BC'], default=0)}")
+            if r["capture_loss"]:
+                continue
             for k in ("hop_ms", "dup_AB", "dup_BC"):
                 pooled[arm][code][k] += x[k]
             pooled[arm][code]["reach"].append(x["reach_C"])

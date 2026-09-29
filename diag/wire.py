@@ -676,7 +676,22 @@ def decode_pcap(path, link, magic, names=None):
     def name(ip):
         return names.get(ip, ip)
 
+    # A direction with no Half (no SYN and no payload captured) can still be seen through the other side's acks: bytes
+    # the receiver acknowledged were sent, so if its acks advance, that direction's traffic was lost to the capture.
+    unseen = {}   # key -> [first ack, highest ack, time of highest]
+
+    def flush_unseen(key, emit=True):
+        u = unseen.pop(key, None)
+        if u is None or not emit:
+            return
+        n = _signed32(u[1] - u[0])
+        if n > 1:   # beyond a FIN's one sequence number
+            back = (key[2], key[3], key[0], key[1])
+            recs.append({"t_ms": u[2], "kind": "gap", "link": link, "conn": conn_of.get(back), "from": name(key[0]),
+                         "to": name(key[2]), "bytes": n, "lost": 0, "at": None, "unseen": True})
+
     def new_half(key, isn, conn, midstream=False):
+        flush_unseen(key, emit=midstream)   # a SYN starts a new stream; a midstream half follows unseen bytes
         meta = {"link": link, "conn": conn, "from": name(key[0]), "to": name(key[2])}
         h = Half(StreamParser(recs.append, magic, meta, midstream=midstream), isn)
         halves[key] = h
@@ -709,6 +724,8 @@ def decode_pcap(path, link, magic, names=None):
             closed.discard(key)
             closed.discard(rkey)
             if not fl & ACK:   # a new connection from this side
+                flush_unseen(key)
+                flush_unseen(rkey)
                 close(key, t)
                 close(rkey, t)
                 nconn[0] += 1
@@ -722,6 +739,8 @@ def decode_pcap(path, link, magic, names=None):
                     c = nconn[0]
                 close(key, t)
                 new_half(key, (p["seq"] + 1) & 0xFFFFFFFF, c)
+                if rkey not in halves:   # the SYN went uncaptured: its ack is where that direction's bytes start
+                    unseen[rkey] = [p["ack"], p["ack"], t]
             continue
         h = halves.get(key)
         payload = p["payload"]
@@ -738,6 +757,10 @@ def decode_pcap(path, link, magic, names=None):
             h.fin = h.rel(p["seq"]) + len(payload) + p.get("missing", 0)
         if fl & ACK and rkey in halves:
             halves[rkey].ack(p["ack"], t)
+        elif fl & ACK and rkey not in closed:
+            u = unseen.setdefault(rkey, [p["ack"], p["ack"], t])
+            if _signed32(p["ack"] - u[1]) > 0:
+                u[1], u[2] = p["ack"], t
         if fl & RST:
             close(key, t)
             close(rkey, t)
@@ -745,6 +768,9 @@ def decode_pcap(path, link, magic, names=None):
             close(key, t)
     for key in list(halves):
         close(key, last_t)
+    for key in list(unseen):
+        flush_unseen(key)
+    recs.sort(key=lambda r: r["t_ms"] if r["t_ms"] is not None else 0)
     for r in recs:
         k = r["kind"]
         if k == "frame":

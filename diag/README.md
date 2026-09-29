@@ -69,7 +69,9 @@ a packet.
   block, and the weak (6-byte) transaction ids. Checked on a `matrix-latency` capture: 309 Matrix frames, no parse
   error, every input block's parent id is one this decoder computed from another announcement, and all 271 ids
   appear in the nodes' own logs.
-- **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. Every
+- **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. A
+  direction the capture never saw at all (no SYN and no payload) is found the same way, from the other side's acks, and
+  is a `gap` with `"unseen": true`; `matrix_prop.py` leaves a run with a gap on a counted direction out of the pool. Every
   summary prints the capture drops beside it. An absence ("no Inv was sent") holds only where the links and window
   show no gap and no drop, and `diagnose.py` marks a wire stage `unreliable` otherwise.
 - **First consumer**: `diagnose.py` splits `LIGHTER_FORK_NOT_SWITCHING` by what crossed the lower node's links to the

@@ -1,10 +1,11 @@
 # peeryard
 
-**Status: EXPERIMENTAL (alpha).** peeryard tests the Ergo node as a **network** on one Linux machine: several real node
+**Status: EXPERIMENTAL (alpha).** peeryard tests the node of Ergo, a proof-of-work blockchain, as a **network** on one
+Linux machine: several real node
 processes, one network namespace each, links you can delay, drop, partition and heal, nodes you can crash and revive,
 different versions and implementations side by side, real transactions in the blocks. A pull request gets a
 before/after measurement to read next to its code instead of an opinion. No root to run it (the host setup needs
-`sudo` once), and no Docker for the local track. Its author is not a Scala programmer: every review made with it says which of its
+`sudo`; on Ubuntu 23.10+ one sysctl again after each reboot), and no Docker for the local track. Its author is not a Scala programmer: every review made with it says which of its
 statements were executed and which were read, and every number can be re-run from the command that produced it.
 
 **Worth your time if** you review or write Ergo node changes that touch sync, fork choice, the mempool, bootstrap or
@@ -29,11 +30,14 @@ the base failed at least twice and the candidate switched every time; how often 
 than the base depends on the base's rate: about 1% when the release switches 57% of the time, 13% when it switches 85%
 (the table in `diffrun/README.md`). Finished runs to look at before producing one: `diffrun/examples/`.
 
-**First run** (about ten minutes, most of it setup; details and the release jar in the quick start below):
+**First run** (about ten minutes, most of it setup; details in the quick start below; building a candidate jar also
+needs JDK 8 and sbt):
 ```
 sudo apt-get install -y jq iproute2 util-linux procps coreutils curl unzip git python3 default-jre-headless
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # Ubuntu 23.10+ only: turns off a host protection until reboot (see below)
 sudo modprobe sch_netem
+curl -fsSL -o ~/ergo-6.0.6.jar https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
+echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $HOME/ergo-6.0.6.jar" | sha256sum -c
 bash rig/preflight.sh                                             # can this host run the rig?
 PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh   # two nodes, about a minute
 ```

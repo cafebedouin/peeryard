@@ -134,6 +134,7 @@ def capture(iface, out, stats_path=None, rcvbuf=None):
 
     with open(out, "wb", buffering=1 << 20) as fh:
         fh.write(pcap_header())
+        fh.flush()   # the rig waits for a non-empty file before it launches the nodes
         next_tick = time.time() + 1.0
         ticks = 0
         draining = False

@@ -384,6 +384,42 @@ class Parsers(unittest.TestCase):
         self.assertEqual((r["type_id"], r["count"], r["modifier_ids"]), (2, 1, ["09" * 32]))
         self.assertNotIn("heights", r)
 
+    def test_header_span_reads_exactly_one_header_and_hashes_it(self):
+        hb = header(42)
+        r = wire.Reader(hb + b"TAIL")
+        hid, h, ver = wire.header_span(r)
+        self.assertEqual((hid, h, ver, r.pos), (hashlib.blake2b(hb, digest_size=32).hexdigest(), 42, 2, len(hb)))
+
+    def test_matrix_input_block(self):
+        hb = header(50)
+        body = (bytes([1]) + hb + b"\x01" + b"\x0a" * 32 + b"\x0b" * 32 + b"\x0c" * 32 + vlq(3) + b"abc"
+                + b"\x01" + vlq(2) + b"\x0d" * 12)
+        r = self.one(frame(100, body))
+        self.assertEqual((r["name"], r["version"], r["height"], r["prev_input_block_id"], r["weak_tx_ids"]),
+                         ("InputBlock", 1, 50, "0a" * 32, 2))
+        self.assertEqual(r["input_block_id"], hashlib.blake2b(hb, digest_size=32).hexdigest())
+
+    def test_matrix_input_block_without_parent_or_weak_ids(self):
+        body = bytes([1]) + header(51) + b"\x00" + b"\x0b" * 32 + b"\x0c" * 32 + vlq(0) + b"\x00"
+        r = self.one(frame(100, body))
+        self.assertEqual((r["height"], r["prev_input_block_id"], r["weak_tx_ids"]), (51, None, None))
+
+    def test_matrix_tx_ids_and_request(self):
+        for code, name in ((102, "InputBlockTxIds"), (105, "InputBlockTxsRequest")):
+            r = self.one(frame(code, b"\x09" * 32 + vlq(2) + b"\x01" * 6 + b"\x02" * 6))
+            self.assertEqual((r["name"], r["input_block_id"], r["count"], r["weak_ids"]),
+                             (name, "09" * 32, 2, ["01" * 6, "02" * 6]))
+
+    def test_matrix_input_block_txs(self):
+        r = self.one(frame(104, b"\x09" * 32 + vlq(3) + b"(transaction bytes, not parsed)"))
+        self.assertEqual((r["name"], r["input_block_id"], r["count"]), ("InputBlockTxs", "09" * 32, 3))
+
+    def test_matrix_ordering_block(self):
+        hb = header(60)
+        r = self.one(frame(106, bytes([1]) + hb + vlq(4) + b"(transactions, not parsed)"))
+        self.assertEqual((r["name"], r["height"], r["non_broadcast_txs"], r["ordering_block_id"]),
+                         ("OrderingBlock", 60, 4, hashlib.blake2b(hb, digest_size=32).hexdigest()))
+
     def test_get_peers(self):
         r = self.one(frame(1, b""))
         self.assertEqual((r["name"], r["len"], r["checksum_ok"]), ("GetPeers", 0, None))

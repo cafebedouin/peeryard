@@ -30,7 +30,10 @@ Records ("kind"): handshake {agent, version, node_name, declared_address, featur
 frame {code, name, len, checksum_ok (null for length 0), ...parsed}; gap {bytes, lost}; desync {why, at};
 resync {skipped}; tail {bytes}. Every record has t_ms, link, conn, from, to. Parsed fields: SyncInfo (65) sync
 v1 + ids (a count) or v2 + headers + heights; Inv (55) and RequestModifier (22) type_id + count + modifier_ids
-(hex); Modifiers (33) type_id + count + modifier_ids (+ heights for headers, type 101); GetPeers (1) nothing; Peers (2) peers. Other codes: code and len only.
+(hex); Modifiers (33) type_id + count + modifier_ids (+ heights for headers, type 101); GetPeers (1) nothing; Peers (2) peers; Matrix (weak-blocks): InputBlock (100)
+version, input_block_id, height, prev_input_block_id, weak_tx_ids; InputBlockTxIds (102) and InputBlockTxsRequest
+(105) input_block_id, count, weak_ids; InputBlockTxs (104) input_block_id, count; OrderingBlock (106) version,
+ordering_block_id, height, non_broadcast_txs. Other codes: code and len only.
 Layouts are those of the v6.0.6 reference node. Standard library only.
 """
 import bisect
@@ -47,7 +50,11 @@ MAX_MESSAGE_SIZE = 2048576 * 4 * 2   # MessageConstants.MaxMessageSize = Modifie
 MAX_HANDSHAKE = 8096                 # HandshakeSerializer.maxHandshakeSize
 CODES = {1: "GetPeers", 2: "Peers", 22: "RequestModifier", 33: "Modifiers", 55: "Inv", 65: "SyncInfo",
          76: "GetSnapshotsInfo", 77: "SnapshotsInfo", 78: "GetManifest", 79: "Manifest", 80: "GetUtxoSnapshotChunk",
-         81: "UtxoSnapshotChunk", 90: "GetNipopowProof", 91: "NipopowProof"}   # 75 (Handshake) is never framed
+         81: "UtxoSnapshotChunk", 90: "GetNipopowProof", 91: "NipopowProof",
+         # Matrix (weak-blocks line, e.g. a1bd938e): input blocks and ordering-block announcements
+         100: "InputBlock", 102: "InputBlockTxIds", 104: "InputBlockTxs", 105: "InputBlockTxsRequest",
+         106: "OrderingBlock"}   # 75 (Handshake) is never framed
+WEAK_ID_LENGTH = 6   # ErgoTransaction.WeakIdLength (weak-blocks)
 BLOCK_SECTIONS = (101, 102, 104, 108)   # header, block transactions, proofs, extension; 2 = transaction
 FEATURES = {2: "local_address", 3: "session_id", 4: "rest_api_url", 16: "mode"}
 DEFAULT_MAGIC = bytes([112, 101, 101, 114])   # the rig's default ("peer")
@@ -239,6 +246,26 @@ def header_height(hb):
     return r.vlq()
 
 
+def header_span(r):
+    """Read one full serialized header from Reader r (HeaderSerializer: serializeWithoutPow, then the PoW solution by
+    version) and return (header id hex, height, version). The id is Blake2b-256 of the header's bytes (Header.id)."""
+    start = r.pos
+    version = r.u8()
+    r.take(32 + 32 + 32 + 33)              # parentId, ADProofsRoot, transactionsRoot, stateRoot
+    r.vlq()                                # timestamp
+    r.take(32 + 4)                         # extensionRoot, nBits
+    height = r.vlq()
+    r.take(3)                              # votes
+    if version > 1:
+        r.take(r.u8())                     # unparsed bytes (length-prefixed)
+        r.take(33 + 8)                     # Autolykos v2: pk, nonce
+    else:
+        r.take(33 + 33 + 8)                # Autolykos v1: pk, w, nonce
+        r.take(r.u8())                     # d
+    hid = hashlib.blake2b(bytes(r.b[start:r.pos]), digest_size=32).hexdigest()
+    return hid, height, version
+
+
 def parse_handshake(b, magic):
     """(record fields, bytes consumed) of a handshake at the start of b; NeedMore if b ends inside it, ValueError if
     the bytes cannot be one."""
@@ -324,6 +351,25 @@ def parse_payload(code, data):
             if tid == 101:
                 out["heights"] = hs
             return out
+        if code == 100:                        # InputBlockAnnouncement
+            ver = r.i8()
+            ibid, h, _ = header_span(r)
+            out = {"version": ver, "input_block_id": ibid, "height": h}
+            out["prev_input_block_id"] = r.take(32).hex() if r.u8() else None
+            r.take(32 + 32)                    # transactionsDigest, prevTransactionsDigest
+            r.take(r.vlq())                    # merkle proof
+            out["weak_tx_ids"] = r.vlq() if r.u8() else None
+            return out
+        if code in (102, 105):                 # input-block tx ids; request for input-block txs (weak ids)
+            ibid, cnt = r.take(32).hex(), r.vlq()
+            return {"input_block_id": ibid, "count": cnt,
+                    "weak_ids": [r.take(WEAK_ID_LENGTH).hex() for _ in range(cnt)]}
+        if code == 104:                        # input-block transactions (bodies not parsed)
+            return {"input_block_id": r.take(32).hex(), "count": r.vlq()}
+        if code == 106:                        # OrderingBlockAnnouncement (header, then unbroadcast txs, not parsed)
+            ver = r.i8()
+            hid, h, _ = header_span(r)
+            return {"version": ver, "ordering_block_id": hid, "height": h, "non_broadcast_txs": r.vlq()}
         if code == 1:
             return {} if not data else {"parse_error": "GetPeers with data"}
         if code == 2:

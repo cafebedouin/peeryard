@@ -62,6 +62,12 @@ a packet.
   announced modifier can be followed through its request and delivery), and `gap`, `desync`, `resync` and `tail` for what could not be decoded.
   Also `out/wire/summary.json`, one line per link printed as `[rig] WIRE ...`. `t_ms` is on the same epoch-ms clock
   as `events.jsonl`.
+- **Matrix (weak-blocks line)**: `InputBlock` (100), `InputBlockTxIds` (102), `InputBlockTxs` (104),
+  `InputBlockTxsRequest` (105) and `OrderingBlock` (106) are parsed, per the weak-blocks serializers at `a1bd938e`:
+  input- and ordering-block ids (the Blake2b-256 of the header, as the node computes them), heights, the parent input
+  block, and the weak (6-byte) transaction ids. Checked on a `matrix-latency` capture: 309 Matrix frames, no parse
+  error, every input block's parent id is one this decoder computed from another announcement, and all 271 ids
+  appear in the nodes' own logs.
 - **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. Every
   summary prints the capture drops beside it. An absence ("no Inv was sent") holds only where the links and window
   show no gap and no drop, and `diagnose.py` marks a wire stage `unreliable` otherwise.

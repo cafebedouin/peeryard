@@ -2,8 +2,10 @@
 # a runner class anyone can re-run). The build job builds BOTH jars here with diffrun/build.sh from one base commit: the
 # base alone, and the base plus the PR's production diff (<PR base branch>...<head>, restricted to the production
 # dirs), so the pair differs only in the patch. The base is the Matrix commit peeryard carries
-# (patches/ergo-matrix/patches.json, line=matrix) or a release tag. Each of `shards` runners then runs `pairs` pairs
-# (base run, candidate run, alternating, run.sh's order), and diffrun/pool.sh judges the pooled runs once
+# (patches/ergo-matrix/patches.json, line=matrix), that commit plus the carried Matrix stack (line=matrix-stack: the
+# base jar is patches/stack.sh --build ergo-matrix, and the candidate stacks the PR's diff last through stack.sh's
+# overlay, so the pair still differs only in the PR's diff), or a release tag. Each of `shards` runners then runs
+# `pairs` pairs (base run, candidate run, alternating, run.sh's order), and diffrun/pool.sh judges the pooled runs once
 # (role_summary/decide over shards x pairs; a lost shard counts as INCONCLUSIVE runs). With aa=true the base jar runs
 # in both roles (an A/A control, labelled so; no PR is fetched). Runs by hand.
 name: peeryard PR scenario
@@ -12,7 +14,7 @@ on:
     inputs:
       pr: { description: 'ergoplatform/ergo pull request number (ignored when aa is true)', default: '' }
       head: { description: 'the PR head commit, 40 hex (the run fails if the PR has moved; ignored when aa is true)', default: '' }
-      line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json) or a release tag, e.g. v6.0.6', default: 'v6.0.6' }
+      line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack) or a release tag, e.g. v6.0.6', default: 'v6.0.6' }
       scenario: { description: 'manifest basename under diffrun/scenarios/ (without .json); public tier, no stop_when/max_n', default: 'matrix-paychain' }
       shards: { description: 'runners (1-20)', default: '5' }
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
@@ -47,13 +49,17 @@ jobs:
           fail(){ echo "::error::$*"; exit 1; }
           [[ "$SCENARIO" =~ ^[a-z0-9-]+$ ]] || fail "scenario: [a-z0-9-] only"
           m="diffrun/scenarios/$SCENARIO.json"; [ -f "$m" ] || fail "no manifest $m"
-          [[ "$LINE" == matrix || "$LINE" =~ ^v[0-9.]+$ ]] || fail "line: matrix or a release tag vN.N.N"
+          [[ "$LINE" == matrix || "$LINE" == matrix-stack || "$LINE" =~ ^v[0-9.]+$ ]] || fail "line: matrix, matrix-stack or a release tag vN.N.N"
           { [[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] && [ "$SHARDS" -le 20 ]; } || fail "shards: 1-20"
           [[ "$PAIRS" =~ ^[1-9][0-9]?$ ]] || fail "pairs: 1-99"
           if [ "$AA" = true ]; then echo "A/A control: pr and head are ignored"
           else
             [[ "$PR" =~ ^[0-9]+$ ]] || fail "pr: a number"
             [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "head: 40 lowercase hex"
+            if [ "$LINE" = matrix-stack ]; then   # a stack member's diff would be applied twice (stack.sh's default set: no only_for)
+              in_stack="$(jq -r --argjson pr "$PR" '.stack_statuses as $s | [.patches[] | select(.upstream_pr == $pr and (.status as $x | $s | index($x)) and (.only_for // null) == null) | .id] | join(" ")' patches/ergo-matrix/patches.json)"
+              [ -z "$in_stack" ] || fail "line=matrix-stack: #$PR is already in the Matrix stack (patch $in_stack); the candidate is the stack plus a PR outside it"
+            fi
           fi
           jq -L diffrun/lib -e 'include "diffrun"; validate_manifest | length == 0' "$m" >/dev/null || fail "manifest does not validate"
           [ "$(jq -r .tier "$m")" = public ] || fail "tier: only public manifests run here"
@@ -71,7 +77,7 @@ jobs:
           fail(){ echo "::error::$*"; exit 1; }
           C="$DIFFRUN_ERGO_CLONE"
           git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$C"
-          if [ "$LINE" = matrix ]; then
+          if [ "$LINE" = matrix ] || [ "$LINE" = matrix-stack ]; then
             BASE="$(jq -r .base patches/ergo-matrix/patches.json)"; git -C "$C" fetch -q origin weak-blocks
           else
             BASE="$LINE"; git -C "$C" fetch -q origin "refs/tags/$LINE:refs/tags/$LINE"
@@ -94,13 +100,13 @@ jobs:
             echo "RANGE=origin/$B...pr-$PR" >> "$GITHUB_ENV"
           fi
       - name: Cache the sigma-state snapshot the weak-blocks line depends on
-        if: env.LINE == 'matrix'
+        if: env.LINE == 'matrix' || env.LINE == 'matrix-stack'
         uses: actions/cache@v4
         with:
           path: ~/.ivy2/local/org.scorexfoundation
           key: sigma-snapshot-${{ hashFiles('patches/ergo-matrix/patches.json', 'patches/sigma-snapshot.sh') }}
       - name: sigma-state snapshot (weak-blocks pins a -SNAPSHOT that is on no public repository)
-        if: env.LINE == 'matrix'
+        if: env.LINE == 'matrix' || env.LINE == 'matrix-stack'
         run: JAVA8_HOME="$JAVA_HOME" bash patches/sigma-snapshot.sh "$BASE"
       - name: Build the base and the base + the PR's diff
         run: |
@@ -109,13 +115,27 @@ jobs:
           PATHS=(src/main ergo-core/src/main ergo-wallet/src/main avldb/src/main)
           mkdir -p jars
           build(){ local j; for attempt in 1 2; do j="$(bash diffrun/build.sh "$@" | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "build failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
-          put(){ cp "$2" "jars/$1.jar"; cp "$2.json" "jars/$1.jar.json"; }
-          put base "$(build "$BASE")"
+          # line=matrix-stack: the build base plus the carried Matrix stack, applied in id order by patches/stack.sh
+          stack(){ local j; for attempt in 1 2; do j="$(bash patches/stack.sh --build ergo-matrix | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "stack build failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
+          put(){ cp "$2" "jars/$1.jar"; cp "$2.json" "jars/$1.jar.json"; if [ -f "$2.stack.json" ]; then cp "$2.stack.json" "jars/$1.stack.json"; fi; }
+          stacked(){ jq -r '"\([.patches[] | .id + (if .upstream_pr then " #\(.upstream_pr)" else "" end)] | join(", ")) (combined diff sha256 \(.combined_sha256))"' "jars/$1.stack.json"; }
+          if [ "$LINE" = matrix-stack ]; then put base "$(stack)"; echo "base: build base + Matrix stack $(stacked base)" >> summary.txt
+          else put base "$(build "$BASE")"; fi
           if [ "$AA" != true ]; then
             bash diffrun/build.sh --dry-run "$BASE" "$RANGE" -- "${PATHS[@]}" > jars/candidate.patch 2> dry.txt || { cat dry.txt; exit 1; }
             { echo "candidate patch ($RANGE, ${PATHS[*]}): sha256 $(sha256sum jars/candidate.patch | cut -d' ' -f1)"; grep -E '^build: files' dry.txt; } >> summary.txt
-            put candidate "$(build "$BASE" "$RANGE" -- "${PATHS[@]}")"
-            echo "candidate: build base $BSHA + PR #$PR diff (merge-base $(grep -oE '^merge-base: [0-9a-f]+' summary.txt | cut -d' ' -f2), head $HEAD_SHA)" >> summary.txt
+            MB="$(grep -oE '^merge-base: [0-9a-f]+' summary.txt | cut -d' ' -f2)"
+            if [ "$LINE" = matrix-stack ]; then
+              # the PR's diff (the bytes above) as one more patch after the stack, through stack.sh's overlay: the two jars
+              # differ only in it; a diff that does not apply on the stack fails here (stack.sh names the patch)
+              ov="$RUNNER_TEMP/pr-overlay"; mkdir -p "$ov/ergo-matrix"; cp jars/candidate.patch "$ov/ergo-matrix/pr-$PR.patch"
+              jq -n --arg f "pr-$PR.patch" --argjson pr "$PR" '{patches: [{id: "999", file: $f, title: "PR #\($pr) production diff", status: "proposed", upstream_pr: $pr}]}' > "$ov/ergo-matrix/patches.json"
+              put candidate "$(PEERYARD_PATCHES_EXTRA="$ov" stack)"
+              echo "candidate: build base $BSHA + Matrix stack + PR #$PR diff last: $(stacked candidate) (merge-base $MB, head $HEAD_SHA)" >> summary.txt
+            else
+              put candidate "$(build "$BASE" "$RANGE" -- "${PATHS[@]}")"
+              echo "candidate: build base $BSHA + PR #$PR diff (merge-base $MB, head $HEAD_SHA)" >> summary.txt
+            fi
           else
             echo "A/A control: the base jar in both roles" >> summary.txt
           fi

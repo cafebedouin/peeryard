@@ -136,5 +136,113 @@ class DiagnoseSpec(unittest.TestCase):
         self.assertIn("CAUSE UNKNOWN", D.report([], "goal"))
 
 
+
+def ev(kind, t, a=None, b=None, node=None):
+    return {"t": t, "kind": kind, "a": a, "b": b, "node": node, "detail": None}
+
+
+class Partitioned(unittest.TestCase):
+    lonely = frozen([node("A", 30, 30, "aa", "aa", peers=1, mining=True), node("B", 20, 20, "bb", "bb", peers=0),
+                     node("C", 30, 30, "aa", "aa", peers=1)])
+
+    def test_a_node_cut_on_every_link_is_partitioned_and_the_samples_cause_is_kept(self):
+        links = [("A", "B"), ("A", "C")]
+        events = [ev("launch", 0, node="A"), ev("partition", 5, "A", "B"), ev("relaunch", 9, node="B")]
+        d = D.diagnose(self.lonely, events=events, links=links)
+        self.assertEqual((d.cause, d.observed), (D.PARTITIONED, D.NO_PEERS))
+        self.assertTrue(d.evidence.startswith("B cut from every peer"))
+        self.assertEqual(d.as_json()["observed"], D.NO_PEERS)
+
+    def test_event_order_of_a_and_b_does_not_matter(self):
+        self.assertEqual(D.partitioned([ev("partition", 1, "B", "A")], [("A", "B")]), ["A", "B"])
+
+    def test_a_later_heal_ends_the_cut(self):
+        events = [ev("partition", 1, "A", "B"), ev("heal", 2, "B", "A")]
+        self.assertEqual(D.partitioned(events, [("A", "B")]), [])
+        self.assertEqual(D.partitioned(events + [ev("partition", 3, "A", "B")], [("A", "B")]), ["A", "B"])
+
+    def test_one_live_link_left_is_not_partitioned(self):
+        # A-B cut, A-C live: only B lost every peer
+        self.assertEqual(D.partitioned([ev("partition", 1, "A", "B")], [("A", "B"), ("A", "C")]), ["B"])
+
+    def test_no_peers_positive_control(self):
+        # a node started with no peers and never cut stays NO_PEERS: the event rule does not swallow it
+        events = [ev("launch", 0, node="A"), ev("launch", 0, node="B"), ev("launch", 0, node="C")]
+        d = D.diagnose(self.lonely, events=events, links=[("A", "C")])
+        self.assertEqual((d.cause, d.observed), (D.NO_PEERS, None))
+
+    def test_without_events_nothing_changes(self):
+        self.assertEqual(D.diagnose(self.lonely).cause, D.NO_PEERS)
+
+
+def msg(t, frm, to, name, type_id=None, kind="frame", link="L-S"):
+    m = {"t_ms": t, "kind": kind, "link": link, "conn": 1, "from": frm, "to": to}
+    if kind == "frame":
+        m.update(name=name, code={"SyncInfo": 65, "Inv": 55, "RequestModifier": 22, "Modifiers": 33}[name])
+        if type_id is not None:
+            m["type_id"] = type_id
+    return m
+
+
+class WireSplit(unittest.TestCase):
+    # L stuck at 10 on its own fork from t=20 s; S at 20 on the heavier one. Frames at t < 20 s are outside the window.
+    hist = [[node("L", 9, 9, "l9", "l9", at=i * 10_000), node("S", 20, 20, "s20", "s20", at=i * 10_000)] for i in range(2)] + \
+           [[node("L", 10, 10, "l10", "l10", at=i * 10_000), node("S", 20, 20, "s20", "s20", at=i * 10_000)]
+            for i in range(2, 7)]
+    early = [msg(1_000, "S", "L", "Inv", 101), msg(1_100, "L", "S", "RequestModifier", 101),
+             msg(1_200, "S", "L", "Modifiers", 101)]   # before L's last height change: not counted
+
+    def split(self, msgs, drops=None):
+        d = D.diagnose(self.hist, messages=self.early + msgs, drop_seconds=drops or {})
+        self.assertEqual(d.cause, D.LIGHTER_FORK_NOT_SWITCHING)
+        (w,) = d.wire
+        return w
+
+    def test_no_sync(self):
+        self.assertEqual(self.split([])["stage"], D.NO_SYNC)
+
+    def test_sync_no_inv(self):
+        self.assertEqual(self.split([msg(30_000, "L", "S", "SyncInfo")])["stage"], D.SYNC_NO_INV)
+
+    def test_inv_not_requested(self):
+        w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_100, "S", "L", "Inv", 101)])
+        self.assertEqual(w["stage"], D.INV_NOT_REQUESTED)
+
+    def test_request_not_answered(self):
+        w = self.split([msg(30_000, "S", "L", "SyncInfo"), msg(30_100, "S", "L", "Inv", 101),
+                        msg(30_200, "L", "S", "RequestModifier", 101)])
+        self.assertEqual(w["stage"], D.REQUEST_NOT_ANSWERED)
+
+    def test_delivered_no_height_change(self):
+        w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_100, "S", "L", "Inv", 108),
+                        msg(30_200, "L", "S", "RequestModifier", 108), msg(30_300, "S", "L", "Modifiers", 108)])
+        self.assertEqual((w["stage"], w["counts"]), (D.DELIVERED_NO_HEIGHT_CHANGE,
+                                                     {"sync": 1, "inv_back": 1, "request": 1, "modifiers_back": 1}))
+
+    def test_transactions_never_advance_the_ladder(self):
+        w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_100, "S", "L", "Inv", 2),
+                        msg(30_200, "L", "S", "RequestModifier", 2), msg(30_300, "S", "L", "Modifiers", 2)])
+        self.assertEqual(w["stage"], D.SYNC_NO_INV)
+
+    def test_direction_matters(self):
+        # an Inv from the lower node, a request from the higher one: neither is the ladder's
+        w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_100, "L", "S", "Inv", 101),
+                        msg(30_200, "S", "L", "RequestModifier", 101)])
+        self.assertEqual(w["stage"], D.SYNC_NO_INV)
+
+    def test_gap_in_window_is_unreliable(self):
+        w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_050, "S", "L", None, kind="gap")])
+        self.assertEqual((w["stage"], w["would_be"]), (D.UNRELIABLE, D.SYNC_NO_INV))
+
+    def test_drop_in_window_is_unreliable_and_before_it_is_not(self):
+        m = [msg(30_000, "L", "S", "SyncInfo")]
+        self.assertEqual(self.split(m, {"L-S": [40_000]})["stage"], D.UNRELIABLE)
+        self.assertEqual(self.split(m, {"L-S": [5_000]})["stage"], D.SYNC_NO_INV)
+
+    def test_partitioned_is_never_split_but_keeps_the_observed_cause(self):
+        d = D.diagnose(self.hist, events=[ev("partition", 25_000, "L", "S")], links=[("L", "S")], messages=self.early)
+        self.assertEqual((d.cause, d.observed, d.wire), (D.PARTITIONED, D.LIGHTER_FORK_NOT_SWITCHING, []))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -9,14 +9,30 @@ moving".
 
   python3 diag/diagnose.py <samples.jsonl> [--no-expect-peers] [--json]
 
+Beside samples.jsonl it reads, when present: events.jsonl + effective.json (a node every one of whose links ends cut
+- a partition with no later heal - is PARTITIONED: the run's cause is then PARTITIONED, naming the node, and the
+samples-based cause is kept as `observed`), and messages.jsonl + wire/*.stats.json (diag/wire.py: a
+LIGHTER_FORK_NOT_SWITCHING is split by what crossed the wire, below). The rig runs this only on a non-PASS verdict.
+
+Wire split of LIGHTER_FORK_NOT_SWITCHING (descriptive; no stage asserts a code-level reason). Per lower node, over the
+window from its last height change (else the whole run) to the end, on its links to the nodes on a higher chain
+("back" = frames from a higher node), the first stage that fails names it: NO_SYNC (no SyncInfo either way),
+SYNC_NO_INV (no Inv back), INV_NOT_REQUESTED (no RequestModifier from the lower node), REQUEST_NOT_ANSWERED (no
+Modifiers back), else DELIVERED_NO_HEIGHT_CHANGE (block sections arrived; not a claim they were the needed ones). Inv,
+RequestModifier and Modifiers count only for block-section type ids (101, 102, 104, 108); SyncInfo always counts. A
+stage passes if it passes on any of the links. The labels are absence claims, so a verdict counts only when those
+links show no gap, no desync and no capture drop in the window; otherwise it is `unreliable`.
+
 samples.jsonl: one round per line, {"t": <ms>, "nodes": [{"name", "state", "answered", "headersHeight", "fullHeight",
 "bestHeaderId", "bestFullHeaderId", "peers", "mining"}]}; state is "running", "paused", "unknown" or anything else for
 a node that is not running (e.g. "down", "exited(137)"). Missing values are null. Standard library only.
 """
+import glob
 import json
+import os
 import sys
-from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
 
 RUNNING, PAUSED, UNKNOWN_STATE = "running", "paused", "unknown"
 
@@ -30,7 +46,13 @@ HEADERS_AHEAD_FULL_STUCK = "HEADERS_AHEAD_FULL_STUCK"
 LIGHTER_FORK_NOT_SWITCHING = "LIGHTER_FORK_NOT_SWITCHING"
 CHAIN_STALLED = "CHAIN_STALLED"
 STILL_PROGRESSING = "STILL_PROGRESSING"
+PARTITIONED = "PARTITIONED"
 UNKNOWN = "UNKNOWN"
+# wire stages of LIGHTER_FORK_NOT_SWITCHING, in ladder order
+NO_SYNC, SYNC_NO_INV, INV_NOT_REQUESTED = "NO_SYNC", "SYNC_NO_INV", "INV_NOT_REQUESTED"
+REQUEST_NOT_ANSWERED, DELIVERED_NO_HEIGHT_CHANGE = "REQUEST_NOT_ANSWERED", "DELIVERED_NO_HEIGHT_CHANGE"
+UNRELIABLE = "unreliable"
+BLOCK_SECTIONS = (101, 102, 104, 108)
 
 PERSIST_ROUNDS = 3          # rounds a condition must hold before it is named (one slow answer is not a cause)
 PROGRESS_SPAN_MS = 30_000   # progress is judged over this span, so early progress cannot mask a later stall
@@ -77,9 +99,19 @@ class NodeSample:
 class Diagnosis:
     cause: str
     evidence: str
+    observed: Optional[str] = None                 # the samples-based cause, when an event-based one overrides it
+    wire: List[dict] = field(default_factory=list)  # the wire split, one entry per lower node
 
     def __str__(self) -> str:
         return f"{self.cause}: {self.evidence}"
+
+    def as_json(self) -> dict:
+        d = {"cause": self.cause, "evidence": self.evidence}
+        if self.observed is not None:
+            d["observed"] = self.observed
+        if self.wire:
+            d["wire"] = self.wire
+        return d
 
 
 Round = Sequence[NodeSample]
@@ -141,7 +173,87 @@ def full_stuck_behind_headers(history: Sequence[Round]) -> List[NodeSample]:
     return out
 
 
-def diagnose(history: Sequence[Round], expect_peers: bool = True) -> Diagnosis:
+def partitioned(events: Sequence[dict], links: Sequence[Tuple[str, str]]) -> List[str]:
+    """Nodes every one of whose links ends cut: its last partition/heal event is a partition (relaunches, crashes and
+    netem changes are not cuts). A node with no link is never partitioned."""
+    cut: Dict[frozenset, bool] = {}
+    for e in events:
+        if e.get("kind") in ("partition", "heal"):
+            cut[frozenset((e.get("a"), e.get("b")))] = e["kind"] == "partition"
+    nodes = []
+    for n in dict.fromkeys(x for ln in links for x in ln):
+        mine = [frozenset(ln) for ln in links if n in ln]
+        if mine and all(cut.get(k, False) for k in mine):
+            nodes.append(n)
+    return nodes
+
+
+def wire_split(history: Sequence[Round], lower: str, higher: Sequence[str], messages: Sequence[dict],
+               drop_seconds: Dict[str, List[int]]) -> dict:
+    """The wire ladder for one lower node (module doc). drop_seconds: link -> times (ms) of stats seconds with drops."""
+    t_change = None
+    prev = None
+    for rnd in history:
+        s = _find(rnd, lower)
+        if s is None or not s.answered:
+            continue
+        cur = (s.headers, s.full)
+        if prev is not None and cur != prev:
+            t_change = s.at
+        prev = cur
+    hs = set(higher)
+    ms = [m for m in messages if (t_change is None or m.get("t_ms", 0) >= t_change)
+          and {m.get("from"), m.get("to")} in ({lower, h} for h in hs)]
+    links = sorted({m["link"] for m in messages if {m.get("from"), m.get("to")} in ({lower, h} for h in hs)})
+
+    def frames(name, frm=None, sections=True):
+        return [m for m in ms if m.get("kind") == "frame" and m.get("name") == name
+                and (frm is None or (m.get("from") in hs if frm == "higher" else m.get("from") == lower))
+                and (not sections or m.get("type_id") in BLOCK_SECTIONS)]
+    counts = {"sync": len(frames("SyncInfo", sections=False)), "inv_back": len(frames("Inv", "higher")),
+              "request": len(frames("RequestModifier", "lower")), "modifiers_back": len(frames("Modifiers", "higher"))}
+    stage = (NO_SYNC if not counts["sync"] else SYNC_NO_INV if not counts["inv_back"] else
+             INV_NOT_REQUESTED if not counts["request"] else REQUEST_NOT_ANSWERED if not counts["modifiers_back"]
+             else DELIVERED_NO_HEIGHT_CHANGE)
+    gaps = sum(1 for m in ms if m.get("kind") in ("gap", "desync"))
+    drops = sum(1 for ln in links for t in drop_seconds.get(ln, []) if t_change is None or t >= t_change - 1000)
+    out = {"lower": lower, "higher": sorted(hs), "links": links, "window_from_ms": t_change, "counts": counts,
+           "gaps_or_desyncs": gaps, "drop_seconds": drops}
+    if not links:
+        out["stage"] = UNRELIABLE
+        out["why"] = "no captured link between the lower node and a higher one"
+    elif gaps or drops:
+        out["stage"] = UNRELIABLE
+        out["why"] = "gap, desync or capture drop in the window: an absence may be a loss of capture"
+        out["would_be"] = stage
+    else:
+        out["stage"] = stage
+    return out
+
+
+def diagnose(history: Sequence[Round], expect_peers: bool = True, events: Optional[Sequence[dict]] = None,
+             links: Optional[Sequence[Tuple[str, str]]] = None, messages: Optional[Sequence[dict]] = None,
+             drop_seconds: Optional[Dict[str, List[int]]] = None) -> Diagnosis:
+    d = _diagnose_samples(history, expect_peers)
+    cut = partitioned(events, links) if events is not None and links else []
+    if cut:   # never split: a cut explains the absence of traffic
+        return Diagnosis(PARTITIONED, f"{', '.join(cut)} cut from every peer at the run's end (each of its links' "
+                                      f"last partition/heal event is a partition); samples read {d.cause}: "
+                                      f"{d.evidence}", observed=d.cause)
+    if messages and d.cause == LIGHTER_FORK_NOT_SWITCHING and history and history[-1]:
+        last = history[-1]
+        top = max((n.full for n in last if n.full is not None), default=None)
+        split = []
+        for lo in (n for n in last if n.full is not None and n.full == n.headers and top is not None and n.full < top):
+            hi = [n.name for n in last if n.full is not None and n.full > lo.full and n.full_id != lo.full_id]
+            split.append(wire_split(history, lo.name, hi, messages, drop_seconds or {}))
+        stages = "; ".join(f"{w['lower']} {w['stage']}" + (f" (would be {w['would_be']})" if "would_be" in w else "")
+                           for w in split)
+        d = Diagnosis(d.cause, f"{d.evidence} Wire: {stages}.", wire=split)
+    return d
+
+
+def _diagnose_samples(history: Sequence[Round], expect_peers: bool = True) -> Diagnosis:
     if not history or not history[-1]:
         return Diagnosis(UNKNOWN, "no samples were taken")
     last = history[-1]
@@ -235,6 +347,28 @@ def report(history: Sequence[Round], goal: str, expect_peers: bool = True) -> st
     return f"{goal}. CAUSE {diagnose(history, expect_peers)}\n" + "\n".join(lines)
 
 
+def load_beside(samples_path: str) -> dict:
+    """events, links, messages and drop_seconds from the run dir holding samples.jsonl (each absent -> None / {})."""
+    d = os.path.dirname(os.path.abspath(samples_path))
+    out: dict = {"events": None, "links": None, "messages": None, "drop_seconds": {}}
+
+    def jsonl(p):
+        with open(p) as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+    if os.path.exists(os.path.join(d, "events.jsonl")):
+        out["events"] = jsonl(os.path.join(d, "events.jsonl"))
+    if os.path.exists(os.path.join(d, "effective.json")):
+        with open(os.path.join(d, "effective.json")) as fh:
+            out["links"] = [(ln["a"], ln["b"]) for ln in json.load(fh).get("links", [])]
+    if os.path.exists(os.path.join(d, "messages.jsonl")):
+        out["messages"] = jsonl(os.path.join(d, "messages.jsonl"))
+        for sp in glob.glob(os.path.join(d, "wire", "*.stats.json")):
+            with open(sp) as fh:
+                st = json.load(fh)
+            out["drop_seconds"][os.path.basename(sp)[:-len(".stats.json")]] = [x[0] for x in st.get("series", []) if x[2]]
+    return out
+
+
 def load(path: str) -> List[List[NodeSample]]:
     history = []
     with open(path) as fh:
@@ -259,8 +393,8 @@ def main(argv: List[str]) -> int:
     if len(args) != 1:
         print(__doc__.strip().splitlines()[4], file=sys.stderr)
         return 2
-    d = diagnose(load(args[0]), expect_peers="--no-expect-peers" not in argv)
-    print(json.dumps({"cause": d.cause, "evidence": d.evidence}) if "--json" in argv else str(d))
+    d = diagnose(load(args[0]), expect_peers="--no-expect-peers" not in argv, **load_beside(args[0]))
+    print(json.dumps(d.as_json()) if "--json" in argv else str(d))
     return 0
 
 

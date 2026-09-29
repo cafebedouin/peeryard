@@ -235,7 +235,7 @@ not count against the suite. Each has a measured pass rate below 100% and an ope
 PASS, and an example leaves the list when it passes reliably on the reference node. In the three-repeat sweep on GitHub
 runners (2026-09-26), every example not listed here passed 3 of 3 (`bootstrap-modes` after its pruning read was made to
 retry). The runner counts below pool that sweep, on the public repository's runner class (4 vCPU, 16 GB), with an
-earlier one-repeat sweep on the private-repository class (2 vCPU, 8 GB).
+earlier one-repeat sweep on the private-repository class (2 vCPU, 8 GB); which class each failure came from was not recorded.
 
 | example | development host | GitHub runners (ubuntu-24.04, 2 and 4 vCPU pooled) | status |
 |---|---|---|---|

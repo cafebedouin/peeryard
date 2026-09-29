@@ -1,7 +1,7 @@
 {
   "repo": "ergoplatform/ergo",
   "branch": "weak-blocks",
-  "base": "a1bd938effb7f5acabfe5230a5ef20fe0d50ae62",
+  "base": "8769baace0c56b7d912b01f298492120429da961",
   "stack_statuses": [
     "proposed",
     "under-review",

@@ -39,7 +39,7 @@ jobs:
         run: |
           git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
           git -C "$HOME/ergo-clone" fetch -q origin weak-blocks
-          git -C "$HOME/ergo-clone" cat-file -e 'a1bd938effb7f5acabfe5230a5ef20fe0d50ae62^{commit}'
+          git -C "$HOME/ergo-clone" cat-file -e "$(jq -r .base patches/ergo-matrix/patches.json)^{commit}"
       - name: Cache the sigma-state snapshot the weak-blocks line depends on
         uses: actions/cache@v4
         with:

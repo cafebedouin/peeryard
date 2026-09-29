@@ -12,6 +12,7 @@ All are standard-library Python and have tests in `tests/` (wired into `tests/to
 | `sweep.py` | which runs look unlike the others, or show something never seen before? | a tree of run dirs, no labels; optionally earlier runs as a baseline | per run: rare messages, count outliers, feature outliers; with `--baseline`: new messages, new transitions, new co-occurrences, features outside the known range |
 | `logmap.py` | which line of the node's source wrote this log line? | a node source checkout | an index of `log.<level>(...)` calls; `--source` on `features.py` and `sweep.py` names the code behind each finding |
 | `costs.py` | what did recovery cost? | a rig run's `events.jsonl` + `samples.jsonl` | `costs.json`: per heal, revive and relaunch, the seconds to agreement (equal tips at two consecutive samples), first answer and CPU in the window; a one-line summary |
+| `matrix_prop.py` | how far and how fast do Matrix input blocks travel? | the `messages.jsonl` of `matrix-latency` runs with the wire on | per run and per arm: the share of A's input blocks that reach C, the hop latency, duplicates per link (`.github/workflows/matrix-relay.yml`) |
 | `wire.py` | what did the nodes actually send each other? | a rig run with the wire on (`PEERYARD_WIRE=1`): one pcap per link | `messages.jsonl`: every P2P message per link and direction, on the rig's clock, with drops and decode gaps counted |
 
 ## How they fit

@@ -71,6 +71,10 @@ else bad "logmap.py: indexing and matching" "see $T/logmap.txt"; fi
 if python3 tests/costs_test.py > "$T/costs.txt" 2>&1; then ok "costs.py: $(grep -oE 'Ran [0-9]+ tests' "$T/costs.txt")"
 else bad "costs.py: recovery windows and agreement" "see $T/costs.txt"; fi
 
+# diag/matrix_prop.py: Matrix input-block reach, hop latency, duplicates (tests/matrix_prop_test.py)
+if python3 tests/matrix_prop_test.py > "$T/matrix_prop.txt" 2>&1; then ok "matrix_prop.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_prop.txt")"
+else bad "matrix_prop.py: reach and hop latency" "see $T/matrix_prop.txt"; fi
+
 # diag/wire.py: TCP reassembly, framing, validated resync, the unframed handshake, parsers (tests/wire_test.py)
 if python3 tests/wire_test.py > "$T/wire.txt" 2>&1; then ok "wire.py: $(grep -oE 'Ran [0-9]+ tests' "$T/wire.txt")"
 else bad "wire.py: reassembly and framing" "see $T/wire.txt"; fi

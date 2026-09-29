@@ -81,6 +81,8 @@ jobs:
           PEERYARD_WIRE=1 PEERYARD_DURATION=${{ inputs.duration || '180' }} PEERYARD_MATRIX_JAR="$PWD/jars/${{ matrix.build }}.jar" \
             SCRATCH="$run/scratch" bash rig/rig.sh "$topo" rig/examples/matrix-latency.sh > "$run/rig.log" 2>&1 || echo "rig exit $?"
           cp "$run/scratch/out/messages.jsonl" "$run/" 2>/dev/null || echo "no messages.jsonl"
+          # the capture's health (counts only, a few KB), never the pcaps: diag/README "Public and private"
+          mkdir -p "$run/wire"; cp "$run"/scratch/out/wire/{*.stats.json,summary.json,capture.log} "$run/wire/" 2>/dev/null || true
           cp host.txt "$run/"; grep -E '\[rig\] WIRE|=== MATRIX-LATENCY' "$run/rig.log" | tee -a "$GITHUB_STEP_SUMMARY"
           rm -rf "$run/scratch"
       - uses: actions/upload-artifact@v4

@@ -79,7 +79,8 @@ a packet.
   `REQUEST_NOT_ANSWERED` and `DELIVERED_NO_HEIGHT_CHANGE`. They are descriptive: no stage claims a code-level reason.
   At the time of writing this split has unit tests only. It has not yet named a stage on a real run.
 - **Public and private**: the capture and the decoder are public capability. Capture files stay in the run's log
-  directory, and CI never uploads raw pcaps; an example uploads `messages.jsonl` summaries only when it opts in. A
+  directory, and CI never uploads raw pcaps; an example uploads `messages.jsonl` summaries only when it opts in, and may
+  add the capture's health files (`*.stats.json`, `summary.json`, `capture.log`: counts, no traffic). A
   capture that documents a private reproduction or an undisclosed defect stays with whoever holds that report: the
   embargo binds the detail, not the capability.
 

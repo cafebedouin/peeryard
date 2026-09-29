@@ -145,3 +145,15 @@ def decide($pr; $minv):
   elif ($pr.candidate.pass | not) then "AGAINST"
   elif ($pr.base.pass | not) then "NULL"
   else "SUPPORTS" end;
+
+# ---- the verdict table (table.txt), from a verdict.json ----
+def render_table:
+  "scenario \(.scenario) (\(.tier))   verdict: \(.verdict)   [\({SUPPORTS: (if .expect.base == .expect.candidate then "both roles met the same expectation: an agreement scenario, not a before/after difference" else "the base showed the effect and the candidate did not" end), AGAINST: "the candidate failed its predicate", NULL: "the effect was not reproduced on the base", DEGENERATE: "too few valid runs"}[.verdict] // "")]\(if .same_jar then "   [A/A control: the same jar in both roles; not evidence about a change]" else "" end)\(if .n_overridden and .verdict == "SUPPORTS" then "   [n overridden: not citable]" else "" end)",
+  "n=\(.n_run) (manifest \(.n_manifest)\(if .n_overridden then ", OVERRIDDEN" else "" end))   min_valid_runs=\(.min_valid_runs)\(if .sequential then "   sequential: min \(.n_min), cap \(.sequential.max_n_effective)\(if .sequential.max_n_effective != .sequential.max_n then " (manifest \(.sequential.max_n), raised by -n)" else "" end), stopped by \(.sequential.stopped_by)" else "" end)\(if .precheck then "   precheck: \(.precheck.script), failed \(.precheck.failed)" else "" end)",
+  "",
+  "\("role" | pad(10)) \("valid" | pad(6)) \("void" | pad(5)) \("inconcl" | pad(8)) \("pass" | pad(6)) expect",
+  (["base", "candidate"][] as $r | .per_role[$r] as $p
+    | "\($r | pad(10)) \($p.valid | pad(6)) \($p.void | pad(5)) \($p.inconclusive | pad(8)) \($p.pass | pad(6)) \(.expect[$r] | tojson)"),
+  "",
+  "\("run" | pad(14)) \("class" | pad(32)) \("cause" | pad(28)) metrics",
+  (.runs[] | "\("\(.role)-\(.index)" | pad(14)) \(.class + (if .reason then " (" + .reason + (if .precheck == "fail" then ": precheck" else "" end) + ")" else "" end) | pad(32)) \((.cause // "-") | pad(28)) \(.metrics // {} | tojson)");

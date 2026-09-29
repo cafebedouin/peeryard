@@ -193,7 +193,7 @@ class WireSplit(unittest.TestCase):
              msg(1_200, "S", "L", "Modifiers", 101)]   # before L's last height change: not counted
 
     def split(self, msgs, drops=None):
-        d = D.diagnose(self.hist, messages=self.early + msgs, drop_seconds=drops or {})
+        d = D.diagnose(self.hist, messages=self.early + msgs, drop_seconds={"L-S": []} if drops is None else drops)
         self.assertEqual(d.cause, D.LIGHTER_FORK_NOT_SWITCHING)
         (w,) = d.wire
         return w
@@ -229,6 +229,10 @@ class WireSplit(unittest.TestCase):
         w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_100, "L", "S", "Inv", 101),
                         msg(30_200, "S", "L", "RequestModifier", 101)])
         self.assertEqual(w["stage"], D.SYNC_NO_INV)
+
+    def test_missing_stats_is_unreliable(self):
+        w = self.split([msg(30_000, "L", "S", "SyncInfo")], drops={})
+        self.assertEqual((w["stage"], w["would_be"], w["links_without_stats"]), (D.UNRELIABLE, D.SYNC_NO_INV, ["L-S"]))
 
     def test_gap_in_window_is_unreliable(self):
         w = self.split([msg(30_000, "L", "S", "SyncInfo"), msg(30_050, "S", "L", None, kind="gap")])

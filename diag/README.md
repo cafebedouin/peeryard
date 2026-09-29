@@ -11,6 +11,7 @@ All are standard-library Python and have tests in `tests/` (wired into `tests/to
 | `features.py` | which per-run feature separates the runs that failed from those that passed? | run dirs + outcome labels (or each run's verdict line) | features ranked by separation (perfect split first, then AUC), with ranges per outcome |
 | `sweep.py` | which runs look unlike the others, or show something never seen before? | a tree of run dirs, no labels; optionally earlier runs as a baseline | per run: rare messages, count outliers, feature outliers; with `--baseline`: new messages, new transitions, new co-occurrences, features outside the known range |
 | `logmap.py` | which line of the node's source wrote this log line? | a node source checkout | an index of `log.<level>(...)` calls; `--source` on `features.py` and `sweep.py` names the code behind each finding |
+| `costs.py` | what did recovery cost? | a rig run's `events.jsonl` + `samples.jsonl` | `costs.json`: per heal, revive and relaunch, the seconds to agreement (equal tips at two consecutive samples), first answer and CPU in the window; a one-line summary |
 | `wire.py` | what did the nodes actually send each other? | a rig run with the wire on (`PEERYARD_WIRE=1`): one pcap per link | `messages.jsonl`: every P2P message per link and direction, on the rig's clock, with drops and decode gaps counted |
 
 ## How they fit
@@ -44,8 +45,8 @@ a packet.
 - **Capture** (in the rig, opt-in: `PEERYARD_WIRE=1` or `"wire": true` in the topology; off by default): one
   process per link, on the link's `a` end, inside that node's namespace. It sees both directions. It starts before
   the nodes launch and writes `out/wire/<a>-<b>.pcap` in libpcap format (Ethernet), readable by tcpdump and
-  Wireshark: tcpdump 4.99.4 and tshark 4.2.2 read the golden fixture (161 packets, one TCP conversation of 153
-  frames) and a fork-convergence capture (424 packets) with the same counts as the decoder) and `<a>-<b>.stats.json`: the kernel's packet and drop
+  Wireshark: tcpdump 4.99.4 and tshark 4.2.2 read the golden fixture (161 packets; one TCP conversation of 153
+  packets) and a fork-convergence capture (424 packets) with the same packet counts as the decoder, and `<a>-<b>.stats.json`: the kernel's packet and drop
   counts (`PACKET_STATISTICS`, read each second into a series), the socket buffer (raised to `net.core.rmem_max`),
   and the skew between the kernel's receive time and the time written. What the `a` end sees is what crossed the link:
   its egress is tapped after netem. In `netsplit`, no packet was captured inside either cut window, over a connection

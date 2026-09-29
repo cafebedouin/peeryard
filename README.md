@@ -4,12 +4,12 @@
 processes, one network namespace each, links you can delay, drop, partition and heal, nodes you can crash and revive,
 different versions and implementations side by side, real transactions in the blocks. A pull request gets a
 before/after measurement to read next to its code instead of an opinion. No root to run it (the host setup needs
-`sudo` once) and no Docker. Its author is not a Scala programmer: every review made with it says which of its
+`sudo` once), and no Docker for the local track. Its author is not a Scala programmer: every review made with it says which of its
 statements were executed and which were read, and every number can be re-run from the command that produced it.
 
 **Worth your time if** you review or write Ergo node changes that touch sync, fork choice, the mempool, bootstrap or
-the network, and want a measured before/after; you have a Linux host (WSL2 works) or a GitHub runner, and an hour or
-two per verdict. **Not if** you want a quick green check (a verdict is a rate over paired runs, 1.5 to 2.5 hours), or a
+the network, and want a measured before/after; you have a Linux host (WSL2 works) or a GitHub runner, and about two
+hours per verdict. **Not if** you want a quick green check (a verdict is a rate over paired runs, 1.5 to 2.5 hours), or a
 judgment on design or protocol choices.
 
 **What a result looks like.** `fork-convergence` asks whether a follower holding a lighter fork switches to the heavier
@@ -23,8 +23,8 @@ one once it can see it. On GitHub-hosted runners (4 vCPU / 16 GB, the class a pu
 | reference node (release + the patches peeryard carries) | 40 of 40, and 80 of 80 |
 
 The release's misses are the defect being measured, not noise in the rig: the same rig and scenario run a fixed build at
-the ceiling. The release's rate also depends on the machine (54 of 77 on the 2 vCPU / 8 GB class), so every rate names
-its runner class, and a candidate is judged against the base measured on the same class. A `SUPPORTS` verdict means
+the ceiling. The release's rate also depends on the machine (54 of 77 on the 2 vCPU / 8 GB class), so rates are compared
+only within one runner class, and a candidate is judged against the base measured on the same class. A `SUPPORTS` verdict means
 the base failed at least twice and the candidate switched every time; how often that happens for a candidate no better
 than the base depends on the base's rate: about 1% when the release switches 57% of the time, 13% when it switches 85%
 (the table in `diffrun/README.md`). Finished runs to look at before producing one: `diffrun/examples/`.
@@ -71,7 +71,7 @@ split and rejoined, inspected, repaired and sent back out.
   the rig itself; `rig/devnet.sh` keeps a devnet up across sessions, its chain kept across `down` and `up`.
   Every run records the network it actually ran (`effective.json`).
 - `diag/` — reading a run: named causes for a failure (`diagnose.py`), recovery costs (`costs.py`), and an opt-in
-  passive wire observer (`wire.py`: per-link pcaps and every Ergo message decoded, `PEERYARD_WIRE=1`).
+  passive wire observer (`wire.py`: per-link pcaps, each Ergo message framed and six kinds parsed, `PEERYARD_WIRE=1`).
 - `diffrun/` — the scenario runner: build a candidate jar from a git ref, a patch, or part of a pull request
   (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`.
   Five node scenarios ship (`fork-convergence`, `sibling-fork`, `interop`, `txload`, `bootstrap-modes`); the

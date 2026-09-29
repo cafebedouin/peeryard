@@ -190,7 +190,8 @@ def partitioned(events: Sequence[dict], links: Sequence[Tuple[str, str]]) -> Lis
 
 def wire_split(history: Sequence[Round], lower: str, higher: Sequence[str], messages: Sequence[dict],
                drop_seconds: Dict[str, List[int]]) -> dict:
-    """The wire ladder for one lower node (module doc). drop_seconds: link -> times (ms) of stats seconds with drops."""
+    """The wire ladder for one lower node (module doc). drop_seconds: link -> times (ms) of stats seconds with drops; a link
+    absent from it has no stats file, so its drops are unknown and the stage is unreliable."""
     t_change = None
     prev = None
     for rnd in history:
@@ -217,11 +218,16 @@ def wire_split(history: Sequence[Round], lower: str, higher: Sequence[str], mess
              else DELIVERED_NO_HEIGHT_CHANGE)
     gaps = sum(1 for m in ms if m.get("kind") in ("gap", "desync"))
     drops = sum(1 for ln in links for t in drop_seconds.get(ln, []) if t_change is None or t >= t_change - 1000)
+    no_stats = [ln for ln in links if ln not in drop_seconds]   # no stats file: drops unknown, not zero
     out = {"lower": lower, "higher": sorted(hs), "links": links, "window_from_ms": t_change, "counts": counts,
-           "gaps_or_desyncs": gaps, "drop_seconds": drops}
+           "gaps_or_desyncs": gaps, "drop_seconds": drops, "links_without_stats": no_stats}
     if not links:
         out["stage"] = UNRELIABLE
         out["why"] = "no captured link between the lower node and a higher one"
+    elif no_stats:
+        out["stage"] = UNRELIABLE
+        out["why"] = "no capture stats for a link in the window: its drops are unknown, so an absence is not firm"
+        out["would_be"] = stage
     elif gaps or drops:
         out["stage"] = UNRELIABLE
         out["why"] = "gap, desync or capture drop in the window: an absence may be a loss of capture"

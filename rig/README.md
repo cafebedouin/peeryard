@@ -135,7 +135,10 @@ Listed at the top of `rig.sh`. The main ones:
   `samples.jsonl` beside the node logs. After a FAIL or INCONCLUSIVE the rig prints `[rig] CAUSE <NAME>: evidence`
   (also `cause.json`) from `diag/diagnose.py`: `NODE_DOWN`, `NODE_UNRESPONSIVE`, `NO_PEERS`, `BEST_CHAIN_INCONSISTENT`
   (#525), `HEADERS_AHEAD_FULL_STUCK`, `NODE_LAGGING`, `EQUAL_HEIGHT_TIE`, `LIGHTER_FORK_NOT_SWITCHING`,
-  `CHAIN_STALLED`, `STILL_PROGRESSING` or `UNKNOWN`. A hook that knows its own reason sets `rig_cause=<CODE>`
+  `CHAIN_STALLED`, `STILL_PROGRESSING` or `UNKNOWN`. A node that ends the run cut on every one of its links (its last
+  `partition`/`heal` event on each link is a `partition`) makes the cause `PARTITIONED`, which names the node; the
+  samples-based cause is kept in `cause.json` as `observed`. With the wire on, a `LIGHTER_FORK_NOT_SWITCHING` carries
+  a wire stage (`diag/README.md`, *Wire observer*). A hook that knows its own reason sets `rig_cause=<CODE>`
   (printed first, e.g. `STAGING_OVERSHOOT`). `python3 diag/diagnose.py <samples.jsonl>` re-reads any kept run.
 - a link that comes and goes: `flap <a> <b> <down_s> <up_s> <cycles>` runs `partition`, waits `down_s`, `heal`s, waits
   `up_s`, `cycles` times, in the hook's own shell (it returns after the last up period; edges are scheduled from its
@@ -143,8 +146,8 @@ Listed at the top of `rig.sh`. The main ones:
   first node's full height at the last edge)
 - phases: `mark <label>` writes a labelled event (below)
 
-### Events, samples and costs
-Beside the node logs, every run keeps three records on one clock (epoch milliseconds):
+### Events, samples, costs and the wire
+Beside the node logs, every run keeps three records on one clock (epoch milliseconds), and a fourth when asked:
 - `events.jsonl`: one line per `partition`, `heal`, `link_netem` (detail: the tc spec), `crash`, `revive`, `relaunch`,
   `launch` and `mark`, as `{t, kind, a, b, node, detail}`. A `launch` event also carries the node's `pid`,
   `cpus_requested`, `cpus_applied` (its `Cpus_allowed_list` after the exec chain reached the node binary: what was
@@ -170,6 +173,12 @@ Beside the node logs, every run keeps three records on one clock (epoch millisec
   or relaunch until the node answers again) or unexpected. `agree_s` has the resolution of the sample interval, and
   under a live miner at 2 s blocks it runs late by a few intervals (two tips read in one sample are rarely of the same
   moment). `costs.json` is a report: no PASS rule reads it. `python3 diag/costs.py <out dir>` re-reads any kept run.
+- `messages.jsonl` and `wire/`, only with `PEERYARD_WIRE=1` or `"wire": true` in the topology (off by default): a
+  passive capture per link (`diag/wire.py`, on the link's `a` end, both directions), started before the nodes
+  launch and stopped after the hook. `wire/<a>-<b>.pcap` holds the packets, and `wire/<a>-<b>.stats.json` the
+  kernel's packet and drop counts. They are decoded into `messages.jsonl`: every handshake and frame per link and
+  direction, with parsed SyncInfo, Inv, RequestModifier, Modifiers and Peers fields. The rig prints one
+  `[rig] WIRE <link>: ...` line per link with the capture drops. Like `costs.json` it is a report: no PASS rule reads it.
 
 Link shaping is set in the topology (`delay_ms`, `loss_pct`, `jitter_ms`, `rate_kbit`; jitter needs a nonzero
 delay) and changed live from the hook. `heal` restores exactly what the topology configured for that link. A
@@ -347,10 +356,13 @@ shaping, the duration and keep-data flags, and a `host` card: `kernel`, `cpus_on
 CPU mask; a run under `taskset` shows it), `mem_mb`, `cpu_model`, `virt` (`wsl2` when `/proc/version` names
 Microsoft, else `systemd-detect-virt`), `scratch_fs` (`stat -f` type of `SCRATCH`; ext4 reads `ext2/ext3`),
 `scratch_virtual_disk` (true under WSL2, whose disks are image files), `tcp_cc` and `tcp_retries2` (read inside a
-node's namespace). Environment
+node's namespace). It also holds each node's identity address (`nodes[].id_ip`), each link's two addresses
+(`links[].a_ip`, `b_ip`), and `wire`: `enabled`, and with the wire on, the capture's `cpus`, whether they are
+`pinned`, and whether they `overlaps_node_cpus`. Environment
 overrides shape a run without editing the topology: `PEERYARD_CHAIN` (preset), `PEERYARD_MINE_POLL` (default
 polling for miners that set none), `PEERYARD_DURATION` (hooks that run for a while read it),
-`PEERYARD_KEEP_DATA=1` (do not wipe data directories on first launch), `PEERYARD_JAVA` (the `java` binary for
+`PEERYARD_KEEP_DATA=1` (do not wipe data directories on first launch), `PEERYARD_WIRE=1` (the wire capture),
+`PEERYARD_JAVA` (the `java` binary for
 JVM nodes; the node is built and tested on JDK 8, so pin one to compare with upstream's numbers),
 `PEERYARD_JAVA_OPTS` (default `-Xmx512m`), and `PEERYARD_UP_TIMEOUT` (seconds a node may take to answer at
 bring-up, default 60; a node that never answers aborts the run with a named error instead of running the hook

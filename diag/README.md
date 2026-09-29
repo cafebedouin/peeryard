@@ -1,16 +1,17 @@
 # diag/: reading what the runs left behind
 
-Four tools over the logs a run keeps. They name candidates; they do not prove causes. A candidate becomes a claim
+Tools over the logs a run keeps. They name candidates; they do not prove causes. A candidate becomes a claim
 when a test that forces the named state passes and fails as predicted, and the run a public claim rests on is made
 on a GitHub-hosted runner (a development machine discovers; the runs a claim rests on are made where anyone can re-run them).
-All four are standard-library Python and have tests in `tests/` (wired into `tests/tooling.sh` and CI).
+All are standard-library Python and have tests in `tests/` (wired into `tests/tooling.sh` and CI).
 
 | tool | question | input | output |
 |---|---|---|---|
-| `diagnose.py` | why did this run miss its goal? | one run's sampled `/info` (`samples.jsonl`) | a named cause (node down, stalled, lighter fork not switching, ...) in `verdict.json` |
+| `diagnose.py` | why did this run miss its goal? | one run's sampled `/info` (`samples.jsonl`), and beside it `events.jsonl` + `effective.json` (cuts) and `messages.jsonl` (the wire) when present | a named cause (node down, stalled, lighter fork not switching, partitioned, ...) in `verdict.json`; a lighter fork's wire stage |
 | `features.py` | which per-run feature separates the runs that failed from those that passed? | run dirs + outcome labels (or each run's verdict line) | features ranked by separation (perfect split first, then AUC), with ranges per outcome |
 | `sweep.py` | which runs look unlike the others, or show something never seen before? | a tree of run dirs, no labels; optionally earlier runs as a baseline | per run: rare messages, count outliers, feature outliers; with `--baseline`: new messages, new transitions, new co-occurrences, features outside the known range |
 | `logmap.py` | which line of the node's source wrote this log line? | a node source checkout | an index of `log.<level>(...)` calls; `--source` on `features.py` and `sweep.py` names the code behind each finding |
+| `wire.py` | what did the nodes actually send each other? | a rig run with the wire on (`PEERYARD_WIRE=1`): one pcap per link | `messages.jsonl`: every P2P message per link and direction, on the rig's clock, with drops and decode gaps counted |
 
 ## How they fit
 
@@ -34,6 +35,42 @@ python3 diag/sweep.py new-runs/ --baseline old-runs/ --source ~/src/ergo
 python3 diag/logmap.py find ~/src/ergo '10:04:05.505 WARN  [x] o.e.n.ErgoModifiersCache - Modifier ab.. is permanently invalid ...'
 ```
 
+## Wire observer (`wire.py`)
+
+A node does not log what it sends, so from `/info` and the logs a run shows effects, never the exchange. `wire.py`
+records the exchange. It is passive: it opens a packet socket that only reads, and it never sends, injects or alters
+a packet.
+
+- **Capture** (in the rig, opt-in: `PEERYARD_WIRE=1` or `"wire": true` in the topology; off by default): one
+  process per link, on the link's `a` end, inside that node's namespace. It sees both directions. It starts before
+  the nodes launch and writes `out/wire/<a>-<b>.pcap` in libpcap format (Ethernet; not independently checked here:
+  no tcpdump or Wireshark read one on the development host) and `<a>-<b>.stats.json`: the kernel's packet and drop
+  counts (`PACKET_STATISTICS`, read each second into a series), the socket buffer (raised to `net.core.rmem_max`),
+  and the skew between the kernel's receive time and the time written. What the `a` end sees is what crossed the link:
+  its egress is tapped after netem. In `netsplit`, no packet was captured inside either cut window, over a connection
+  that lived through the cut. The capture runs on CPUs no node's `cpus` names when a topology pins nodes; otherwise it
+  shares CPUs with the nodes (`effective.json` `wire` records which).
+- **Decode** (`python3 diag/wire.py decode <out dir>`; the rig runs it after the hook): TCP streams are reassembled
+  by sequence number per connection and direction. The handshake, which is not framed, is parsed structurally. Then
+  come frames: magic, code, length, then checksum and data when the length is above zero. Each frame's checksum is
+  verified. The output is `out/messages.jsonl`, one record per message: `{t_ms, kind, link, conn, from, to, ...}`
+  with kind `handshake` (agent, version, node name, features), `frame` (code, name, len, checksum_ok, and parsed
+  fields for SyncInfo 65, Inv 55, RequestModifier 22, Modifiers 33, GetPeers 1 and Peers 2: sync version, header
+  counts and heights, type ids and counts), and `gap`, `desync`, `resync` and `tail` for what could not be decoded.
+  Also `out/wire/summary.json`, one line per link printed as `[rig] WIRE ...`. `t_ms` is on the same epoch-ms clock
+  as `events.jsonl`.
+- **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. Every
+  summary prints the capture drops beside it. An absence ("no Inv was sent") holds only where the links and window
+  show no gap and no drop, and `diagnose.py` marks a wire stage `unreliable` otherwise.
+- **First consumer**: `diagnose.py` splits `LIGHTER_FORK_NOT_SWITCHING` by what crossed the lower node's links to the
+  higher chain after its last height change. The stages are `NO_SYNC`, `SYNC_NO_INV`, `INV_NOT_REQUESTED`,
+  `REQUEST_NOT_ANSWERED` and `DELIVERED_NO_HEIGHT_CHANGE`. They are descriptive: no stage claims a code-level reason.
+  At the time of writing this split has unit tests only. It has not yet named a stage on a real run.
+- **Public and private**: the capture and the decoder are public capability. Capture files stay in the run's log
+  directory, and CI never uploads raw pcaps; an example uploads `messages.jsonl` summaries only when it opts in. A
+  capture that documents a private reproduction or an undisclosed defect stays with whoever holds that report: the
+  embargo binds the detail, not the capability.
+
 ## Limits
 
 - Log-derived features depend on the node's log lines; a renamed message silently drops a feature. `logmap.py`
@@ -41,4 +78,10 @@ python3 diag/logmap.py find ~/src/ergo '10:04:05.505 WARN  [x] o.e.n.ErgoModifie
 - A run dir is any directory holding `node_<X>.log(.gz)` or `...-node<NN>-<container>.log`; a log directory named
   `ci-logs`, `logs` or `out` stands for its parent. Several logs for one node (a restart per container) are keyed
   `<node>#1`, `<node>#2` by first timestamp.
+- The wire capture has been measured at light load only: `txload` (about 40 packets/s) with 0 drops, the same verdict
+  and about the same wall time as without it. Read a heavier run with its per-second drop series. The capture is
+  Python, one packet per system call. Kernel receive time and the recorded time differed by under 1 ms there.
+- The wire parsers follow the v6.0.6 reference node's layouts. A layout change in another implementation or version
+  may show up as `parse_error` fields or desyncs, but a shifted field can also parse as a wrong number. Before trusting
+  a new version's decode, capture a golden fixture of it (as `tests/fixtures/wire-bringup.*` does for 6.0.6).
 - Rates from a batch are bounds, not verdicts: report "0 of 20, rate below ~14% at 95%", and pre-register the n.

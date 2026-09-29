@@ -36,8 +36,16 @@ Then the tooling that serves them:
 - **Topology as a manifest parameter**, so a sweep over shapes (line, star, mesh, clusters) is data.
 - **Futility stopping**: end a sequential run once the verdict can no longer change.
 - **One timeline collector**: `/info`, peers and mempool per node on one clock, for every run. The first slice has
-  shipped (`/info`, REST time, CPU, memory, disk I/O and the rig's events, `rig/README.md` *Events, samples and
-  costs*); peers and mempool are not on the clock yet.
+  shipped (`/info`, REST time, CPU, memory, disk I/O and the rig's events, `rig/README.md` *Events, samples, costs
+  and the wire*); peers and mempool are not on the clock yet. With the wire on, the P2P messages are on the same clock
+  (`diag/README.md`, *Wire observer*).
+- **Cross-implementation message diff**: the same scenario with a JVM, an ergo-node-rust and an arkadianet peer,
+  their `messages.jsonl` compared message by message (what each sends, in what order, how much), in the style of the
+  SANTA conformance vectors.
+- **Canary message-pattern alerts**: the scheduled runs keep a per-scenario profile of their messages (counts per
+  kind, sync cadence, bytes per recovery) and alert when a new release drifts from it.
+- **Bytes and messages per recovery** in `costs.json`: per heal and revive, what crossed the link until agreement
+  (a lower bound where the capture had a gap).
 - **Costs under diffrun**: compare `costs.json` (`agree_s`, `loopback_info_ms` p95) between two jars, as diffrun
   compares verdicts.
 - **Hard CPU quotas and disk throttling per node** (cgroup `cpu.max`, `io.max`) on hosted runners, which have root. On

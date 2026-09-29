@@ -90,6 +90,16 @@ class Runs(unittest.TestCase):
         self.assertIn("fix-d0-2: 1 payments EXCLUDED from the pool: 1 capture gap(s)", out)
         self.assertIn("ARM fix-d0 A->B payments listed in an input block 1/1", out)
 
+    def test_confirmed_payments_listed_or_not(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = run_dir(d, "fix-d0-1", [f(10, "A-B", "A", 100, input_block_id="i", weak_tx_ids=1, weak_ids=["aa11bb000000"])], PAYS)
+            with open(os.path.join(r, "confirmed.jsonl"), "w") as fh:
+                fh.write(json.dumps({"id": P2, "height": 9}) + "\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                M.main([r])
+        self.assertIn("fix-d0-1: 2 payments; confirmed on C 1/2, of them in no input block on A->B 1; unconfirmed 1", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

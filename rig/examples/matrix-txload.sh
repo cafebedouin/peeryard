@@ -15,12 +15,16 @@ AMT=${MATRIX_TXLOAD_NANOERG:-100000000}; WAIT=${MATRIX_TXLOAD_WAIT_S:-240}; N=$(
 PAY_LOG="$RIG_LOG_DIR/payments.jsonl"; : > "$PAY_LOG"
 echo "[matrix-txload] A=$(rest A /info | jq -r .appVersion); $BURSTS bursts of $BURST payments, ${GAP} s apart; waiting for A's reward to mature"
 [[ "$(address A)" != "$(address B)" ]] || { echo "[matrix-txload] FAIL: A and B share an address (the mnemonic override did not apply)"; rig_verdict=FAIL; return; }
-wait_balance A $((AMT * N * 2 + 1000000000)) 600 >/dev/null || { echo "[matrix-txload] FAIL: A never had a spendable balance"; rig_verdict=FAIL; return; }
+wait_balance A $((AMT * N * 4 + 1000000000)) 600 >/dev/null || { echo "[matrix-txload] FAIL: A never had a spendable balance"; rig_verdict=FAIL; return; }
+# A's wallet spends one confirmed box per payment in a burst (a payment it cannot fund is rejected with "at least one
+# input box"), so the mined rewards alone fund a varying number of payments: split them into N + 10 boxes of three
+# payments' worth each, confirmed before the load, so every arm offers the same load
+echo "[matrix-txload] $(mint_boxes A 2 $(( (N + 10 + 1) / 2 )) $((AMT * 3)))"
 # the load starts once B holds one of A's input blocks: a miner sends an input block only to peers whose last reported
 # height is within two of its own, so right after a fast start (the reward wait above) it may send none for a while
 ready=0; for _ in $(seq 1 60); do [[ -n "$(input_chain_ids B | head -1)" ]] && { ready=1; break; }; sleep 2; done
 [[ $ready == 1 ]] || { echo "[matrix-txload] INCONCLUSIVE: B held none of A's input blocks within 120 s"; rig_verdict=INCONCLUSIVE; return; }
-mark load
+H0=$(full_height A); mark load
 declare -a IDS=(); declare -A SEEN=(); rejected=0; dup=0
 for b in $(seq 1 "$BURSTS"); do
   for _ in $(seq 1 "$BURST"); do
@@ -34,15 +38,14 @@ for b in $(seq 1 "$BURSTS"); do
 done
 mark load-done
 echo "[matrix-txload] accepted ${#IDS[@]}/$N ($rejected rejected, $dup repeated an earlier id); waiting up to ${WAIT} s for each to be confirmed on C"
-# confirmed on C: B's wallet reports the inclusion height, and the block C holds at that height lists the payment
-on_c(){ local ih hid; ih=$(wallet B "/wallet/transactionById?id=$1" | jq -r '.inclusionHeight // empty' 2>/dev/null)
-  [[ -n "$ih" ]] || return 1; hid=$(header_at C "$ih"); [[ -n "$hid" ]] || return 1
-  rest C "/blocks/$hid" | jq -e --arg t "$1" '[.blockTransactions.transactions[].id] | index($t) != null' >/dev/null 2>&1; }
-declare -A CONF=(); end=$((SECONDS + WAIT))
-while [[ $SECONDS -lt $end && ${#CONF[@]} -lt ${#IDS[@]} ]]; do
-  for id in "${IDS[@]}"; do [[ -n "${CONF[$id]:-}" ]] || { on_c "$id" && CONF[$id]=1; }; done
-  [[ ${#CONF[@]} -lt ${#IDS[@]} ]] && sleep 5
-done
+# confirmed on C: listed in a block of C's best chain from the load's start height on (read from C's blocks, not
+# from a wallet); each is written to $RIG_LOG_DIR/confirmed.jsonl ({id, height})
+CONF_LOG="$RIG_LOG_DIR/confirmed.jsonl"; declare -A CONF=(); end=$((SECONDS + WAIT))
+scan_c(){ local h hid; : > "$CONF_LOG"; CONF=()
+  for ((h = H0; h <= $(full_height C); h++)); do hid=$(header_at C "$h"); [[ -n "$hid" ]] || continue
+    for t in $(rest C "/blocks/$hid" | jq -r '.blockTransactions.transactions[].id' 2>/dev/null); do
+      [[ -n "${SEEN[$t]:-}" ]] && { CONF[$t]=$h; printf '{"id":"%s","height":%s}\n' "$t" "$h" >> "$CONF_LOG"; }; done; done; }
+while :; do scan_c; [[ ${#CONF[@]} -ge ${#IDS[@]} || $SECONDS -ge $end ]] && break; sleep 10; done
 sc=$(same_chain A C); ic=$(same_input_chain_stable A C)
 stop_mining A >/dev/null
 st=NOHEIGHT; for _ in $(seq 1 30); do st=$(same_state A C); case "$st" in SAME@*|DIFF@*) break ;; esac; sleep 2; done

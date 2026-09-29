@@ -14,7 +14,8 @@ Exchanges per hop (R asks, S answers, on the same link): 102 asked (RequestModif
 in full (a later 104 for the same input block with as many transactions) / answered short / unanswered; 105 repeated for
 one input block; 104 with no 105 before it on that hop (unpaired).
 A run whose capture lost bytes in either direction of A-B or B-C (a gap or desync record) is reported and left out of
-its arm's pool. One block per run, then one pooled block per arm (a run dir's basename up to its last '-').
+its arm's pool. With the hook's confirmed.jsonl ({id, height}: the payment is in a block of C's chain), the run line
+counts the confirmed payments and those confirmed without any input block listing them on A->B. One block per run, then one pooled block per arm (a run dir's basename up to its last '-').
 Standard library only."""
 import json
 import os
@@ -112,7 +113,9 @@ def per_payment(pays, fwd, back):
 def per_run(run):
     msgs, pays = _load(run, "messages.jsonl") or [], _load(run, "payments.jsonl") or []
     loss = sum(1 for m in msgs if m.get("kind") in ("gap", "desync") and m.get("link") in ("A-B", "B-C"))
-    out = {"payments": len(pays), "capture_loss": loss, "hops": {}}
+    conf = _load(run, "confirmed.jsonl")
+    out = {"payments": len(pays), "capture_loss": loss, "hops": {},
+           "confirmed": None if conf is None else {c["id"] for c in conf}}
     for s, r, link in HOPS:
         fwd, back = hop_view(msgs, s, r, link)
         ib = [m for m in fwd if m["code"] == 100]
@@ -154,7 +157,12 @@ def main(runs):
         name = os.path.basename(os.path.normpath(run))
         r = per_run(run)
         tag = f" EXCLUDED from the pool: {r['capture_loss']} capture gap(s) or desync(s) on A-B or B-C" if r["capture_loss"] else ""
-        print(f"{name}: {r['payments']} payments{tag}")
+        conf = ""
+        if r["confirmed"] is not None:
+            ab = {x["id"] for x in r["hops"]["A->B"]["rows"] if x["listed_ms"] is None}
+            conf = (f"; confirmed on C {len(r['confirmed'])}/{r['payments']}, of them in no input block on A->B "
+                    f"{len(ab & r['confirmed'])}; unconfirmed {r['payments'] - len(r['confirmed'])}")
+        print(f"{name}: {r['payments']} payments{conf}{tag}")
         for hop, h in r["hops"].items():
             for l in hop_lines(h, h["rows"], h["exchanges"]):
                 print(f"  {hop} {l}")

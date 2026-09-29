@@ -29,8 +29,8 @@ outside [0, MAX_MESSAGE_SIZE] is refused at once. A partial frame at a connectio
 Records ("kind"): handshake {agent, version, node_name, declared_address, features, session_magic_ok, len};
 frame {code, name, len, checksum_ok (null for length 0), ...parsed}; gap {bytes, lost}; desync {why, at};
 resync {skipped}; tail {bytes}. Every record has t_ms, link, conn, from, to. Parsed fields: SyncInfo (65) sync
-v1 + ids or v2 + headers + heights; Inv (55) and RequestModifier (22) type_id + count; Modifiers (33) type_id + count
-(+ heights for headers, type 101); GetPeers (1) nothing; Peers (2) peers. Other codes: code and len only.
+v1 + ids (a count) or v2 + headers + heights; Inv (55) and RequestModifier (22) type_id + count + modifier_ids
+(hex); Modifiers (33) type_id + count + modifier_ids (+ heights for headers, type 101); GetPeers (1) nothing; Peers (2) peers. Other codes: code and len only.
 Layouts are those of the v6.0.6 reference node. Standard library only.
 """
 import bisect
@@ -305,19 +305,22 @@ def parse_payload(code, data):
             r.take(32 * n)
             return {"sync": "v1", "ids": n}
         if code in (55, 22):
-            return {"type_id": r.i8(), "count": r.vlq()}
+            tid, cnt = r.i8(), r.vlq()
+            return {"type_id": tid, "count": cnt, "modifier_ids": [r.take(32).hex() for _ in range(cnt)]}
         if code == 33:
             tid, cnt = r.i8(), r.vlq()
             out = {"type_id": tid, "count": cnt}
-            if tid == 101:
-                hs = []
-                for _ in range(cnt):
-                    r.take(32)
-                    mb = r.take(r.vlq())
+            ids, hs = [], []
+            for _ in range(cnt):
+                ids.append(r.take(32).hex())
+                mb = r.take(r.vlq())
+                if tid == 101:
                     try:
                         hs.append(header_height(mb))
                     except (NeedMore, ValueError):
                         hs.append(None)
+            out["modifier_ids"] = ids
+            if tid == 101:
                 out["heights"] = hs
             return out
         if code == 1:

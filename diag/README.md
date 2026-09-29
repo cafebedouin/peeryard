@@ -56,7 +56,8 @@ a packet.
   verified. The output is `out/messages.jsonl`, one record per message: `{t_ms, kind, link, conn, from, to, ...}`
   with kind `handshake` (agent, version, node name, features), `frame` (code, name, len, checksum_ok, and parsed
   fields for SyncInfo 65, Inv 55, RequestModifier 22, Modifiers 33, GetPeers 1 and Peers 2: sync version, header
-  counts and heights, type ids and counts), and `gap`, `desync`, `resync` and `tail` for what could not be decoded.
+  counts and heights, type ids and counts, and `modifier_ids` (hex) on Inv, RequestModifier and Modifiers, so an
+  announced modifier can be followed through its request and delivery), and `gap`, `desync`, `resync` and `tail` for what could not be decoded.
   Also `out/wire/summary.json`, one line per link printed as `[rig] WIRE ...`. `t_ms` is on the same epoch-ms clock
   as `events.jsonl`.
 - **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. Every

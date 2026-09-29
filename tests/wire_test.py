@@ -361,24 +361,27 @@ class Parsers(unittest.TestCase):
         self.assertEqual((r["sync"], r["headers"], r["heights"]), ("v2", 3, [200, 199, 190]))
 
     def test_inv(self):
-        r = self.one(frame(55, bytes([101]) + vlq(3) + b"\x01" * 96))
+        r = self.one(frame(55, bytes([101]) + vlq(3) + b"\x01" * 32 + b"\x02" * 32 + b"\x03" * 32))
         self.assertEqual((r["name"], r["type_id"], r["count"]), ("Inv", 101, 3))
+        self.assertEqual(r["modifier_ids"], ["01" * 32, "02" * 32, "03" * 32])
 
     def test_request_modifier(self):
-        r = self.one(frame(22, bytes([102]) + vlq(2) + b"\x01" * 64))
+        r = self.one(frame(22, bytes([102]) + vlq(2) + b"\x01" * 32 + b"\x0a" * 32))
         self.assertEqual((r["name"], r["type_id"], r["count"]), ("RequestModifier", 102, 2))
+        self.assertEqual(r["modifier_ids"], ["01" * 32, "0a" * 32])
 
     def test_modifiers_headers(self):
         body = bytes([101]) + vlq(2)
         for h in (41, 42):
             hb = header(h)
-            body += b"\x09" * 32 + vlq(len(hb)) + hb
+            body += bytes([h]) * 32 + vlq(len(hb)) + hb
         r = self.one(frame(33, body))
         self.assertEqual((r["name"], r["type_id"], r["count"], r["heights"]), ("Modifiers", 101, 2, [41, 42]))
+        self.assertEqual(r["modifier_ids"], [bytes([41]).hex() * 32, bytes([42]).hex() * 32])
 
     def test_modifiers_transactions_have_no_heights(self):
         r = self.one(frame(33, bytes([2]) + vlq(1) + b"\x09" * 32 + vlq(3) + b"abc"))
-        self.assertEqual((r["type_id"], r["count"]), (2, 1))
+        self.assertEqual((r["type_id"], r["count"], r["modifier_ids"]), (2, 1, ["09" * 32]))
         self.assertNotIn("heights", r)
 
     def test_get_peers(self):

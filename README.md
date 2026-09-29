@@ -1,12 +1,42 @@
 # peeryard
 
-**Status: EXPERIMENTAL (alpha).** peeryard exists so that a reviewer who cannot read the node's language can still
-execute its claims. Its author is not a Scala programmer. Every review made with it says which of its statements were
-executed and which were read, and every number in it can be re-run from the command that produced it. That is the
-whole idea: the node is tested as a **network** on one Linux machine, with no root and no Docker (several real node
+**Status: EXPERIMENTAL (alpha).** peeryard tests the Ergo node as a **network** on one Linux machine: several real node
 processes, one network namespace each, links you can delay, drop, partition and heal, nodes you can crash and revive,
-different versions and implementations side by side, real transactions in the blocks), and a pull request gets a
-before/after measurement to read next to its code instead of an opinion.
+different versions and implementations side by side, real transactions in the blocks. A pull request gets a
+before/after measurement to read next to its code instead of an opinion. No root to run it (the host setup needs
+`sudo` once) and no Docker. Its author is not a Scala programmer: every review made with it says which of its
+statements were executed and which were read, and every number can be re-run from the command that produced it.
+
+**Worth your time if** you review or write Ergo node changes that touch sync, fork choice, the mempool, bootstrap or
+the network, and want a measured before/after; you have a Linux host (WSL2 works) or a GitHub runner, and an hour or
+two per verdict. **Not if** you want a quick green check (a verdict is a rate over paired runs, 1.5 to 2.5 hours), or a
+judgment on design or protocol choices.
+
+**What a result looks like.** `fork-convergence` asks whether a follower holding a lighter fork switches to the heavier
+one once it can see it. On GitHub-hosted runners (4 vCPU / 16 GB, the class a public repository gets; workflow
+`aa.yml`):
+
+| node | switched |
+|---|---|
+| release 6.0.6 | 23 of 40, and 39 of 80 in a second measurement |
+| release + [ergoplatform/ergo#2511](https://github.com/ergoplatform/ergo/pull/2511) alone | 80 of 80 |
+| reference node (release + the patches peeryard carries) | 40 of 40, and 80 of 80 |
+
+The release's misses are the defect being measured, not noise in the rig: the same rig and scenario run a fixed build at
+the ceiling. The release's rate also depends on the machine (54 of 77 on the 2 vCPU / 8 GB class), so every rate names
+its runner class, and a candidate is judged against the base measured on the same class. A `SUPPORTS` verdict means
+the base failed at least twice and the candidate switched every time; how often that happens for a candidate no better
+than the base depends on the base's rate: about 1% when the release switches 57% of the time, 13% when it switches 85%
+(the table in `diffrun/README.md`). Finished runs to look at before producing one: `diffrun/examples/`.
+
+**First run** (about ten minutes, most of it setup; details and the release jar in the quick start below):
+```
+sudo apt-get install -y jq iproute2 util-linux procps coreutils curl unzip git python3 default-jre-headless
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # Ubuntu 23.10+ only: turns off a host protection until reboot (see below)
+sudo modprobe sch_netem
+bash rig/preflight.sh                                             # can this host run the rig?
+PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh   # two nodes, about a minute
+```
 
 **Who it is for.**
 - Ergo node maintainers: not to run, unless you want to. What reaches you is the output: an issue with a reproduction,
@@ -27,14 +57,11 @@ against the rules.
 
 **What it is not.** peeryard checks whether a change does what it says and whether it holds under bad network
 conditions. It does not judge whether a change is the right design, and it has nothing to say about cryptography or
-protocol choices; those stay with the maintainers. A verdict is evidence, not proof, and it is noisy: in an A/A
-calibration on GitHub-hosted runners, the unchanged 6.0.6 release failed to switch forks in 17 of 40
-`fork-convergence` runs (8 of 16 on a development host; the reference node with the carried patches, 0 of 40), and the shipped decision rule for that scenario gives a false `SUPPORTS` in about 13% of
-cases when the release switches 85% of the time (`diffrun/README.md`). Read a verdict with those rates beside it.
-Many node defects only appear with several nodes and imperfect links (forks that never resolve, followers that never
-switch to the heavier chain, sync that stalls after a reorg); they are hard to reproduce on one machine and flaky in
-CI, and peeryard makes them runnable and repeatable on a network that can mix the Scala node, the two Rust nodes and
-the Matrix line. It is a lab for a reviewer, not a replacement for one.
+protocol choices; those stay with the maintainers. A verdict is evidence, not proof: read it with the base rate for its
+runner class beside it (above). Many node defects only appear with several nodes and imperfect links (forks that never
+resolve, followers that never switch to the heavier chain, sync that stalls after a reorg); they are hard to reproduce
+on one machine and flaky in CI, and peeryard makes them runnable and repeatable on a network that can mix the Scala
+node, the two Rust nodes and the Matrix line. It is a lab for a reviewer, not a replacement for one.
 
 The name is meant like a railyard or a shipyard: a place where the vessels, here peers, are brought in, marshalled,
 split and rejoined, inspected, repaired and sent back out.
@@ -43,6 +70,8 @@ split and rejoined, inspected, repaired and sent back out.
 - `rig/` — N nodes, shaped links, mining control, mixed versions, wallet payments, long runs; examples that check
   the rig itself; `rig/devnet.sh` keeps a devnet up across sessions, its chain kept across `down` and `up`.
   Every run records the network it actually ran (`effective.json`).
+- `diag/` — reading a run: named causes for a failure (`diagnose.py`), recovery costs (`costs.py`), and an opt-in
+  passive wire observer (`wire.py`: per-link pcaps and every Ergo message decoded, `PEERYARD_WIRE=1`).
 - `diffrun/` — the scenario runner: build a candidate jar from a git ref, a patch, or part of a pull request
   (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`.
   Five node scenarios ship (`fork-convergence`, `sibling-fork`, `interop`, `txload`, `bootstrap-modes`); the
@@ -183,7 +212,8 @@ Example output of a finished run is in `diffrun/examples/`.
   which peeryard treats as a dependency it calls, not code it carries.
 
 A fork-convergence run takes 3–7 minutes; a full verdict takes 8–12 paired runs, 1.5 to 2.5 hours. The timings in
-this README come from a 2019 development host and GitHub-hosted runners (2 and 4 vCPUs); a newer machine is faster. What gets
+this README come from a development host from 2019 and GitHub-hosted runners (2 and 4 vCPUs); a newer machine is
+faster. What gets
 written, and where:
 - the rig: its scratch directory (`SCRATCH`, default a fresh `mktemp -d` under `$TMPDIR` or `/tmp`, which is not
   deleted afterwards), and node logs under a topology's `log_dir` when it sets one (anywhere it names);
@@ -197,7 +227,7 @@ written, and where:
 The no-node self-tests take seconds: `T=$(mktemp -d) bash tests/sequential.sh`, `T=$(mktemp -d) bash tests/lint.sh`,
 `T=$(mktemp -d) bash tests/precheck.sh` and `T=$(mktemp -d) bash tests/tooling.sh`, the last on the patch check,
 sidecar registration and provenance helpers. `T` must be a fresh empty directory: each test deletes it first. In a
-container, see `rig/README.md` for the two security options the rig needs.
+container, the rig needs the two `--security-opt` flags in the Docker item above (`docker/`).
 
 The mnemonics, the REST API key `hello` (and its hash) and the solver key in `rig/rig.sh` and the example topologies
 are public devnet test values, not secrets: they unlock only the private devnets peeryard starts.

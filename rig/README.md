@@ -122,7 +122,7 @@ Listed at the top of `rig.sh`. The main ones:
 - mining: `mine <node> <n>`, `stop_mining` / `start_mining`; `solve_start <node>` / `solve_stop <node>` drive a
   node that only serves candidates (see *Other implementations*)
 - wallet and transactions: `address <node>`, `balance <node>`, `pay <from> <to> <nanoerg>` (a real payment from
-  a miner's rewards; prints the tx id or the node's rejection text), `pay_from <from> <to> <nanoerg> <box id>` (the same, spending exactly that confirmed box),
+  a miner's rewards; prints the tx id or the node's rejection text), `pay_from <from> <to> <nanoerg> <box id> [fee]` (the same, spending exactly that confirmed box),
   `send_fee <from> <to> <nanoerg> <fee>` (the
   same with an explicit fee), `wait_balance <node> <min> [s]`, `block_txs <node> <height>`; `txchain <from> <n>`
   (a burst of self-payments forming a dependency chain in the mempool), `mint_boxes <node> <txs> <outputs>` (grow

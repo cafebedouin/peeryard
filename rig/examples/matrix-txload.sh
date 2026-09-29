@@ -27,7 +27,11 @@ ready=0; for _ in $(seq 1 60); do [[ -n "$(input_chain_ids B | head -1)" ]] && {
 H0=$(full_height A); mark load
 # each payment spends one of the confirmed boxes split above (pay_from), so no payment spends another's unconfirmed
 # change: a chain of dependent payments is a different load (the miner's handling of it is not what this measures)
-mapfile -t BOXES < <(wallet A "/wallet/boxes/unspent?minConfirmations=1" | jq -r --argjson v $((AMT * 3)) '.[] | select(.box.value == $v) | .box.boxId')
+# (on the Matrix line the split transactions leave the pool at input-block inclusion, before their ordering block:
+# wait for the boxes to be confirmed)
+for _ in $(seq 1 90); do
+  mapfile -t BOXES < <(wallet A "/wallet/boxes/unspent?minConfirmations=1" | jq -r --argjson v $((AMT * 3)) '.[] | select(.box.value == $v) | .box.boxId')
+  [[ ${#BOXES[@]} -ge $N ]] && break; sleep 2; done
 [[ ${#BOXES[@]} -ge $N ]] || { echo "[matrix-txload] INCONCLUSIVE: ${#BOXES[@]} confirmed split boxes, need $N"; rig_verdict=INCONCLUSIVE; return; }
 declare -a IDS=(); declare -A SEEN=(); rejected=0; dup=0; k=0
 for b in $(seq 1 "$BURSTS"); do

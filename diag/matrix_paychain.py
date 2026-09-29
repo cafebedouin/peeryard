@@ -1,11 +1,12 @@
-"""matrix_paychain.py <run dir> [...] [--pool]: what happened to the payments of rig/examples/matrix-paychain.sh.
+"""matrix_paychain.py <run dir> [...] [--pool | --json]: what happened to the payments of rig/examples/matrix-paychain.sh.
 Reads payments.jsonl ({id, inputs, outputs} per accepted payment, in send order), confirmed.jsonl (the payments found
 in a block of B's chain) and a_pool_end.txt (A's pool at the end), from <run dir> or <run dir>/out.
   dependent  an input is an output of an earlier payment of the same run (it spends unconfirmed change)
   lost       neither confirmed nor in A's pool at the end
   pending    not confirmed, still in A's pool
 One line per run in the hook's format; with --pool, one line per arm (a run dir's basename up to its last '-'),
-summing the runs, and the runs with at least one lost payment. Standard library only."""
+summing the runs, and the runs with at least one lost payment; with --json, one JSON object per run (the counts, for a
+diffrun RESULT_JSON). Standard library only."""
 import json
 import os
 import sys
@@ -56,11 +57,15 @@ def line(r):
 
 def main(argv):
     pool_mode = "--pool" in argv
-    runs = [a for a in argv if a != "--pool"]
+    json_mode = "--json" in argv
+    runs = [a for a in argv if a not in ("--pool", "--json")]
     arms = defaultdict(lambda: defaultdict(int))
     for run in runs:
         r = classify(run)
         name = os.path.basename(os.path.normpath(run))
+        if json_mode and not pool_mode:
+            print(json.dumps(r))
+            continue
         if not pool_mode:
             print(line(r))
             continue

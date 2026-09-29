@@ -1,0 +1,15 @@
+{
+  "name": "matrix-paychain",
+  "description": "Bursts of ordinary wallet payments on the Matrix line (weak-blocks), where the wallet may spend unconfirmed change: accepted payments that end neither confirmed nor in the miner's pool are lost. A run below the activity floor (accepted < 3/4 of 40) is INCONCLUSIVE. Predicates fitted to GitHub Actions run 36597517108 (base lost in 5/5, base + ergoplatform/ergo#2504 in 0/5).",
+  "script": "matrix-paychain.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "accepted": "number", "dependent": "number", "confirmed": "number", "lost": "number",
+               "dependent_lost": "number", "pending": "number", "floor": "number" },
+  "n": 5,
+  "timeout_seconds": 1500,
+  "expect": {
+    "base":      { "count": { "key": "lost", "op": ">", "value": 0 }, "cmp": ">=", "k": 3 },
+    "candidate": { "all": { "key": "lost", "op": "==", "value": 0 } }
+  }
+}

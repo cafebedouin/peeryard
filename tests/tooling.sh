@@ -81,6 +81,21 @@ else bad "matrix_tx.py: transaction paths and pairing" "see $T/matrix_tx.txt"; f
 if python3 tests/matrix_paychain_test.py > "$T/matrix_paychain.txt" 2>&1; then ok "matrix_paychain.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_paychain.txt")"
 else bad "matrix_paychain.py: dependent and lost payments" "see $T/matrix_paychain.txt"; fi
 
+# rig/examples/matrix-paychain.sh under diffrun: the activity floor (default 3/4 of N = 30 of 40). The hook's
+# DIFFRUN_ROLE block runs on stub payment logs: 29 accepted -> INCONCLUSIVE and no RESULT_JSON; 30 -> RESULT_JSON with floor 30
+eval "hookfloor(){ $(awk '/^if \[\[ -n "\$\{DIFFRUN_ROLE:-\}" \]\]; then$/{f=1} f{print} f && /^fi$/{exit}' rig/examples/matrix-paychain.sh)
+}"
+pays(){ local d="$T/paychain-$1"; mkdir -p "$d"; : > "$d/a_pool_end.txt"
+  for i in $(seq 1 "$1"); do echo "{\"id\":\"p$i\",\"inputs\":[\"c$i\"],\"outputs\":[\"o$i\"]}"; done > "$d/payments.jsonl"
+  for i in $(seq 1 "$1"); do echo "{\"id\":\"p$i\",\"height\":5}"; done > "$d/confirmed.jsonl"; echo "$d"; }
+floor_out(){ local rig_verdict=PASS; RIG_LOG_DIR="$(pays "$1")" N=40 PC=diag/matrix_paychain.py VA=v VB=v DIFFRUN_ROLE="$2" hookfloor; echo "rig_verdict=$rig_verdict"; }
+o29="$(floor_out 29 base)"; o30="$(floor_out 30 base)"; onone="$(floor_out 29 "")"
+[[ "$o29" != *RESULT_JSON* && "$o29" == *"INCONCLUSIVE: accepted 29 < floor 30"* && "$o29" == *rig_verdict=INCONCLUSIVE* ]] \
+  && ok "matrix-paychain hook: 29 accepted < floor 30 -> INCONCLUSIVE" || bad "matrix-paychain hook: 29 accepted" "$o29"
+[[ "$(sed -n 's/^RESULT_JSON //p' <<< "$o30" | jq -c '[.metrics.floor, .metrics.accepted, .metrics.lost, .scenario]')" == '[30,30,0,"matrix-paychain"]' ]] \
+  && ok "matrix-paychain hook: 30 accepted -> RESULT_JSON, floor 30" || bad "matrix-paychain hook: 30 accepted" "$o30"
+[[ "$onone" == rig_verdict=PASS ]] && ok "matrix-paychain hook: no DIFFRUN_ROLE -> no floor, no RESULT_JSON" || bad "matrix-paychain hook: rig-only run" "$onone"
+
 # diag/wire.py: TCP reassembly, framing, validated resync, the unframed handshake, parsers (tests/wire_test.py)
 if python3 tests/wire_test.py > "$T/wire.txt" 2>&1; then ok "wire.py: $(grep -oE 'Ran [0-9]+ tests' "$T/wire.txt")"
 else bad "wire.py: reassembly and framing" "see $T/wire.txt"; fi

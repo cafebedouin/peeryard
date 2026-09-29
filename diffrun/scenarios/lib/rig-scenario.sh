@@ -26,7 +26,7 @@ run_rig_scenario(){ local topo="$1" hook="$2" jar="$3" here rig out rc other lin
   line="$(grep -m1 '^RESULT_JSON ' "$out")"
   grep -E '^\[|^  ' "$out" | grep -v '^\[rig\] (re)launch' | tail -40
   if [[ -z "$line" ]]; then
-    echo "INCONCLUSIVE: rig exit $rc, no RESULT_JSON from the hook: $(grep -m1 -E 'FAIL|BROKEN|missing|no node jar|unavailable|never answered' "$out" || tail -1 "$out")"
+    echo "INCONCLUSIVE: rig exit $rc, no RESULT_JSON from the hook: $(grep -m1 -E 'INCONCLUSIVE|FAIL|BROKEN|missing|no node jar|unavailable|never answered' "$out" || tail -1 "$out")"
     echo "[rig-scenario] rig output: $out"; exit 3
   fi
   echo "$line"; exit 0

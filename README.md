@@ -78,8 +78,9 @@ split and rejoined, inspected, repaired and sent back out.
   passive wire observer (`wire.py`: per-link pcaps, each Ergo message framed and six kinds parsed, `PEERYARD_WIRE=1`).
 - `diffrun/` — the scenario runner: build a candidate jar from a git ref, a patch, or part of a pull request
   (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`.
-  Five node scenarios ship (`fork-convergence`, `sibling-fork`, `interop`, `txload`, `bootstrap-modes`); the
-  first two reproduce behavior that is public in upstream issues or PRs, the other three check agreement.
+  Six node scenarios ship (`fork-convergence`, `sibling-fork`, `interop`, `txload`, `bootstrap-modes`,
+  `matrix-paychain`); `fork-convergence`, `sibling-fork` and `matrix-paychain` reproduce behavior that is public in
+  upstream issues or PRs (`matrix-paychain` on the Matrix line), the other three check agreement.
 - `regression/` — the same link shaping inside ergo's own Docker integration suite (a sidecar with `NET_ADMIN`,
   node image untouched), with three example specs and a failure classifier, as a patch on v6.0.6 meant to become
   upstream pull requests.

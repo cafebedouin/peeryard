@@ -196,13 +196,15 @@ term list you supply. Details, exit codes 4 and 5, and what the lint does not do
 | `interop` | public | the release jar and the candidate jar on one two-node network (rig hook), each mining in turn while the other follows | `all(interop == true)` | `all(interop == true)` |
 | `txload` | public | real payments from a miner's wallet on a two-node network (rig hook): judged on confirmations; acceptance and the count in blocks are recorded | `all(confirmed == 10)` | `all(confirmed == 10)` |
 | `bootstrap-modes` | public | a miner with a digest-mode follower and a pruning follower, three nodes (rig hook): judged on state-root agreement; settling and visible pruning are recorded | `all(state_agree == true)` | `all(state_agree == true)` |
+| `matrix-paychain` | public | Matrix line (weak-blocks) only: bursts of 40 wallet payments on a two-node network (the rig example's hook, `rig/examples/matrix-paychain.{json,sh}`); a payment is lost when it ends neither confirmed nor in the miner's pool; fewer than 30 accepted (`MATRIX_PAYCHAIN_FLOOR`) makes the run INCONCLUSIVE. Predicates fitted to one hosted run (base lost in 5/5, base + ergoplatform/ergo#2504 in 0/5), so a SUPPORTS on #2504 re-runs the workflow, not the hypothesis | `count(lost > 0) >= 3` | `all(lost == 0)` |
 | `fork-convergence-smoke`, `sibling-fork-smoke` | public | one pair, no cited verdict: does the scenario still complete with every node answering afterwards (a cheap tier for pull-request CI) | `all(unresponsive_after == 0)` | `all(unresponsive_after == 0)` |
 | `test/output-lint-stub` | public | test only: no nodes; its result carries a lint-listed term built at runtime | | |
 | `test/seq-replay`, `test/precheck-replay` | public | test only: no nodes; replay a scripted per-run pattern (`tests/sequential.sh`, `tests/precheck.sh`) | | |
 
-There are five node scenarios. `fork-convergence` and `sibling-fork` are standalone scripts (their own namespace
-code plus the `RESULT_JSON` emission); `interop`, `txload` and `bootstrap-modes` are rig hooks run through
-`scenarios/lib/rig-scenario.sh`. The standalone scripts report the `versions` each queries at startup, so
+There are six node scenarios. `fork-convergence` and `sibling-fork` are standalone scripts (their own namespace
+code plus the `RESULT_JSON` emission); `interop`, `txload`, `bootstrap-modes` and `matrix-paychain` are rig hooks run
+through `scenarios/lib/rig-scenario.sh` (`matrix-paychain` reuses the rig example's topology and hook, which emits
+`RESULT_JSON` only when `DIFFRUN_ROLE` is set). The standalone scripts report the `versions` each queries at startup, so
 identity is settled while every node is known to be up. `unresponsive_after` counts the nodes whose REST
 no longer answers once the measurement is over. It is recorded but does not void the run, and a nonzero
 count means that node's log is worth reading.

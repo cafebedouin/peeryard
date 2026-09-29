@@ -13,7 +13,8 @@
 BURSTS=${MATRIX_PAYCHAIN_BURSTS:-8}; BURST=${MATRIX_PAYCHAIN_BURST:-5}; GAP=${MATRIX_PAYCHAIN_GAP_S:-6}
 WAIT=${MATRIX_PAYCHAIN_WAIT_S:-240}; AMT=100000000; N=$((BURSTS * BURST))
 PAY_LOG="$RIG_LOG_DIR/payments.jsonl"; CONF_LOG="$RIG_LOG_DIR/confirmed.jsonl"; : > "$PAY_LOG"; : > "$CONF_LOG"
-echo "[matrix-paychain] A=$(rest A /info | jq -r .appVersion) B=$(rest B /info | jq -r .appVersion); $BURSTS bursts of $BURST, ${GAP} s apart"
+VA=$(rest A /info | jq -r .appVersion); VB=$(rest B /info | jq -r .appVersion)
+echo "[matrix-paychain] A=$VA B=$VB; $BURSTS bursts of $BURST, ${GAP} s apart"
 [[ "$(address A)" != "$(address B)" ]] || { echo "[matrix-paychain] FAIL: A and B share an address"; rig_verdict=FAIL; return; }
 wait_balance A $((AMT * N * 4 + 1000000000)) 600 >/dev/null || { echo "[matrix-paychain] FAIL: A never had a spendable balance"; rig_verdict=FAIL; return; }
 # one split transaction: two back to back would make the second spend the first's unconfirmed change, the case
@@ -50,7 +51,20 @@ scan(){ local h hid t; : > "$CONF_LOG"; CONF=()
 while :; do scan; [[ ${#CONF[@]} -ge ${#IDS[@]} || $SECONDS -ge $end ]] && break; sleep 10; done
 mempool_ids A > "$RIG_LOG_DIR/a_pool_end.txt"
 # dependent / lost, from the recorded inputs and outputs (diag/matrix_paychain.py)
-line=$(python3 "$(dirname "$(readlink -f "$HOOK")")/../../diag/matrix_paychain.py" "$RIG_LOG_DIR") || line="classification failed"
+PC="$(dirname "$(readlink -f "$HOOK")")/../../diag/matrix_paychain.py"
+line=$(python3 "$PC" "$RIG_LOG_DIR") || line="classification failed"
 res=FAIL; [[ ${#IDS[@]} -gt 0 && ${#CONF[@]} -eq ${#IDS[@]} ]] && res=PASS
 rig_verdict=$res
 echo "$line verdict=$res"
+# Under diffrun (DIFFRUN_ROLE set; diffrun/scenarios/matrix-paychain.json): an activity floor, then one RESULT_JSON. A
+# stalled node accepts few payments and so loses none; below FLOOR accepted payments (MATRIX_PAYCHAIN_FLOOR, default
+# 3/4 of N) the run is INCONCLUSIVE, never a vacuous lost == 0.
+if [[ -n "${DIFFRUN_ROLE:-}" ]]; then
+  FLOOR=${MATRIX_PAYCHAIN_FLOOR:-$((N * 3 / 4))}
+  counts=$(python3 "$PC" --json "$RIG_LOG_DIR") || { echo "[matrix-paychain] INCONCLUSIVE: classification failed"; rig_verdict=INCONCLUSIVE; return; }
+  acc=$(jq -r .accepted <<< "$counts")
+  [[ "$acc" =~ ^[0-9]+$ && $acc -ge $FLOOR ]] || { echo "[matrix-paychain] INCONCLUSIVE: accepted $acc < floor $FLOOR"; rig_verdict=INCONCLUSIVE; return; }
+  echo "RESULT_JSON $(jq -cn --arg A "$VA" --arg B "$VB" --argjson c "$counts" --argjson f "$FLOOR" \
+    '{schema_version: 1, scenario: "matrix-paychain", versions: {A: $A, B: $B},
+      metrics: (($c | {accepted, dependent, confirmed, lost, dependent_lost, pending}) + {floor: $f})}')"
+fi

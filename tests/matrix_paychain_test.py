@@ -63,5 +63,18 @@ class Classify(unittest.TestCase):
         self.assertIn("ARM pr2504: runs 1, runs with a lost payment 0; accepted 4, dependent 2 (confirmed 2, lost 0)", out)
 
 
+    def test_json_prints_the_counts_and_is_not_a_run_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = run_dir(d, "base-1", PAYS, ["p1", "p4"], ["p3"])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                M.main([a, "--json"])
+            self.assertEqual(json.loads(buf.getvalue()), M.classify(a))
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                M.main([a])
+        self.assertEqual(buf.getvalue(), "MATRIX-PAYCHAIN accepted=4 dependent=2 confirmed=2 dependent_confirmed=0 lost=1 "
+                                         "dependent_lost=1 pending=1 unknown_inputs=0\n")
+
 if __name__ == "__main__":
     unittest.main()

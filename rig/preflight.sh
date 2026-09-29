@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# preflight.sh [nodes]: can this host run the rig? Checks, in order: unprivileged user + mount + net namespaces;
+# preflight.sh [nodes]: can this host run the rig? Checks, in order: bash 4.4 or later; unprivileged user + mount + net
+# namespaces;
 # netem shaping inside such a namespace (needs the sch_netem module); a tmpfs mounted over /run inside the
 # namespace, where `ip netns` keeps its bind mounts (rig.sh does the same at start); the commands the rig and
 # devnet.sh call (procps pkill/pgrep/ps, util-linux nsenter/mount among them); the Java
@@ -9,6 +10,8 @@ set -uo pipefail
 N="${1:-4}"; JAVA_BIN="${PEERYARD_JAVA:-java}"; fail=0
 row(){ printf '%-34s %s\n' "$1" "$2"; }
 ok(){ row "$1" "ok $2"; }; miss(){ row "$1" "MISSING $2"; fail=1; }
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then ok "bash 4.4 or later" "($BASH_VERSION)"
+else miss "bash 4.4 or later" "(this is $BASH_VERSION; the scripts need 4.4 for empty-array expansion under set -u)"; fi
 if unshare -Urmn true 2>/dev/null; then ok "user namespaces" "(unshare -Urmn)"
 else miss "user namespaces" "(unshare -Urmn failed; Ubuntu 23.10+: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0)"; fi
 if unshare -Urmn bash -c 'ip link add v0 type veth peer name v1 && tc qdisc add dev v0 root netem delay 1ms loss 1%' 2>/dev/null; then ok "netem in a namespace" "(veth + tc qdisc netem)"

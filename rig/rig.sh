@@ -735,6 +735,13 @@ wait_balance(){ # wait_balance <node> <min nanoerg> [timeout s, default 240]: pr
   local end=$((SECONDS + ${3:-240})) b=0
   while [[ $SECONDS -lt $end ]]; do b=$(balance "$1"); [[ "${b:-0}" -ge "$2" ]] && { echo "$b"; return 0; }; sleep 2; done
   echo "${b:-0}"; return 1; }
+# pay_from <from> <to> <nanoerg> <box id>: one payment from <from>'s wallet that spends exactly that confirmed box
+# (inputsRaw), change back to <from>; prints the tx id or the node's error text. A load built from distinct confirmed
+# boxes never spends an unconfirmed payment's change, so no payment depends on another.
+pay_from(){ local to raw; to="$(address "$2")"; [[ -n "$to" ]] || { echo "no address for $2"; return 1; }
+  raw="$(rest "$1" "/utxo/byIdBinary/$4" | jq -r '.bytes // empty')"; [[ -n "$raw" ]] || { echo "box $4 not in $1's UTXO set"; return 1; }
+  wallet "$1" /wallet/transaction/send "{\"requests\":[{\"address\":\"$to\",\"value\":$3}],\"inputsRaw\":[\"$raw\"]}" \
+    | jq -r 'if type == "string" then . else (.detail // .reason // tojson) end'; }
 block_txs(){ # block_txs <node> <height>: transactions in the block at <height> as that node holds it (coinbase included)
   local id; id=$(header_at "$1" "$2"); [[ -n "$id" ]] || { echo 0; return; }
   rest "$1" "/blocks/$id" | jq -r '.blockTransactions.transactions | length' 2>/dev/null || echo 0; }

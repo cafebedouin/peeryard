@@ -25,10 +25,14 @@ echo "[matrix-txload] $(mint_boxes A 2 $(( (N + 10 + 1) / 2 )) $((AMT * 3)))"
 ready=0; for _ in $(seq 1 60); do [[ -n "$(input_chain_ids B | head -1)" ]] && { ready=1; break; }; sleep 2; done
 [[ $ready == 1 ]] || { echo "[matrix-txload] INCONCLUSIVE: B held none of A's input blocks within 120 s"; rig_verdict=INCONCLUSIVE; return; }
 H0=$(full_height A); mark load
-declare -a IDS=(); declare -A SEEN=(); rejected=0; dup=0
+# each payment spends one of the confirmed boxes split above (pay_from), so no payment spends another's unconfirmed
+# change: a chain of dependent payments is a different load (the miner's handling of it is not what this measures)
+mapfile -t BOXES < <(wallet A "/wallet/boxes/unspent?minConfirmations=1" | jq -r --argjson v $((AMT * 3)) '.[] | select(.box.value == $v) | .box.boxId')
+[[ ${#BOXES[@]} -ge $N ]] || { echo "[matrix-txload] INCONCLUSIVE: ${#BOXES[@]} confirmed split boxes, need $N"; rig_verdict=INCONCLUSIVE; return; }
+declare -a IDS=(); declare -A SEEN=(); rejected=0; dup=0; k=0
 for b in $(seq 1 "$BURSTS"); do
   for _ in $(seq 1 "$BURST"); do
-    id=$(pay A B "$AMT")
+    id=$(pay_from A B "$AMT" "${BOXES[$k]}"); k=$((k + 1))
     # the wallet can answer a payment with the id of an earlier one (the same transaction built again): counted once
     if [[ "$id" =~ ^[0-9a-f]{64}$ && -n "${SEEN[$id]:-}" ]]; then dup=$((dup + 1)); echo "  burst $b: payment returned an earlier id ${id:0:12}"
     elif [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then SEEN[$id]=1; IDS+=("$id"); printf '{"t_ms":%s,"id":"%s","burst":%s}\n' "$(date +%s%3N)" "$id" "$b" >> "$PAY_LOG"

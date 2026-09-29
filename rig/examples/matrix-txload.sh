@@ -19,7 +19,9 @@ wait_balance A $((AMT * N * 4 + 1000000000)) 600 >/dev/null || { echo "[matrix-t
 # A's wallet spends one confirmed box per payment in a burst (a payment it cannot fund is rejected with "at least one
 # input box"), so the mined rewards alone fund a varying number of payments: split them into N + 10 boxes of three
 # payments' worth each, confirmed before the load, so every arm offers the same load
-echo "[matrix-txload] $(mint_boxes A 2 $(( (N + 10 + 1) / 2 )) $((AMT * 3)))"
+# one split transaction: two back to back would make the second spend the first's unconfirmed change, and the
+# weak-blocks miner may drop such a transaction (ergoplatform/ergo#2504), leaving too few boxes for the load
+echo "[matrix-txload] $(mint_boxes A 1 $((N + 10)) $((AMT * 3)))"
 # the load starts once B holds one of A's input blocks: a miner sends an input block only to peers whose last reported
 # height is within two of its own, so right after a fast start (the reward wait above) it may send none for a while
 ready=0; for _ in $(seq 1 60); do [[ -n "$(input_chain_ids B | head -1)" ]] && { ready=1; break; }; sleep 2; done

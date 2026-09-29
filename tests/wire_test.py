@@ -420,12 +420,14 @@ class Parsers(unittest.TestCase):
         r = self.one(frame(100, body))
         self.assertEqual((r["name"], r["version"], r["height"], r["prev_input_block_id"], r["weak_tx_ids"]),
                          ("InputBlock", 1, 50, "0a" * 32, 2))
+        self.assertEqual(r["weak_ids"], ["0d" * 6, "0d" * 6])
         self.assertEqual(r["input_block_id"], hashlib.blake2b(hb, digest_size=32).hexdigest())
 
     def test_matrix_input_block_without_parent_or_weak_ids(self):
         body = bytes([1]) + header(51) + b"\x00" + b"\x0b" * 32 + b"\x0c" * 32 + vlq(0) + b"\x00"
         r = self.one(frame(100, body))
         self.assertEqual((r["height"], r["prev_input_block_id"], r["weak_tx_ids"]), (51, None, None))
+        self.assertNotIn("weak_ids", r)
 
     def test_matrix_tx_ids_and_request(self):
         for code, name in ((102, "InputBlockTxIds"), (105, "InputBlockTxsRequest")):

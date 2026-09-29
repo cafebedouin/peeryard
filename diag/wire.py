@@ -31,7 +31,7 @@ frame {code, name, len, checksum_ok (null for length 0), ...parsed}; gap {bytes,
 resync {skipped}; tail {bytes}. Every record has t_ms, link, conn, from, to. Parsed fields: SyncInfo (65) sync
 v1 + ids (a count) or v2 + headers + heights; Inv (55) and RequestModifier (22) type_id + count + modifier_ids
 (hex); Modifiers (33) type_id + count + modifier_ids (+ heights for headers, type 101); GetPeers (1) nothing; Peers (2) peers; Matrix (weak-blocks): InputBlock (100)
-version, input_block_id, height, prev_input_block_id, weak_tx_ids; InputBlockTxIds (102) and InputBlockTxsRequest
+version, input_block_id, height, prev_input_block_id, weak_tx_ids (a count, null when not carried) + weak_ids; InputBlockTxIds (102) and InputBlockTxsRequest
 (105) input_block_id, count, weak_ids; InputBlockTxs (104) input_block_id, count; OrderingBlock (106) version,
 ordering_block_id, height, non_broadcast_txs. Other codes: code and len only.
 Layouts are those of the v6.0.6 reference node. Standard library only.
@@ -358,7 +358,12 @@ def parse_payload(code, data):
             out["prev_input_block_id"] = r.take(32).hex() if r.u8() else None
             r.take(32 + 32)                    # transactionsDigest, prevTransactionsDigest
             r.take(r.vlq())                    # merkle proof
-            out["weak_tx_ids"] = r.vlq() if r.u8() else None
+            if r.u8():                         # weak tx ids carried (Some): the count, then the ids
+                n = r.vlq()
+                out["weak_tx_ids"] = n
+                out["weak_ids"] = [r.take(WEAK_ID_LENGTH).hex() for _ in range(n)]
+            else:                              # None: the recipient asks for them (InputBlockTxIds 102)
+                out["weak_tx_ids"] = None
             return out
         if code in (102, 105):                 # input-block tx ids; request for input-block txs (weak ids)
             ibid, cnt = r.take(32).hex(), r.vlq()

@@ -2,7 +2,7 @@
 # the runs a claim rests on are made where anyone can re-run them): the base commit peeryard carries
 # (patches/ergo-matrix/patches.json), and the base plus each named patch file alone. Every build runs the example at
 # block version 3 and at version 4 (early soft-fork activation, rig PEERYARD_V4), `repeats` times. Each run keeps its
-# rig log (the example's verdict and analysis lines) and the ERROR lines of its node logs; diag/compare_pool.py pools
+# rig log (the example's verdict and analysis lines), the ERROR lines and the gzipped node logs; diag/compare_pool.py pools
 # them per build and version. Runs by hand.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})"
@@ -100,6 +100,8 @@ jobs:
           for f in "$run"/scratch/out/node_*.log; do [ -f "$f" ] || continue
             n=$(basename "$f" .log); grep -h ' ERROR ' "$f" | sed -E 's/^[0-9:.]+ ERROR +\[[^]]*\] //' | cut -c1-160 | sort | uniq -c > "$run/errors-$n.txt" || true; done
           cp host.txt jars/builds.txt "$run/"; grep -E '^(MATRIX-[A-Z]+|\[matrix-compat\] relay)' "$run/rig.log" | tee -a "$GITHUB_STEP_SUMMARY"
+          # the node logs (gzipped, about 1 MB a run) and the rig's topology, so a result can be traced per block
+          mkdir -p "$run/nodes"; for f in "$run"/scratch/out/node_*.log "$run"/scratch/out/effective.json; do [ -f "$f" ] && gzip -c "$f" > "$run/nodes/$(basename "$f").gz"; done
           rm -rf "$run/scratch"
       - uses: actions/upload-artifact@v4
         if: always()

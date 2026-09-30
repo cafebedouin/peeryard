@@ -19,7 +19,8 @@ on:
       shards: { description: 'runners (1-20)', default: '5' }
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
-run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})"
+      v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
+run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}"
 permissions:
   contents: read
 env:
@@ -30,6 +31,7 @@ env:
   SHARDS: ${{ inputs.shards }}
   PAIRS: ${{ inputs.pairs }}
   AA: ${{ inputs.aa }}
+  PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
 jobs:
   build:
     runs-on: ubuntu-24.04

@@ -12,11 +12,13 @@ on:
     inputs:
       repeats: { description: 'runs per example', default: '1' }
       examples: { description: 'space-separated example names (default: every example in rig/examples/suite.tsv)', default: '' }
+      v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
   push:
     branches: [ 'ci/sweep' ]
 permissions:
   contents: read
 env:
+  PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
   RELEASE_SHA256: 21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323
 jobs:
   build:

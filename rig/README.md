@@ -55,7 +55,12 @@ Only `nodes[].name` and `links[].a/b` are required. Other fields:
   - `matrix`: for nodes with sub-blocks (input blocks between ordering blocks). The jar's own block interval is
     left alone, because a 2 s ordering-block target would collide with the sub-block cadence; only the reward
     delay is shortened to 10. Use it for a network of Matrix-line nodes, or set `"chain": "devnet"` and shape
-    nothing.
+    nothing. The devnet starts at block version 3 and only votes for version 4 (activation around height 2,000), and
+    on the Matrix line the version decides how transactions are placed (from version 4 they go into input blocks).
+    `"v4": true` in the chain object, or `PEERYARD_V4=1`, shortens the soft-fork vote (voting length 4, one
+    soft-fork epoch, one activation epoch) so version 4 activates at about height 16, with the preset's difficulty
+    and interval kept, so input blocks still form. `rust-devnet` is version 4 from genesis but at difficulty 1,
+    where no input block can form, so it does not serve for this. `effective.json` records `chain.v4_early`.
   - `devnet`: nothing overridden.
   - `rust-devnet`: the private devnet compiled into the Rust implementations (arkadianet's `network = "devnet"`;
     ergo-node-rust's devnet network): magic `[7,7,7,7]`, protocol version 4 from genesis (the JVM node runs as

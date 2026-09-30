@@ -1,0 +1,54 @@
+# peeryard candidate patch: ergoplatform/ergo#2597 triage option 3 + fix 2 (header Inv raises recorded height; throttled SyncInfo keeps its height)
+# base weak-blocks 8769baace; cafebedouin/ergo matrix/2597-opt3j-3 (99734750f, a9b368350, dfd81924f, 4d8055227); not in the stack
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 0ca45c317..d6e74c226 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -418,6 +418,14 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       }
+     } else {
+       log.debug(s"Spammy sync detected from $remote")
++      // the comparison and reply are skipped, but keep the peer's latest reported height: a peer applying a run of
++      // headers sends SyncInfos back to back, and dropping all but the first would leave its oldest height recorded,
++      // which the relay filters then read as stale (#2597)
++      syncInfo match {
++        case syncV2: ErgoSyncInfoV2 if syncV2.height.isDefined =>
++          syncTracker.getStatus(remote).foreach(status => syncTracker.updateStatus(remote, status, syncV2.height))
++        case _ =>
++      }
+     }
+   }
+ 
+@@ -1154,6 +1162,10 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+ 
+     val modifierTypeId = invData.typeId
+ 
++    if (modifierTypeId == Header.modifierTypeId) {
++      raiseHeightFromHeaderInv(hr, invData.ids, peer)
++    }
++
+     val newModifierIds = modifierTypeId match {
+       case ErgoTransaction.modifierTypeId =>
+ 
+@@ -1215,6 +1227,21 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     }
+   }
+ 
++  /**
++    * A peer that announces a header on our best chain has at least that header: raise its recorded height to the
++    * header's (never lower it). A follower broadcasts this Inv after applying a block, so a follower at the tip stays
++    * within the relay filters' ±2 window without a SyncInfo; no message is added (#2597).
++    */
++  private def raiseHeightFromHeaderInv(hr: ErgoHistory, ids: Seq[ModifierId], peer: ConnectedPeer): Unit = {
++    val announced = ids.flatMap(id => hr.heightOf(id).filter(_ => hr.isInBestChain(id)))
++    if (announced.nonEmpty) {
++      syncTracker.statuses.get(peer).foreach { status =>
++        val h = announced.max
++        if (h > status.height) syncTracker.updateStatus(peer, status.status, Some(h))
++      }
++    }
++  }
++
+   /**
+    * Handle a request from a peer for specific modifiers by their IDs.
+    *

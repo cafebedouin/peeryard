@@ -18,7 +18,11 @@ while [ $((SECONDS - t0)) -lt "$DUR" ]; do
   for id in $(input_chain_ids B); do [ -z "${SEEN_B[$id]:-}" ] && { SEEN_B[$id]=1; nb=$((nb + 1)); }; done
   echo "  t+$((SECONDS - t0))s A.h=$(full_height A) B.h=$(full_height B) C.h=$(full_height C) input_chain(A,B)=$(same_input_chain_stable A B 10) input_chain(A,C)=$ic B.input_seen=$nb C.input_seen=$nc"
 done
-icf=$(same_input_chain_stable A C); sc=$(same_chain A C)
+# the end input-chain reading must be taken under the live miner (stop_mining relaunches A, which drops its in-memory
+# input chain); a burst of ordering blocks leaves C one ordering tip behind for about a second per hop (DIFF-ORD),
+# which is lag, so retry that for up to ~30 s; a DIFF (input-block fork) or a DIFF-ORD that persists still fails
+for _ in $(seq 1 15); do icf=$(same_input_chain_stable A C 10); case "$icf" in SAME@*|PREFIX@*|DIFF@*) break ;; esac; sleep 1; done
+sc=$(same_chain A C)
 stop_mining A >/dev/null
 st=NOHEIGHT; for _ in $(seq 1 30); do st=$(same_state A C); case "$st" in SAME@*|DIFF@*) break ;; esac; sleep 2; done
 echo "[matrix-latency] samples: same=$nsame prefix=$nprefix diff=$ndiff; input blocks seen by B: $nb, by C: $nc; end: input_chain=$icf same_chain=${sc%%:*} same_state=${st%%:*}"

@@ -6,7 +6,7 @@
 # (PEERYARD_V4=1 or the workflows' v4 input), the regime a Matrix release runs.
 # At the end diag/matrix_compat.py reads the node logs: relay among Matrix nodes, ordering blocks and reorgs, input-chain
 # rollbacks, peer penalties (by who penalized whom), and ban / blacklist lines.
-# PASS = every node ends on A's chain and state (same_chain and same_state SAME@h against A) and no node logged a ban or
+# PASS = after mining stops and the network settles (up to 120 s), every node is on A's chain and state (same_chain and same_state SAME@h against A) and no node logged a ban or
 # blacklist line during the mining window. Relay, rollbacks and penalties are reported, not judged (peers on an all-Matrix
 # network penalize each other too: compare a mixed topology with matrix-compat-m2..m4).
 DUR=${MATRIX_COMPAT_S:-480}
@@ -23,12 +23,22 @@ for i in $(seq 1 $((DUR / 20))); do sleep 20
   line="t=$((i * 20))s"; for x in "${NODES[@]}"; do line+=" $x.h=$(full_height "$x") $x.tip=$(rest "$x" /blocks/lastHeaders/1 | jq -r '.[0].id[:8]')"; done
   echo "[matrix-compat] $line"
 done
+# stop every miner, then let the network settle before comparing: tips compared while several nodes mine race.
+# The analysis window ends here, before the relaunches (a restart brings its own reconnects and penalties).
+END=$(date +%H:%M:%S)
+for x in $MINERS; do stop_mining "$x"; done
+for _ in $(seq 1 24); do
+  tip=$(rest A /blocks/lastHeaders/1 | jq -r '.[0].id'); ok=1
+  for x in "${NODES[@]}"; do [[ "$(rest "$x" /blocks/lastHeaders/1 | jq -r '.[0].id')" == "$tip" ]] || ok=0; done
+  [[ $ok == 1 ]] && break; sleep 5
+done
+echo "[matrix-compat] mining stopped; tips $( [[ $ok == 1 ]] && echo agree || echo 'still differ after 120 s')"
 res=PASS
 for x in "${NODES[@]}"; do [[ "$x" == A ]] && continue
   sc=$(same_chain A "$x"); ss=$(same_state A "$x"); echo "[matrix-compat] A-$x same_chain=${sc:0:24} same_state=${ss:0:24}"
   [[ "$sc" == SAME@* && "$ss" == SAME@* ]] || res=FAIL
 done
-out=$(python3 "$(dirname "$(readlink -f "$HOOK")")/../../diag/matrix_compat.py" "$RIG_LOG_DIR" "$CFG" "$MARK" 2>&1) || out="[matrix-compat] analysis failed: ${out:0:300}"
+out=$(python3 "$(dirname "$(readlink -f "$HOOK")")/../../diag/matrix_compat.py" "$RIG_LOG_DIR" "$CFG" "$MARK" "$END" 2>&1) || out="[matrix-compat] analysis failed: ${out:0:300}"
 echo "$out"
 bans=$(sed -n 's/^MATRIX-COMPAT-BANS //p' <<< "$out"); [[ "${bans:-x}" == 0 ]] || res=FAIL
 rig_verdict=$res

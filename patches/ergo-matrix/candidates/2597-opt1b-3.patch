@@ -1,0 +1,90 @@
+# peeryard candidate patch: ergoplatform/ergo#2597 options 1b + 3
+# base weak-blocks 8769baace; cafebedouin/ergo matrix/2597-opt1b-3 (opt1b commits, then 697bd8ce3, a29b3410a); not in the stack
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 0ca45c317..91f6f9245 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -177,6 +177,25 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+   //todo: clear after bootstrapping
+   private val nipopowProviders = mutable.Set[ConnectedPeer]()
+ 
++  /**
++    * A peer's recorded height changes only when its SyncInfo is processed, and a follower that is in fact at the tip can
++    * be recorded two or more blocks below it (#2597). For the relay filters, such a peer still counts as near the tip if
++    * it was last seen at or behind our chain (Equal or Younger), its last SyncInfo arrived within this window, and its
++    * recorded height is at most MaxStaleLag blocks below ours. The lag is the blocks made between two of its SyncInfos
++    * (0-5 on a devnet with 15-48 s blocks); a peer further behind is still syncing, not at the tip.
++    */
++  private val RecentSyncWindowMs: Long = 2.minutes.toMillis
++
++  private val MaxStaleLag = 8
++
++  private def nearTip(status: ErgoPeerStatus, fullBlockHeight: Int): Boolean = {
++    val h = status.height
++    (h <= fullBlockHeight + 2 && h >= fullBlockHeight - 2) ||
++      ((status.status == Equal || status.status == Younger) &&
++        h >= fullBlockHeight - MaxStaleLag &&
++        status.lastSyncGetTime.exists(t => System.currentTimeMillis() - t <= RecentSyncWindowMs))
++  }
++
+   /**
+     * How many peers should have a utxo set snapshot to start downloading it
+     */
+@@ -418,6 +437,14 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       }
+     } else {
+       log.debug(s"Spammy sync detected from $remote")
++      // the comparison and reply are skipped, but keep the peer's latest reported height: a peer applying a run of
++      // headers sends SyncInfos back to back, and dropping all but the first would leave its oldest height recorded,
++      // which the relay filters then read as stale (#2597)
++      syncInfo match {
++        case syncV2: ErgoSyncInfoV2 if syncV2.height.isDefined =>
++          syncTracker.getStatus(remote).foreach(status => syncTracker.updateStatus(remote, status, syncV2.height))
++        case _ =>
++      }
+     }
+   }
+ 
+@@ -1892,12 +1919,9 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       // Send ordering block announcement to peers supporting sub-blocks and having equal or forked status
+       // Also check that peers are nearly synced (within 2 blocks)
+       val peers = syncTracker.statuses.filter { s =>
+-        val peerHeight = s._2.height
+-        // send ordering block announcement to peers on same height and also supporting sub-blocks
+-        // Don't send to peers that are far behind (> 2 blocks gap)
+-        SubBlocksFilter.condition(s._1) &&
+-          (peerHeight <= hr.fullBlockHeight + 2) &&
+-          (peerHeight >= hr.fullBlockHeight - 2)
++        // send ordering block announcement to peers near our height and also supporting sub-blocks
++        // Don't send to peers that are far behind (> 2 blocks gap, unless recently synced: see nearTip)
++        SubBlocksFilter.condition(s._1) && nearTip(s._2, hr.fullBlockHeight)
+       }.keys.toSeq
+ 
+       if (peers.nonEmpty) {
+@@ -2170,10 +2194,8 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     case LocallyGeneratedOrderingBlock(efb, orderingBlockTransactions) =>
+       val knownPeers = syncTracker.fullInfo()
+       val sendOrderingTo = knownPeers.filter { peerStatus =>
+-        val peerHeight = peerStatus.height
+         peerStatus.peer.peerInfo.exists(_.peerSpec.protocolVersion >= Version.SubblocksVersion) &&
+-            peerHeight <= historyReader.fullBlockHeight + 2 &&
+-            peerHeight >= historyReader.fullBlockHeight - 2
++          nearTip(peerStatus, historyReader.fullBlockHeight)
+       }.map(_.peer)
+       val header = efb.header
+       // broadcast subblock announcement
+@@ -2359,12 +2381,10 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+             }
+             val peers = syncTracker.statuses.filter { s =>
+               val peer = s._1
+-              val peerHeight = s._2.height
+-              // send input block to peers on same height and also supporting sub-blocks and in utxo mode
++              // send input block to peers near our height and also supporting sub-blocks and in utxo mode
+               SubBlocksFilter.condition(peer) &&
+                 peer.mode.exists(_.stateType == StateType.Utxo) &&
+-                peerHeight <= historyReader.fullBlockHeight + 2 &&
+-                peerHeight >= historyReader.fullBlockHeight - 2
++                nearTip(s._2, historyReader.fullBlockHeight)
+             }.keys.toSeq
+             val msg = Message(InputBlockMessageSpec, Right(ibi), None)
+             networkControllerRef ! SendToNetwork(msg, SendToPeers(peers))

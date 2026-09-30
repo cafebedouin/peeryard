@@ -1,0 +1,21 @@
+# peeryard candidate patch: ergoplatform/ergo#2597 option 3: a throttled SyncInfo V2 still updates the peer's recorded height
+# base weak-blocks 8769baace; cafebedouin/ergo matrix/2597-opt3-throttle (77cded44a spec, b9518fcaa); not in the stack
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 0ca45c317..d6d5e6db3 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -418,6 +418,14 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       }
+     } else {
+       log.debug(s"Spammy sync detected from $remote")
++      // the comparison and reply are skipped, but keep the peer's latest reported height: a peer applying a run of
++      // headers sends SyncInfos back to back, and dropping all but the first would leave its oldest height recorded,
++      // which the relay filters then read as stale (#2597)
++      syncInfo match {
++        case syncV2: ErgoSyncInfoV2 if syncV2.height.isDefined =>
++          syncTracker.getStatus(remote).foreach(status => syncTracker.updateStatus(remote, status, syncV2.height))
++        case _ =>
++      }
+     }
+   }
+ 

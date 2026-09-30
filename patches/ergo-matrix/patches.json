@@ -77,6 +77,23 @@
       "witness": "matrix-fork on the Matrix stack: without it deep-fork runs 0/4 PASS (fork depth 22-28, every FAIL LIGHTER_FORK_NOT_SWITCHING), shallow 4/4; with it 7/7 valid PASS, deep 5/5 (depth 21-28), shallow 2/2 (1 INCONCLUSIVE: the example's disjoint-genesis race, fixed separately); 2026-09-25",
       "route": "upstream in #2529; no separate PR needed",
       "responses": []
+    },
+    {
+      "id": "005",
+      "file": "005-pr2504-matrix-tx-classification.patch",
+      "title": "Preserve Matrix transaction classification and ordering fee (the miner no longer drops a payment that spends an earlier payment's unconfirmed change)",
+      "origin": "upstream PR by A. Shannon (not ours): the production diff (src/main, ergo-core/src/main, ergo-wallet/src/main, avldb/src/main) of ergoplatform/ergo#2504, weak-blocks...c6ff5d5c",
+      "upstream_pr": 2504,
+      "upstream_head": "c6ff5d5c2f",
+      "status": "under-review",
+      "added": "2026-09-29",
+      "fixes": "on weak-blocks, accepted wallet payments that spend an earlier payment's unconfirmed change end neither confirmed nor in the miner's pool (matrix-paychain A/A on the tip stack 001-004: 4-12 lost in each of 10 runs, pr-scenario run 36647241843)",
+      "needed_by": [
+        "diffrun matrix-paychain"
+      ],
+      "witness": "PENDING: pr-scenario run 36649110206 (before/after on the stack), then a sweep and a works-check with 005 stacked",
+      "route": "upstream in #2504; no separate PR needed",
+      "responses": []
     }
   ]
 }

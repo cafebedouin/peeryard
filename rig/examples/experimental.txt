@@ -4,3 +4,12 @@
 matrix-fork-deep
 corruption
 mining
+matrix-compat-m2
+matrix-compat-m3
+matrix-compat-m4
+matrix-compat-2m2r-all
+matrix-compat-2m2r-mmine
+matrix-compat-2m2r-rmine
+matrix-compat-mrm-line
+matrix-compat-1m3r
+matrix-compat-3m1r

@@ -1,0 +1,52 @@
+{
+  "chain": {
+    "preset": "matrix",
+    "blockInterval": "20s"
+  },
+  "compat_miners": [
+    "A",
+    "B",
+    "C"
+  ],
+  "compat_kinds": {
+    "A": "M",
+    "B": "R",
+    "C": "M"
+  },
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "jar": "${PEERYARD_MATRIX_JAR}",
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "mining": false,
+      "jar": "${PEERYARD_JAR}",
+      "knownPeers": [
+        "A"
+      ]
+    },
+    {
+      "name": "C",
+      "mining": false,
+      "jar": "${PEERYARD_MATRIX_JAR}",
+      "knownPeers": [
+        "B"
+      ]
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    },
+    {
+      "a": "B",
+      "b": "C",
+      "delay_ms": 0
+    }
+  ]
+}

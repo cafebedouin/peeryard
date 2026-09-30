@@ -1,0 +1,85 @@
+{
+  "chain": {
+    "preset": "matrix",
+    "blockInterval": "20s"
+  },
+  "compat_miners": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "compat_kinds": {
+    "A": "M",
+    "B": "M",
+    "C": "R",
+    "D": "R"
+  },
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "jar": "${PEERYARD_MATRIX_JAR}",
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "mining": false,
+      "jar": "${PEERYARD_MATRIX_JAR}",
+      "knownPeers": [
+        "A"
+      ]
+    },
+    {
+      "name": "C",
+      "mining": false,
+      "jar": "${PEERYARD_JAR}",
+      "knownPeers": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "D",
+      "mining": false,
+      "jar": "${PEERYARD_JAR}",
+      "knownPeers": [
+        "A",
+        "B",
+        "C"
+      ]
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    },
+    {
+      "a": "A",
+      "b": "C",
+      "delay_ms": 0
+    },
+    {
+      "a": "A",
+      "b": "D",
+      "delay_ms": 0
+    },
+    {
+      "a": "B",
+      "b": "C",
+      "delay_ms": 0
+    },
+    {
+      "a": "B",
+      "b": "D",
+      "delay_ms": 0
+    },
+    {
+      "a": "C",
+      "b": "D",
+      "delay_ms": 0
+    }
+  ]
+}

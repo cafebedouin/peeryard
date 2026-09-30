@@ -6,7 +6,8 @@
 # (PEERYARD_V4=1 or the workflows' v4 input), the regime a Matrix release runs.
 # At the end diag/matrix_compat.py reads the node logs: relay among Matrix nodes, ordering blocks and reorgs, input-chain
 # rollbacks, peer penalties (by who penalized whom), and ban / blacklist lines.
-# PASS = after mining stops and the network settles (up to 120 s), every node is on A's chain and state (same_chain and same_state SAME@h against A) and no node logged a ban or
+# PASS = after mining stops and the network settles (every node's best header and best full block equal A's, up to
+# 120 s), every node is on A's chain and state (same_chain and same_state SAME@h against A) and no node logged a ban or
 # blacklist line during the mining window. Relay, rollbacks and penalties are reported, not judged (peers on an all-Matrix
 # network penalize each other too: compare a mixed topology with matrix-compat-m2..m4).
 DUR=${MATRIX_COMPAT_S:-480}
@@ -27,12 +28,16 @@ done
 # The analysis window ends here, before the relaunches (a restart brings its own reconnects and penalties).
 END=$(date +%H:%M:%S)
 for x in $MINERS; do stop_mining "$x"; done
+# settled = every node's best header and best full block are A's (headers alone agree before the restarted nodes have
+# applied the blocks, which is a lag, not a divergence); up to 120 s, so a real non-convergence is still reported
+settled=0
 for _ in $(seq 1 24); do
-  tip=$(rest A /blocks/lastHeaders/1 | jq -r '.[0].id'); ok=1
-  for x in "${NODES[@]}"; do [[ "$(rest "$x" /blocks/lastHeaders/1 | jq -r '.[0].id')" == "$tip" ]] || ok=0; done
-  [[ $ok == 1 ]] && break; sleep 5
+  ref=$(rest A /info | jq -r '"\(.bestHeaderId)/\(.bestFullHeaderId)"'); ok=1
+  [[ "$ref" == */* && "${ref%/*}" == "${ref#*/}" ]] || ok=0
+  for x in "${NODES[@]}"; do [[ "$(rest "$x" /info | jq -r '"\(.bestHeaderId)/\(.bestFullHeaderId)"')" == "$ref" ]] || ok=0; done
+  [[ $ok == 1 ]] && { settled=1; break; }; sleep 5
 done
-echo "[matrix-compat] mining stopped; tips $( [[ $ok == 1 ]] && echo agree || echo 'still differ after 120 s')"
+echo "[matrix-compat] mining stopped; $( [[ $settled == 1 ]] && echo 'every node has the same best header and full block' || echo 'best header or full block still differ after 120 s')"
 res=PASS
 for x in "${NODES[@]}"; do [[ "$x" == A ]] && continue
   sc=$(same_chain A "$x"); ss=$(same_state A "$x"); echo "[matrix-compat] A-$x same_chain=${sc:0:24} same_state=${ss:0:24}"

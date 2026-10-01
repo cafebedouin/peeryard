@@ -10,7 +10,7 @@ while using peeryard, `SECURITY.md` says where it goes; not here.
 **Before a pull request**
 - `shellcheck -x` on every script you touched (the repository's `.shellcheckrc` lists the deliberate
   exceptions), and `bash -n`.
-- The no-node self-tests: `T=$(mktemp -d) bash tests/sequential.sh`, `... tests/lint.sh`, `... tests/precheck.sh`, `... tests/tooling.sh`;
+- The no-node self-tests: `T=$(mktemp -d) bash tests/sequential.sh`, `... tests/lint.sh`, `... tests/precheck.sh`, `... tests/phases.sh`, `... tests/tooling.sh`;
   each exits non-zero on a `MISMATCH`. `T` must be a fresh empty directory: each test deletes it first.
 - If you changed a scenario, a precheck or the rig: one real run of what you changed, and its output in the PR
   (the rig's `effective.json` and the runner's `table.txt` are the evidence, not a description of them).

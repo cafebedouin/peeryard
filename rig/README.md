@@ -104,6 +104,7 @@ once (set `mine_poll` per miner when a topology has more than one; the shipped s
 defaults above (a 2 s block-interval target, a 10-block reward delay) replace devnet's 100 ms and 720.
 
 ## Hook helpers
+Call forms, printed tokens and side effects: [HOOK_API.md](HOOK_API.md).
 Listed at the top of `rig.sh`. The main ones:
 - observe: `rest`, `full_height`, `header_at`, `same_chain`, `applied_header`
 - oracles: `same_state <a> <b>` compares UTXO state roots at equal full heights (`SAME@h`, `DIFF@h`, `NOHEIGHT`

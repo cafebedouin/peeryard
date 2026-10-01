@@ -1,0 +1,28 @@
+{
+  "nodes": [
+    {
+      "name": "A",
+      "p2p": 9021,
+      "rest": 9052,
+      "mining": true,
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "p2p": 9021,
+      "rest": 9052,
+      "mining": false,
+      "knownPeers": [
+        "A"
+      ]
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0,
+      "loss_pct": 0
+    }
+  ]
+}

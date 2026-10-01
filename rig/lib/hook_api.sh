@@ -31,7 +31,7 @@ heal(){ have_link "$1" "$2" || { harness_fail "heal $1 $2: no such link"; return
   rig_event heal "$1" "$2" "" "${EVENT_DETAIL:-}"; echo "[rig] heal $1<->$2${EVENT_DETAIL:+ ($EVENT_DETAIL)}"; }
 
 # same_state A B: the UTXO state root at the tip, compared only when both nodes are at the same full height
-# (roots differ by height): SAME@h:root / DIFF@h:A=..:B=.. / NOHEIGHT, or, when the heights differ,
+# (roots differ by height): SAME@h:root / DIFF@h:A=..:B=.. / NOROOT@h:A=..:B=.. / NOHEIGHT, or, when the heights differ,
 # LAG@ha,hb <label>: the lower node's best full-block header id against the higher node's header id at that
 # height (/blocks/at/h, first entry, as same_chain reads it): "same-chain" (behind on the same chain), "fork"
 # (different ids at the lower height), "unknown" (an id could not be read). The label follows a space, so callers

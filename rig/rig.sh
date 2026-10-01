@@ -30,7 +30,8 @@
 #   applied_header <node>           best full-block header id (falls back to best header)
 #   header_at <node> <height>       header id at a height
 #   full_height <node>              /info fullHeight
-#   same_chain <a> <b>              compares header ids at the lower of the two heights: SAME@h / DIFF@h / NOHEIGHT
+#   same_chain <a> <b>              compares header ids at the lower of the two heights: SAME@h:id /
+#                                   DIFF@h:a=id:b=id / NOID@h:a=id:b=id / NOHEIGHT
 #   same_state <a> <b>              compares UTXO state roots at equal full heights: SAME@h / DIFF@h /
 #                                   LAG@ha,hb same-chain|fork|unknown (header ids at the lower height)
 #   settle_follow <leader> <follower> <min_h> [window_s]   with the leader mining slowly, wait for same_state

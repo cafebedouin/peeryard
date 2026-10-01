@@ -153,6 +153,10 @@ Listed at the top of `rig.sh`. The main ones:
   first node's full height at the last edge)
 - phases: `mark <label>` writes a labelled event (below)
 
+A hook can also be written as data: one phase per line (`floor`, `wait`, `pass`, `record`, actions such as `partition`
+or `settle_follow`), checked before anything runs and interpreted by `lib/phases.sh`. It is an optional runner for
+hooks that are generic phases plus a pass rule; the grammar and the verdict rules are in [PHASES.md](PHASES.md).
+
 ### Events, samples, costs and the wire
 Beside the node logs, every run keeps three records on one clock (epoch milliseconds), and a fourth when asked:
 - `events.jsonl`: one line per `partition`, `heal`, `link_netem` (detail: the tc spec), `crash`, `revive`, `relaunch`,
@@ -235,6 +239,9 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 | `three-body-close-strong`, `three-body-far-strong` | 3 | Luke Graysmith's three-body shapes, one hook (`three-body.sh`): two nodes 5 ms apart and a third 150 ms from both (no jitter), each pinned with `cpus`: A and B (2 CPUs each) mine with C (1 CPU) following; or C (4 CPUs) mines with A and B (1 each) following. (Two miners on unequal CPUs do not mine at unequal rates here: the devnet difficulty stays at its minimum and each internal miner produces one block per poll.) After a floor and a 20-block prefix, C is cut from A and B for 60 s and healed; the miners run on 180 s (`agree_s` after a partition includes TCP's own recovery), then all but one miner pause and `settle_follow` pauses the last; PASS = all three `SAME@h` at 10 or more blocks above the leader's height at the heal. Each miner's count of locally mined blocks is printed. Needs 5 or 6 CPUs, so it is not in `suite.tsv` (the hosted runners have 2 or 4) |
 | `revive-headroom` | 2 | what a restart costs a follower with little CPU: A mines (cpus 0-1), B follows (4-7), B is crashed, A mines on 120 s, and B is revived pinned to `REVIVE_CPUS` (`4`, `4-5` or `4-7`); `costs.json` reports `first_answer_s`, `headers_advanced_s`, `agree_s`, `sync_s`, REST time and CPU seconds for the revive, the launch event the collector (SerialGC at one CPU on JDK 21). These times are read off the sampler's grid (`PEERYARD_SAMPLE_S`, default 3 s), so each is known only to within one interval: `headers_advanced_s` of about one interval is the measure's floor, and `sync_s` (= `agree_s` − `first_answer_s`) inherits both errors; set `PEERYARD_SAMPLE_S=1` for a finer reading; PASS = `SAME@h` at 10 or more blocks above A's height at the revive, after `settle_follow`. Needs 8 CPUs; not in `suite.tsv` |
 | `nipopow-bootstrap` | 3 | the same with `nipopowBootstrap` (headers from a NiPoPoW proof, then the snapshot); PASS needs the node's own "processed proof" log line |
+| `bringup-phases` | 2 | `bringup`'s claim as a data scenario ([PHASES.md](PHASES.md)); `PHASES_INVERT=1` adds a pass with the expected token flipped, which must FAIL |
+| `flap-phases` | 2 | `flap`'s claim as a data scenario, with the same knobs and the same `FLAP_CONTROL=down-edge` control in the file (the settle gets `FLAP_MARGIN_S` itself) |
+| `reorg-mempool-phases` | 3 | `reorg-mempool`'s claim as a data scenario: the same staging, with the conditions `reorg-mempool` checks together in one loop waited for one after another |
 
 ## Experimental examples
 

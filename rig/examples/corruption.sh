@@ -27,9 +27,12 @@ echo "[corruption] baseline: A and B agree at height $h0; B data $(data_mb B) MB
 declare -A OUT; anydiff=no; applied=0; uncompared=0
 # root_at_leader NODE: B's current state root against the root in A's header at B's full height, when both are on the
 # same chain there (a stuck node is still checked, even while A is ahead): prints SAME@h, DIFF@h or nothing
-root_at_leader(){ local hb rb ia ra; hb=$(full_height "$1"); [ "${hb:-0}" -ge 1 ] || return 0
+# B's height and root come from one /info response: two reads could straddle a block B applies in between and pair
+# a root with the wrong height.
+root_at_leader(){ local info hb rb ia ra; info=$(rest "$1" /info)
+  hb=$(jq -r '.fullHeight // 0' <<< "$info"); rb=$(jq -r '.stateRoot // empty' <<< "$info"); [ "${hb:-0}" -ge 1 ] || return 0
   [ "$(same_chain A "$1" | cut -c1-4)" = SAME ] || return 0
-  rb=$(rest "$1" /info | jq -r '.stateRoot // empty'); ia=$(header_at A "$hb")
+  ia=$(header_at A "$hb")
   [ -n "$ia" ] && ra=$(rest A "/blocks/$ia/header" | jq -r '.stateRoot // empty')
   [ -n "$rb" ] && [ -n "${ra:-}" ] || return 0
   if [ "$rb" = "$ra" ]; then echo "SAME@$hb"; else echo "DIFF@$hb"; fi; }

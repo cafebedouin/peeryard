@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    {"name": "A", "mining": true,  "mine_poll": "2s", "knownPeers": []},
+    {"name": "B", "mining": false, "knownPeers": ["A"]}
+  ],
+  "links": [ {"a": "A", "b": "B", "delay_ms": 10} ]
+}

@@ -1,0 +1,14 @@
+{
+  "chain": "current",
+  "nodes": [
+    {"name": "A", "mining": true, "mine_poll": "1500ms", "knownPeers": [],
+     "conf": {"ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\""}},
+    {"name": "B", "mining": false, "knownPeers": ["A"]},
+    {"name": "C", "mining": false, "knownPeers": ["B"],
+     "conf": {"ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\""}}
+  ],
+  "links": [
+    {"a": "A", "b": "B", "delay_ms": 0},
+    {"a": "B", "b": "C", "delay_ms": 0}
+  ]
+}

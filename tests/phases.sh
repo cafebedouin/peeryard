@@ -14,7 +14,7 @@ Tr="$(realpath -m -- "$T")"; Tmpr="$(realpath -m -- "${TMPDIR:-/tmp}")"
 case "$Tr/" in /tmp/?*/|"$Tmpr"/?*/) ;; *) echo "refusing T='$T': not a scratch dir under /tmp or \$TMPDIR (use T=\$(mktemp -d))" >&2; exit 2 ;; esac
 case "$PWD/" in "$Tr"/*) echo "refusing T='$T': it contains the current directory" >&2; exit 2 ;; esac
 rm -rf "$T"; mkdir -p "$T"
-EXPECT_HOOKS=4   # hooks under rig/examples/ that source lib/phases.sh; bumped with each one added
+EXPECT_HOOKS=5   # hooks under rig/examples/ that source lib/phases.sh; bumped with each one added
 # the by-design WARNs of the check-only pass over the shipped hooks, as <hook>:<heredoc line>:<verb>; a new one is added
 # here deliberately (an extra or a missing WARN is a MISMATCH)
 EXPECT_WARNS=("bringup-phases:3:link_netem")

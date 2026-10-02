@@ -20,6 +20,7 @@ withholding peers, eclipse set-ups, fuzzers), and none is planned.
 | pull requests | before/after verdicts with A/A calibration, a review workflow, the fixes peeryard carries | `diffrun/`, `review/`, `patches/` |
 | hosted runs | the example suite and one pair per scenario on GitHub-hosted runners (`.github/workflows/sweep.yml`, 2026-09-26: 29 of 33 jobs green, the rest in `rig/examples/experimental.txt` or fixed), the A/A calibration (`aa.yml`) | `.github/workflows/` |
 | cost | what recovery costs, not only whether it happens: per-node CPU pinning and JVM options in the topology, an event log and per-node REST time, CPU, memory and disk I/O on one clock, and per heal and revive the time to agree again (`diag/costs.py`, `costs.json`); a flapping link | `loss`, `flap`, `three-body-*`, `revive-headroom` |
+| scenarios as data | an optional runner: three example hooks re-expressed as phases, one phase per line, read by `rig/lib/phases.sh` ([`rig/PHASES.md`](rig/PHASES.md)); the other generic hooks not attempted; each pilot and its original agreed in 3 of 3 hosted runs ([sweep 36956276986](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) | `bringup-phases`, `flap-phases`, `reorg-mempool-phases` |
 | diagnosis | a named cause for every INCONCLUSIVE or FAIL (node down, stalled, lighter fork not switching, setup step), in the verdict and the run log | `diag/diagnose.py`, `cause` in `verdict.json`; `diag/features.py` ranks per-run features from the kept node logs against the runs' outcomes; `diag/sweep.py` finds what is new in a batch of runs against earlier runs (novelty) or unusual within it; `diag/logmap.py` names the source line behind each log message (both tools take `--source`) |
 
 ## Next
@@ -32,7 +33,6 @@ First, the conditions upstream already cares about, reproduced here and turned i
 
 Then the tooling that serves them:
 
-- **Declarative scenario phases**: prefix, partition, freeze, heal and observe as data instead of bash hooks.
 - **Topology as a manifest parameter**, so a sweep over shapes (line, star, mesh, clusters) is data.
 - **Futility stopping**: end a sequential run once the verdict can no longer change.
 - **One timeline collector**: `/info`, peers and mempool per node on one clock, for every run. The first slice has

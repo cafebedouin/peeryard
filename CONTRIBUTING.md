@@ -24,8 +24,10 @@ changes it can observe, and cite the public issue or PR. Prefer the rig-hook tem
 (`diffrun/scenarios/lib/rig-scenario.sh`, as `interop`, `txload` and `bootstrap-modes` use it): a topology and a
 hook instead of a copy of the rig's namespace code.
 
-**Adding a rig example.** A topology file and a hook that sets `rig_verdict=PASS` or `FAIL`, listed in
-`rig/README.md`'s table with one line on what it checks.
+**Adding a rig example.** Start from [`rig/PHASES.md`](rig/PHASES.md): a new scenario is a topology file and a
+hook written as phases (one line per step, ending in a `pass` rule), unless it needs its own observation, a log, a
+fixture or an outside oracle; then it is a shell hook that sets `rig_verdict=PASS` or `FAIL`
+([`rig/HOOK_API.md`](rig/HOOK_API.md)). Either way, list it in `rig/README.md`'s table with one line on what it checks.
 
 **Style.** Plain bash (4.4 or later), `jq`, POSIX tools; no new runtime dependencies without a reason in the PR. Say what a
 number means and where it came from. Prefer a failing check to a silent fallback.

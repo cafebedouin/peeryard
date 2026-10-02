@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {"name": "A", "mining": true,  "mine_poll": "2s", "knownPeers": []},
+    {"name": "B", "mining": false, "knownPeers": ["A"]},
+    {"name": "C", "mining": false, "knownPeers": ["B"]},
+    {"name": "D", "mining": true,  "mine_poll": "2s", "knownPeers": ["C"]}
+  ],
+  "links": [
+    {"a": "A", "b": "B", "delay_ms": 10},
+    {"a": "B", "b": "C", "delay_ms": 10},
+    {"a": "C", "b": "D", "delay_ms": 10}
+  ]
+}

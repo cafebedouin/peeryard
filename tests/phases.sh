@@ -35,6 +35,7 @@ settle_follow(){ act; SETTLE_STATE=${SETTLE_TOK:-SAME@13:root}; SETTLE_AFTER=$SE
 flap(){ act; FLAP_LAST_HEIGHT=${FLAP_H:-42}; }
 pay(){ act; if [[ ${PAY_OK:-1} == 1 ]]; then printf 'a%.0s' {1..64}; echo; else echo "rejected: not enough boxes"; fi; }
 partition(){ act; }; heal(){ act; }; link_netem(){ act; }; start_mining(){ act; }; stop_mining(){ act; }; mark(){ act; }
+crash(){ act; }; revive(){ act; }
 my_obs(){ return "${OBS_RC:-0}"; }
 
 # ---- harness ----
@@ -56,6 +57,14 @@ not(){ ! "$@"; }
 expect(){ local name=$1; shift; if "$@"; then report "$name" ok "$*"; else report "$name" MISMATCH "$*"; fi; }
 
 # ---- verdict ----
+chk crash-revive PASS - 2 <<'EOF'
+crash B
+revive B
+pass topology
+when PHASES_TEST_UNSET=1 crash B
+EOF
+chk crash-args INCONCLUSIVE BAD_SCENARIO:1: 0 <<<$'crash A B\npass topology'
+chk revive-node INCONCLUSIVE BAD_SCENARIO:1: 0 <<<$'revive Z\npass topology'
 chk pass2 PASS - 1 <<'EOF'
 record h height A
 partition A B
@@ -135,7 +144,7 @@ EOF
 chk unknown-node INCONCLUSIVE BAD_SCENARIO:1: 0 <<<"pass synced Z"
 chk not-implemented INCONCLUSIVE BAD_SCENARIO:2: 0 <<'EOF'
 partition A B
-crash B
+launch B
 pass topology
 EOF
 chk reader-not-impl INCONCLUSIVE BAD_SCENARIO:1: 0 <<'EOF'

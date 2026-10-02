@@ -4,7 +4,7 @@
 # typo costs one bring-up and runs nothing (INCONCLUSIVE, rig_cause BAD_SCENARIO:<line>:<text>). PHASES_CHECK=1:
 # check only, print one line and return 0 (clean) or 1. Actions run in the hook's own shell, never in $(...).
 _PH_ACT_ALL=" mine start_mining stop_mining partition heal link_netem flap crash revive launch wait_up set_cpus settle_follow pay wait_balance mark sleep "
-_PH_ACT=" start_mining stop_mining partition heal link_netem flap settle_follow pay mark sleep "
+_PH_ACT=" start_mining stop_mining partition heal link_netem flap crash revive settle_follow pay mark sleep "
 _PH_CL_ALL=" same_chain same_state height synced balance peers topology settle fn value "
 _PH_CL=" same_chain same_state height synced balance topology settle fn value "
 _PH_RD_ALL=" height headers_height balance flap_last "
@@ -50,7 +50,7 @@ _ph_act_chk(){ local a=$1; shift
   _PH_E=""
   case $a in
     start_mining) [[ $# == 1 || $# == 2 ]] && _ph_node "$1" ;;
-    stop_mining) [[ $# == 1 ]] && _ph_node "$1" ;;
+    stop_mining|crash|revive) [[ $# == 1 ]] && _ph_node "$1" ;;
     partition|heal) [[ $# == 2 ]] && _ph_node "$1" && _ph_node "$2" ;;
     link_netem) [[ $# -ge 3 ]] && _ph_node "$1" && _ph_node "$2" ;;
     flap) [[ $# == 5 ]] && _ph_node "$1" && _ph_node "$2" && _ph_int "$3" && _ph_int "$4" && _ph_int "$5" ;;

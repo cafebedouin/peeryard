@@ -74,7 +74,8 @@ Each prints the value it read on one `[phases]` line. A token clause is true onl
   of the metrics. It carries a designed failing control in the same file (`when FLAP_CONTROL=down-edge …`).
 - Actions, each one helper of `rig/HOOK_API.md`, run in the hook's own shell (their return status is printed and is
   not part of the verdict; a failed network change is a harness failure as usual): `start_mining n [poll]`,
-  `stop_mining n`, `partition a b`, `heal a b`, `link_netem a b <spec…>`, `flap a b down up cycles`,
+  `stop_mining n`, `crash n` (SIGKILL, left down), `revive n` (relaunch on its data directory, then wait for REST),
+  `partition a b`, `heal a b`, `link_netem a b <spec…>`, `flap a b down up cycles`,
   `settle_follow leader follower <min_h expr> [window, default 150]`, `pay from to nanoerg [count]` (count payments,
   0.15 s apart; the number accepted is added to the record `pay_sent`), `mark label`, `sleep S` (seconds). `link_netem` joins the rest of the line into its one netem spec and
   changes one direction (a's egress toward b), so a two-way change is two lines; `heal a b` puts both directions back
@@ -122,6 +123,6 @@ pass settled: settle
 
 ## Not here (next rows, not implemented: the checker rejects them)
 
-Actions `mine`, `crash`, `revive`, `launch`, `wait_up`, `set_cpus`, `wait_balance`; reader `headers_height`; clause
+Actions `mine`, `launch`, `wait_up`, `set_cpus`, `wait_balance`; reader `headers_height`; clause
 `peers n == k`. Loops, nesting, else and shell lines in the data are left out on purpose: a scenario that needs them
 is a shell hook (or a `fn`). Topology stays in the `.json` file.

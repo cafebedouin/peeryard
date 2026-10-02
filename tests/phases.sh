@@ -15,6 +15,9 @@ case "$Tr/" in /tmp/?*/|"$Tmpr"/?*/) ;; *) echo "refusing T='$T': not a scratch 
 case "$PWD/" in "$Tr"/*) echo "refusing T='$T': it contains the current directory" >&2; exit 2 ;; esac
 rm -rf "$T"; mkdir -p "$T"
 EXPECT_HOOKS=3   # hooks under rig/examples/ that source lib/phases.sh; bumped with each one added
+# the by-design WARNs of the check-only pass over the shipped hooks, as <hook>:<heredoc line>:<verb>; a new one is added
+# here deliberately (an extra or a missing WARN is a MISMATCH)
+EXPECT_WARNS=("bringup-phases:3:link_netem")
 # shellcheck source=rig/lib/phases.sh
 source "${PHASES_LIB:-rig/lib/phases.sh}"
 
@@ -287,5 +290,12 @@ while IFS= read -r f; do
   expect "hook[$(basename "$f" .sh)]" test "$rc" = 0; printf '%s\n' "${out:-}" | sed 's/^/  /'
 done < <(grep -lE '^source .*lib/phases\.sh' rig/examples/*.sh)
 expect hooks-checked test "$n" = "$EXPECT_HOOKS"
+warn_set(){ # <hook files...>: one <hook>:<line>:<verb> per WARN the check-only pass prints, sorted
+  local f; for f in "$@"; do check_hook "$f" 2>&1 | sed -nE "s/^\[phases\] WARN line ([0-9]+): action '([a-z_]+)'.*/$(basename "$f" .sh):\1:\2/p"; done | sort; }
+warns_pinned(){ [[ "$(warn_set "$@")" == "$(printf '%s\n' "${EXPECT_WARNS[@]}" | sort)" ]]; }
+mapfile -t shipped < <(grep -lE '^source .*lib/phases\.sh' rig/examples/*.sh)
+printf '%s\n' "$(warn_set "${shipped[@]}")" | sed 's/^/  warn: /'
+expect warns-pinned warns_pinned "${shipped[@]}"
+expect warns-pinned-catches-extra not warns_pinned "${shipped[@]}" "$T/rig/examples/tail.sh"
 
 [[ $fail == 0 && $oks == "$cases" ]] && echo "phases tests: all $oks ok" || { echo "phases tests: MISMATCH ($oks of $cases ok; logs in $T)"; exit 1; }

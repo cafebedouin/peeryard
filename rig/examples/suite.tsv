@@ -45,3 +45,6 @@ reorg-mempool-phases	REORG-MEMPOOL-PHASES: PASS	900	-	-
 # flap and flap-phases share a fate: both in this suite, or both in experimental.txt.
 flap-phases	FLAP-PHASES: PASS	900	-	-
 flap	FLAP: PASS	900	-	-
+soft-partition-phases	SOFT-PARTITION-PHASES: PASS	900	-	-
+reorder-dup-phases	REORDER-DUP-PHASES: PASS	900	-	-
+mixed-roles-phases	MIXED-ROLES-PHASES: PASS	900	-	-

@@ -8,7 +8,10 @@ oracle stays a shell hook, as every existing example does. Examples: `bringup-ph
 
 ## The file
 
-A data scenario is an ordinary hook: functions (optional, for `fn`), the `source` line, and one unquoted heredoc.
+A scenario is two files in `rig/examples/`: a topology `<name>.json` ([README.md](README.md#topology-schema):
+`nodes[].name` and `links[].a`/`b` are required; a node with `"mining": true` and a `mine_poll` mines from launch, without a
+`start_mining` relaunch) and the hook `<name>.sh`. Node names in the data are the topology's `nodes[].name`. The hook is an
+ordinary hook: functions (optional, for `fn`), the `source` line, and one unquoted heredoc.
 
 ```bash
 # shellcheck source=rig/lib/phases.sh
@@ -32,7 +35,7 @@ references, evaluated after substitution with no `eval`; `<op>` is one of `== !=
 
 | line | meaning |
 |---|---|
-| `floor <clause> timeout S [cause NAME]` | poll every 3 s until the clause holds; at S seconds (wall clock) the run stops INCONCLUSIVE with `rig_cause` NAME (default `NO_FLOOR`). A setup gate. |
+| `floor <clause> timeout S [cause NAME]` | poll every 3 s until the clause holds; at S seconds (wall clock) the run stops INCONCLUSIVE with `rig_cause` NAME (default `NO_FLOOR`; NAME matches `[A-Z_][A-Z0-9_]*`). A setup gate. |
 | `wait <clause> timeout S` | the same polling; at S seconds the run stops FAIL, `WAIT_TIMEOUT:<line>`. The claim. |
 | `pass [label:] <clause>` | evaluated once, where it stands; the run goes on. Default label `L<line>`. |
 
@@ -58,7 +61,7 @@ Each prints the value it read on one `[phases]` line. A token clause is true onl
 | `synced n` | full height at least 1 and equal to `/info` `headersHeight` |
 | `topology` | `check_topology` returns 0 |
 | `settle` | the last `settle_follow` returned 0 (needs a `settle_follow` line before it) |
-| `fn NAME [args]` | the hook's function NAME returns 0: the escape hatch for one observation of the hook's own |
+| `fn NAME [args]` | the hook's function NAME returns 0: the escape hatch for one observation of the hook's own. The args are passed as literal words: no `@name` substitution, no evaluation |
 
 ## Records, conditions, actions
 
@@ -73,7 +76,13 @@ Each prints the value it read on one `[phases]` line. A token clause is true onl
   not part of the verdict; a failed network change is a harness failure as usual): `start_mining n [poll]`,
   `stop_mining n`, `partition a b`, `heal a b`, `link_netem a b <spec…>`, `flap a b down up cycles`,
   `settle_follow leader follower <min_h expr> [window, default 150]`, `pay from to nanoerg [count]` (count payments,
-  0.15 s apart; the number accepted is added to the record `pay_sent`), `mark label`, `sleep S`.
+  0.15 s apart; the number accepted is added to the record `pay_sent`), `mark label`, `sleep S` (seconds). `link_netem` joins the rest of the line into its one netem spec and
+  changes one direction (a's egress toward b), so a two-way change is two lines; `heal a b` puts both directions back
+  to the link's shaping from the topology (`delay_ms`, `loss_pct` and the other link fields), after a `partition` or a `link_netem` alike. Link names work in either order.
+
+Adding a scenario: the `.json` and `.sh` above; `EXPECT_HOOKS` in `tests/phases.sh` goes up by one (it counts the hooks
+that source the library), and a WARN that is by design goes into `EXPECT_WARNS` there; a `suite.tsv` row with the
+marker `<NAME>: PASS` and a row in `README.md`'s examples table.
 
 ## Checked before anything runs
 

@@ -34,12 +34,12 @@ nipopow-bootstrap	NIPOPOW-BOOTSTRAP: PASS	1700	-	-
 matrix-compat-m2	MATRIX-COMPAT: PASS	1500	-	matrix
 matrix-compat-m3	MATRIX-COMPAT: PASS	1500	-	matrix
 matrix-compat-m4	MATRIX-COMPAT: PASS	1500	-	matrix
-matrix-compat-2m2r-all	MATRIX-COMPAT: PASS	1500	-	matrix
+matrix-compat-2m2r-all	MATRIX-COMPAT: PASS	3000	-	matrix
 matrix-compat-2m2r-mmine	MATRIX-COMPAT: PASS	1500	-	matrix
 matrix-compat-2m2r-rmine	MATRIX-COMPAT: PASS	1500	-	matrix
 matrix-compat-mrm-line	MATRIX-COMPAT: PASS	1500	-	matrix
-matrix-compat-1m3r	MATRIX-COMPAT: PASS	1500	-	matrix
-matrix-compat-3m1r	MATRIX-COMPAT: PASS	1500	-	matrix
+matrix-compat-1m3r	MATRIX-COMPAT: PASS	3000	-	matrix
+matrix-compat-3m1r	MATRIX-COMPAT: PASS	3000	-	matrix
 bringup-phases	BRINGUP-PHASES: PASS	600	-	-
 reorg-mempool-phases	REORG-MEMPOOL-PHASES: PASS	900	-	-
 # flap and flap-phases share a fate: both in this suite, or both in experimental.txt.

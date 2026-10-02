@@ -28,7 +28,10 @@
       "jar": "${PEERYARD_JAR}",
       "knownPeers": [
         "A"
-      ]
+      ],
+      "conf": {
+        "ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\""
+      }
     },
     {
       "name": "C",
@@ -37,7 +40,10 @@
       "knownPeers": [
         "A",
         "B"
-      ]
+      ],
+      "conf": {
+        "ergo.wallet.testMnemonic": "\"letter advice cage absurd amount doctor acoustic avoid letter advice cage above\""
+      }
     },
     {
       "name": "D",
@@ -47,7 +53,10 @@
         "A",
         "B",
         "C"
-      ]
+      ],
+      "conf": {
+        "ergo.wallet.testMnemonic": "\"zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong\""
+      }
     }
   ],
   "links": [

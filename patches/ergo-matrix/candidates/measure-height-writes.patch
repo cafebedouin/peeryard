@@ -1,0 +1,99 @@
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 0ca45c317..a44b04d75 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -410,7 +410,7 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+   protected def processSync(hr: ErgoHistory, syncInfo: ErgoSyncInfo, remote: ConnectedPeer): Unit = {
+     val diff = syncTracker.updateLastSyncGetTime(remote)
+     if (diff > PerPeerSyncLockTime) {
+-      // process sync if sent in more than 200 ms after previous sync
++      // process sync if sent in more than 100 ms after previous sync
+       log.debug(s"Processing sync from $remote")
+       syncInfo match {
+         case syncV1: ErgoSyncInfoV1 => processSyncV1(hr, syncV1, remote)
+@@ -418,6 +418,17 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       }
+     } else {
+       log.debug(s"Spammy sync detected from $remote")
++      // the comparison and reply are skipped; a peer may report several heights within the interval, so keep the
++      // latest, as the relay filters read it
++      syncInfo match {
++        case syncV2: ErgoSyncInfoV2 => syncV2.height.foreach { h =>
++          syncTracker.statuses.get(remote).filter(_.height > h).foreach { status =>
++            log.info(s"HEIGHT-WRITE lower peer=$remote from=${status.height} to=$h source=throttled-syncinfo")
++          }
++          syncTracker.updateHeight(remote, h, raiseOnly = false)
++        }
++        case _ =>
++      }
+     }
+   }
+ 
+@@ -1154,6 +1165,10 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+ 
+     val modifierTypeId = invData.typeId
+ 
++    if (modifierTypeId == Header.modifierTypeId) {
++      raiseHeightFromHeaderInv(hr, invData.ids, peer)
++    }
++
+     val newModifierIds = modifierTypeId match {
+       case ErgoTransaction.modifierTypeId =>
+ 
+@@ -1215,6 +1230,22 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     }
+   }
+ 
++  /**
++    * A peer that announces a header on our best chain has at least that header: raise its recorded height to the
++    * header's (never lower it). A follower broadcasts this Inv after applying a block, so a follower at the tip stays
++    * within the relay filters' ±2 window without a SyncInfo; no message is added (#2597).
++    */
++  private def raiseHeightFromHeaderInv(hr: ErgoHistory, ids: Seq[ModifierId], peer: ConnectedPeer): Unit = {
++    val announced = ids.flatMap(id => hr.heightOf(id).filter(_ => hr.isInBestChain(id)))
++    if (announced.nonEmpty) {
++      val h = announced.max
++      syncTracker.statuses.get(peer).filter(_.height < h).foreach { status =>
++        log.info(s"HEIGHT-WRITE raise peer=$peer from=${status.height} to=$h source=inv")
++      }
++      syncTracker.updateHeight(peer, h, raiseOnly = true)
++    }
++  }
++
+   /**
+    * Handle a request from a peer for specific modifiers by their IDs.
+    *
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoSyncTracker.scala b/src/main/scala/org/ergoplatform/network/ErgoSyncTracker.scala
+index b30720282..9862f3be4 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoSyncTracker.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoSyncTracker.scala
+@@ -83,6 +83,8 @@ final case class ErgoSyncTracker(networkSettings: NetworkSettings) extends Score
+   def updateStatus(peer: ConnectedPeer,
+                    status: PeerChainStatus,
+                    height: Option[Height]): Unit = {
++    for (h <- height; old <- statuses.get(peer) if old.height > h)
++      log.info(s"HEIGHT-WRITE lower peer=$peer from=${old.height} to=$h source=syncinfo status=$status")
+     val seniorsBefore = numOfSeniors()
+     statuses.adjust(peer){
+       case None =>
+@@ -102,6 +104,20 @@ final case class ErgoSyncTracker(networkSettings: NetworkSettings) extends Score
+     }
+   }
+ 
++  /**
++    * Set the recorded height of a peer already in the table, keeping its status; a peer not in the table is ignored.
++    * A height the peer reports in its SyncInfo replaces the record; a header the peer announces shows only that it has
++    * at least that height, so with `raiseOnly` the record is never lowered. Unlike `updateStatus`, the senior count is
++    * not recomputed, as it cannot change while the status is kept.
++    */
++  def updateHeight(peer: ConnectedPeer, height: Height, raiseOnly: Boolean): Unit = {
++    statuses.get(peer).foreach { status =>
++      if (!raiseOnly || height > status.height) {
++        statuses.update(peer, status.copy(height = height))
++      }
++    }
++  }
++
+   /**
+     * Get synchronization status for given connected peer
+     */

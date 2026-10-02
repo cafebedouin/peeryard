@@ -208,6 +208,34 @@ settle_follow A B 5 30
 pass settled: settle
 EOF
 HH_A=9 chk not-synced FAIL CLAUSE:L1 0 <<<"pass synced A"
+chk value-constants INCONCLUSIVE BAD_SCENARIO:1: 0 <<<"pass value 3 >= 1"
+chk value-ref PASS - 0 <<'EOF'
+record x height A
+pass value @x >= 1
+EOF
+
+# ---- node-supplied text never executes: every numeric path goes through the operand regex ----
+INJ="NODES[\$(touch $T/x)]"
+# positive control: the same text compared without the regex runs its command (under set -u it then kills the shell)
+bash -c 'set -u; NODES=(a); v=$1; [[ $v -ge 1 ]]' _ "NODES[\$(touch $T/y)]" 2>/dev/null
+expect inj-control-runs test -e "$T/y"
+H_A=$INJ chk inj-record-height INCONCLUSIVE RECORD_EMPTY:h 0 <<'EOF'
+record h height A
+pass topology
+EOF
+B_A=$INJ chk inj-record-balance INCONCLUSIVE RECORD_EMPTY:b 0 <<'EOF'
+record b balance A
+pass topology
+EOF
+B_A=$INJ chk inj-value-from-record INCONCLUSIVE RECORD_EMPTY:b 0 <<'EOF'
+record b balance A
+pass value @b+1 >= 1
+EOF
+H_A=$INJ chk inj-height-clause FAIL CLAUSE:L1 0 <<<"pass height A >= 1"
+B_A=$INJ chk inj-balance-clause FAIL CLAUSE:L1 0 <<<"pass balance A >= 1"
+H_A=$INJ chk inj-synced FAIL CLAUSE:L1 0 <<<"pass synced A"
+SC="SAME@$INJ:id" chk inj-same-chain-height FAIL CLAUSE:L1 0 <<<"pass same_chain A B SAME >= 1"
+expect inj-nothing-ran test ! -e "$T/x"
 # an abort the interpreter does not catch (an arithmetic error inside a fn) leaves the named INCONCLUSIVE set first
 expect abort-names-cause bash -c 'set -uo pipefail; source "$0"; check_topology(){ return 0; }; rest(){ :; }; NODES=(A); HOOK=x
 rig_verdict=PASS; boom(){ local x; x=$(( 1/0 )); }; phases <<<"pass fn boom" >/dev/null 2>&1
@@ -238,6 +266,13 @@ HOOKEOF
 out=$(check_hook "$T/rig/examples/typo.sh" 2>&1); rc=$?
 expect check-catches-typo-rc test "$rc" = 1
 expect check-catches-typo-line grep -q 'BAD_SCENARIO line 2' <<<"$out"
+printf '{"nodes":[{"name":"A"},{"name":"B"}]}\n' | tee "$T/rig/examples/tail.json" > "$T/rig/examples/notail.json"
+printf 'source "$(dirname "$(readlink -f "$HOOK")")/../lib/phases.sh"\nphases <<EOF\npass topology\npartition A B\nwhen X=1 heal A B\nEOF\n' > "$T/rig/examples/tail.sh"
+printf 'source "$(dirname "$(readlink -f "$HOOK")")/../lib/phases.sh"\nphases <<EOF\npartition A B\npass topology\nwhen X=1 heal A B\nEOF\n' > "$T/rig/examples/notail.sh"
+out=$(check_hook "$T/rig/examples/tail.sh" 2>&1); rc=$?
+expect warn-tail-action grep -q "WARN line 2: action 'partition'" <<<"$out"
+expect warn-is-not-error test "$rc" = 0
+expect no-warn-when-observed not grep -q WARN <<<"$(check_hook "$T/rig/examples/notail.sh" 2>&1)"
 for bad in 'wait height A >= $H_X timeout 5' 'wait height A >= ${H_X} timeout 5' 'wait height A >= $(echo 5) timeout 5' 'wait height A >= `echo 5` timeout 5'; do
   printf 'phases <<EOF\npass topology\n%s\nEOF\n' "$bad" > "$T/lint.sh"
   expect "lint[${bad:17:12}]" not lint_hook "$T/lint.sh"

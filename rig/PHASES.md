@@ -85,6 +85,11 @@ function, a duplicate label, a label equal to a record name (`pay_sent` included
 `PHASES_CHECK=1` checks only; `tests/phases.sh` checks every hook under `rig/examples/` that sources the library.
 At run time an expression that cannot be evaluated (division by a recorded 0) stops the run INCONCLUSIVE
 `EXPR_ERROR:<line>`. `phases` first sets INCONCLUSIVE `PHASES_ABORTED`, so an error it does not catch still ends named.
+On bash 5.2 such an error (an arithmetic error inside a `fn`, say) drops the rest of the hook's current top-level
+line, anything chained after the call with `;` or `&&`, and the hook goes on at its next line. So `phases <<EOF … EOF`
+stands alone as the hook's last statement, with nothing chained onto it.
+`value` with no `@name` on either side compares two constants and is rejected. The check-only pass prints a
+`[phases] WARN` (not an error) for an action that follows the last unconditional `pass` or `wait`: nothing observes it.
 
 ## Output
 

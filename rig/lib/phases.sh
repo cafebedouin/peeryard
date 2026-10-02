@@ -37,6 +37,7 @@ _ph_cl_chk(){ local c=${1:-}; shift
     height|balance) [[ $# == 3 && $_PH_OPS == *" ${2:-} "* ]] || { _ph_e "expected $c <node> <op> <expr>"; return; }
       _ph_node "$1" && _ph_xchk "$3" ;;
     value) [[ $# == 3 && $_PH_OPS == *" ${2:-} "* ]] || { _ph_e "expected value <expr> <op> <expr>"; return; }
+      [[ "$1$3" == *@* ]] || { _ph_e "value compares two constants (no @name on either side)"; return; }
       _ph_xchk "$1" && _ph_xchk "$3" ;;
     synced) [[ $# == 1 ]] || { _ph_e "expected synced <node>"; return; }; _ph_node "$1" ;;
     topology) [[ $# == 0 ]] || _ph_e "topology takes no argument" ;;
@@ -95,7 +96,9 @@ _ph_chk(){ # <line n> <words...>: one line; sets _PH_E and returns 1 on the firs
         _PH_RECS+=" pay_sent"; (( cond )) || _PH_KNOWN+=" pay_sent"; fi
       [[ $v != settle_follow ]] || _PH_SEEN+=" settle_follow " ;;
   esac
-  [[ $v != pass && $v != wait ]] || _PH_CLAIMS=$((_PH_CLAIMS + 1)); }
+  [[ $v != pass && $v != wait ]] || _PH_CLAIMS=$((_PH_CLAIMS + 1))
+  (( cond )) && return 0   # _PH_TAIL: the first unconditional action after the last unconditional pass or wait
+  case $v in pass|wait) _PH_TAIL="" ;; floor|record) ;; *) [[ -n $_PH_TAIL ]] || _PH_TAIL="$n:$v" ;; esac; }
 
 # ---- runner ----
 _ph_fix(){ [[ -n $_PH_V ]] || { _PH_V=$1; _PH_C=$2; }; }   # the first verdict-bearing event fixes verdict and cause
@@ -182,7 +185,7 @@ phases(){
   name=$(basename "${HOOK:-phases}" .sh); name=${name^^}
   local -a raw=() ph=() pn=() w=()
   mapfile -t raw
-  _PH_KNOWN="" _PH_RECS="" _PH_LABELS="" _PH_SEEN="" _PH_CLAIMS=0 _PH_E="" _PH_V="" _PH_C="" _PH_NP=0 _PH_NW=0
+  _PH_KNOWN="" _PH_RECS="" _PH_LABELS="" _PH_SEEN="" _PH_CLAIMS=0 _PH_TAIL="" _PH_E="" _PH_V="" _PH_C="" _PH_NP=0 _PH_NW=0
   _PH_PORD="" _PH_RORD="" _PH_SRC="" _PH_LN=0; declare -gA _PH_REC=() _PH_PASS=()
   local bad=""
   for i in "${!raw[@]}"; do
@@ -198,7 +201,9 @@ phases(){
     _PH_V=INCONCLUSIVE; _PH_C="BAD_SCENARIO:$bad"; _ph_end "$name"; return 0
   fi
   N=${#ph[@]}
-  if [[ ${PHASES_CHECK:-0} == 1 ]]; then echo "[phases] check $name: ok ($N phases)"; return 0; fi
+  if [[ ${PHASES_CHECK:-0} == 1 ]]; then
+    [[ -z $_PH_TAIL ]] || echo "[phases] WARN line ${_PH_TAIL%%:*}: action '${_PH_TAIL#*:}' after the last pass or wait is not observed"
+    echo "[phases] check $name: ok ($N phases)"; return 0; fi
   for i in "${!ph[@]}"; do
     _PH_LN=${pn[i]}; read -ra w <<<"${ph[i]}"
     if [[ ${w[0]} == when ]]; then

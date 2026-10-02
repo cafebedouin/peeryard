@@ -379,6 +379,20 @@ created them, no root). State lives under `~/.peeryard/devnet/<name>` (or `PEERY
 databases flush, and `up` after `down` resumes every node's chain from its data directory, whatever the chain
 preset; only `wipe` deletes it.
 
+## Public testnet (outside the rig)
+The rig builds private networks only; a run on the public testnet is a plain node with the jar's own testnet
+configuration, reached from the rig's tools over REST. The parameters below are read from 6.0.6's `testnet.conf`:
+`networkType = "testnet"`, magic `[2,3,2,3]`, P2P port 9023, address prefix 16 (first address byte 0x10 + type),
+protocol version 4, `blockInterval = 45s`, `epochLength = 128`, `minerRewardDelay = 720`; built-in seeds
+213.239.193.208:9023, 168.138.185.215:9023, 192.234.196.165:9023.
+```
+java -jar ergo-6.0.6.jar --testnet -c mytestnet.conf      # mytestnet.conf: data directory, REST bind, apiKeyHash
+```
+Public explorer API: `https://api-testnet.ergoplatform.com` (`/api/v1/networkState`, `/api/v1/boxes/unspent/byAddress/{a}`,
+`POST /api/v1/mempool/transactions/submit`). Observed 2026-10-02: version-4 blocks about 36 s apart, difficulty about
+1.07e10 (some 300 MH/s), released nodes only; no Matrix (sub-block) node was among a node's peers, and the internal CPU
+miner finds no block at that difficulty.
+
 ## Configured from the caller, recorded in the run
 
 Every run writes `out/effective.json`: the chain preset and its resolved parameters, the Java runtime (`java

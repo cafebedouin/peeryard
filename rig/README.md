@@ -242,6 +242,8 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 | `bringup-phases` | 2 | `bringup`'s claim as a data scenario ([PHASES.md](PHASES.md)); `PHASES_INVERT=1` adds a pass with the expected token flipped, which must FAIL; 3 of 3 PASS hosted, with its original ([sweep](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) |
 | `flap-phases` | 2 | `flap`'s claim as a data scenario, with the same knobs and the same `FLAP_CONTROL=down-edge` control in the file (the settle gets `FLAP_MARGIN_S` itself); 3 of 3 PASS hosted, with its original ([sweep](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) |
 | `reorg-mempool-phases` | 3 | `reorg-mempool`'s claim as a data scenario: the same staging, with the conditions `reorg-mempool` checks together in one loop waited for one after another; 3 of 3 PASS hosted, with its original ([sweep](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) |
+| `reorder-dup-phases` | 3 | payments from a miner to a wallet two hops away while every link direction reorders and duplicates packets (`RD_REORDER`, `RD_DUP`): every accepted payment arrives and the ends agree on chain and state; `RD_CONTROL=cut` cuts the relay before the payments, which must FAIL |
+| `mixed-roles-phases` | 3 | a digest and a pruned follower of a full miner through partitions, the digest node killed and revived while cut (it restores its height from disk): both reach the miner's state root at its final height; `MR_CONTROL=down` leaves the digest node down, which must FAIL |
 
 ## Experimental examples
 

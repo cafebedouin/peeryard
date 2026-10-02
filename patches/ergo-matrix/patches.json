@@ -94,6 +94,23 @@
       "witness": "PENDING: pr-scenario run 36649110206 (before/after on the stack), then a sweep and a works-check with 005 stacked",
       "route": "upstream in #2504; no separate PR needed",
       "responses": []
+    },
+    {
+      "id": "006",
+      "file": "006-miner-thread-nonce-after-reject.patch",
+      "title": "Internal miner thread resumes after a rejected solution's nonce, not at the batch start + 1",
+      "origin": "ours (cafebedouin), not yet proposed upstream; candidate for a weak-blocks issue + PR",
+      "upstream_pr": null,
+      "upstream_head": null,
+      "route": null,
+      "status": "proposed",
+      "added": "2026-10-02",
+      "fixes": "after the candidate generator rejects an input solution (it no longer fits the cached candidate), the thread re-finds and resubmits the same nonce until a new candidate arrives",
+      "needed_by": [
+        "rig matrix-compat (mixed networks): measuring Matrix miners' ordering-block share"
+      ],
+      "witness": "ErgoMiningThreadSpec (fixed-hit fake PoW at nonces 5 and 900): red on 8769baace ('5 was equal to 5'), green with the patch (5 then 900); patch sha256 1edffd8a...; 2026-10-02",
+      "responses": []
     }
   ]
 }

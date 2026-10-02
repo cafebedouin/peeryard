@@ -81,6 +81,12 @@ Each prints the value it read on one `[phases]` line. A token clause is true onl
   changes one direction (a's egress toward b), so a two-way change is two lines; `heal a b` puts both directions back
   to the link's shaping from the topology (`delay_ms`, `loss_pct` and the other link fields), after a `partition` or a `link_netem` alike. Link names work in either order.
 
+Forks on the rig's devnet: every block adds the same score and a miner adds one block per `mine_poll`, so two
+miners at the same poll on separate forks stay tied, and nothing guarantees the tie breaks. A scenario that claims
+a fork resolves gives one side the heavier chain by construction (a slower poll on the other side). Keep the fork
+shallower than the sync summaries reach, or start it above height 128 (ROADMAP.md, *Scenario backlog*, deep forks on
+young chains), and guard that with a `floor value` so crossing it is INCONCLUSIVE (`soft-partition-phases`).
+
 Adding a scenario: the `.json` and `.sh` above; `EXPECT_HOOKS` in `tests/phases.sh` goes up by one (it counts the hooks
 that source the library), and a WARN that is by design goes into `EXPECT_WARNS` there; a `suite.tsv` row with the
 marker `<NAME>: PASS` and a row in `README.md`'s examples table.

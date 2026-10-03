@@ -51,7 +51,9 @@ Only `nodes[].name` and `links[].a/b` are required. Other fields:
   - `current` (default): `blockInterval = 2s`, a fixed difficulty target at a sub-block pace, deliberately not
     tied to any miner's polling rate, so retargeting (every 16 blocks: the devnet's `epochLength = 16`) settles within the first epochs instead
     of drifting; and `minerRewardDelay = 10`, so mining rewards are spendable within a run (devnet's own default
-    is 720 blocks).
+    is 720 blocks). In practice the internal miner finds a block on nearly every poll at that target, so a single
+    miner's `mine_poll` sets the block rate (`"mine_poll": "20s"` gives about 20 s blocks); a `blockInterval`
+    override changes retargeting, not the pace (seen 2026-10-03, `rig/examples/honest-relay.json`).
   - `matrix`: for nodes with sub-blocks (input blocks between ordering blocks). The jar's own block interval is
     left alone, because a 2 s ordering-block target would collide with the sub-block cadence; only the reward
     delay is shortened to 10. Use it for a network of Matrix-line nodes, or set `"chain": "devnet"` and shape

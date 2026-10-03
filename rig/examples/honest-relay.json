@@ -1,0 +1,17 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "A", "mining": true, "mine_poll": "20s", "knownPeers": [] },
+    { "name": "S", "mining": false, "knownPeers": [] },
+    { "name": "R", "mining": false, "knownPeers": ["A", "S"],
+      "conf": { "ergo.node.minimalFeeAmount": 100000 } },
+    { "name": "Q", "mining": false, "knownPeers": ["A", "S"],
+      "conf": { "ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\"" } }
+  ],
+  "links": [
+    { "a": "R", "b": "A", "delay_ms": 0 },
+    { "a": "R", "b": "S", "delay_ms": 0 },
+    { "a": "Q", "b": "A", "delay_ms": 0 },
+    { "a": "Q", "b": "S", "delay_ms": 0 }
+  ]
+}

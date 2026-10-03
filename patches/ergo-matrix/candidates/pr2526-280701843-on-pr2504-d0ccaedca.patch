@@ -1,0 +1,3818 @@
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/modifiers/mempool/ErgoTransaction.scala b/ergo-core/src/main/scala/org/ergoplatform/modifiers/mempool/ErgoTransaction.scala
+index 13bb0907e..8dc80c518 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/modifiers/mempool/ErgoTransaction.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/modifiers/mempool/ErgoTransaction.scala
+@@ -31,6 +31,7 @@ import scorex.util.{ModifierId, ScorexLogging, bytesToId}
+ import sigma.exceptions.SoftFieldAccessException
+ import sigma.serialization.{ConstantStore, SigmaByteReader, SigmaByteWriter}
+ 
++import java.lang.reflect.InvocationTargetException
+ import java.util
+ import scala.annotation.nowarn
+ import scala.collection.mutable
+@@ -152,8 +153,8 @@ case class ErgoTransaction(override val inputs: IndexedSeq[Input],
+     val costTry = verifier.verify(box.ergoTree, ctx, proof, messageToSign)
+     val (isCostValid, scriptCost: Long) =
+       costTry match {
+-        case Failure(t) if t.isInstanceOf[SoftFieldAccessException] =>
+-          return Invalid(Seq(new SoftFieldsAccessError(t.asInstanceOf[SoftFieldAccessException], id)))
++        case Failure(ErgoTransaction.SoftFieldFailure(cause)) =>
++          return Invalid(Seq(new SoftFieldsAccessError(cause, id)))
+         case Failure(t) =>
+           log.warn(s"Tx verification failed: ${t.getMessage}", t)
+           log.warn(s"Tx $id verification context: " +
+@@ -528,6 +529,20 @@ case class ErgoTransaction(override val inputs: IndexedSeq[Input],
+ 
+ object ErgoTransaction extends ApiCodecs with ScorexLogging with ScorexEncoding {
+ 
++  private object SoftFieldFailure {
++    def unapply(error: Throwable): Option[SoftFieldAccessException] = {
++      @scala.annotation.tailrec
++      def unwrap(current: Throwable, remaining: Int): Option[SoftFieldAccessException] = current match {
++        case cause: SoftFieldAccessException => Some(cause)
++        case wrapper: InvocationTargetException if remaining > 0 =>
++          unwrap(wrapper.getTargetException, remaining - 1)
++        case _ => None
++      }
++      // Only reflection wrappers are transparent; unrelated failures keep their normal rejection path.
++      unwrap(error, 16)
++    }
++  }
++
+   /**
+     * 6 bytes long transaction id, not cryptographically strong, used in p2p protocol only
+     */
+diff --git a/ergo-core/src/test/scala/org/ergoplatform/modifiers/mempool/llm_generated/SoftFieldValidationSpec.scala b/ergo-core/src/test/scala/org/ergoplatform/modifiers/mempool/llm_generated/SoftFieldValidationSpec.scala
+new file mode 100644
+index 000000000..7ac39e9aa
+--- /dev/null
++++ b/ergo-core/src/test/scala/org/ergoplatform/modifiers/mempool/llm_generated/SoftFieldValidationSpec.scala
+@@ -0,0 +1,76 @@
++package org.ergoplatform.modifiers.mempool
++
++import java.lang.reflect.InvocationTargetException
++import org.ergoplatform.{ErgoBox, ErgoBoxCandidate, ErgoLikeContext, Input}
++import org.ergoplatform.settings.Constants.TrueTree
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants._
++import org.ergoplatform.validation.SoftFieldsAccessError
++import org.ergoplatform.wallet.interpreter.ErgoInterpreter
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.exceptions.SoftFieldAccessException
++import sigma.interpreter.ProverResult
++import sigmastate.interpreter.Interpreter.{ScriptEnv, VerificationResult}
++import scala.util.{Failure, Try}
++
++class SoftFieldValidationSpec extends ErgoCorePropertyTest {
++  private val box = new ErgoBox(
++    value = 1000000000L, ergoTree = TrueTree, creationHeight = 0,
++    additionalTokens = Colls.emptyColl, additionalRegisters = Map.empty,
++    transactionId = bytesToId(Array.fill(32)(1.toByte)), index = 0
++  )
++  private val tx = ErgoTransaction(
++    IndexedSeq(Input(box.id, ProverResult.empty)),
++    IndexedSeq(new ErgoBoxCandidate(box.value, TrueTree, emptyStateContext.currentHeight))
++  )
++
++  private def failureReturnedBy(cause: Throwable): Throwable = {
++    implicit val verifier: ErgoInterpreter = new ErgoInterpreter(parameters) {
++      override def verify(env: ScriptEnv, exp: ErgoTree, context: ErgoLikeContext,
++                          proof: Array[Byte], message: Array[Byte]): Try[VerificationResult] = Failure(cause)
++    }
++    val result = tx.statefulValidity(IndexedSeq(box), IndexedSeq.empty, emptyStateContext,
++      accumulatedCost = 0L, softFieldsAllowed = false)
++    result.isFailure shouldBe true
++    result.failed.get
++  }
++
++  property("direct soft-field failures retain their classification and cause") {
++    val cause = new SoftFieldAccessException("minerPubKey")
++    val error = failureReturnedBy(cause)
++    error shouldBe a[SoftFieldsAccessError]
++    error.getCause shouldBe cause
++  }
++
++  property("reflection-wrapped soft-field failures retain their classification and cause") {
++    val cause = new SoftFieldAccessException("minerPubKey")
++    val error = failureReturnedBy(new InvocationTargetException(cause))
++    error shouldBe a[SoftFieldsAccessError]
++    error.getCause shouldBe cause
++  }
++
++  property("nested reflection calls preserve the soft-field classification") {
++    val cause = new SoftFieldAccessException("timestamp")
++    val error = failureReturnedBy(new InvocationTargetException(new InvocationTargetException(cause)))
++    error shouldBe a[SoftFieldsAccessError]
++    error.getCause shouldBe cause
++  }
++
++  property("unrelated interpreter failures retain ordinary rejection") {
++    Seq(new IllegalArgumentException("invalid input"),
++      new InvocationTargetException(new IllegalArgumentException("invalid input")),
++      new InvocationTargetException(null),
++      new IllegalStateException(new SoftFieldAccessException("minerPubKey"))).foreach { cause =>
++      failureReturnedBy(cause).isInstanceOf[SoftFieldsAccessError] shouldBe false
++    }
++  }
++
++  property("reflection unwrapping observes its depth limit") {
++    def wrapped(depth: Int): Throwable = (1 to depth).foldLeft[Throwable](
++      new SoftFieldAccessException("minerPubKey")) { (cause, _) => new InvocationTargetException(cause) }
++    failureReturnedBy(wrapped(16)) shouldBe a[SoftFieldsAccessError]
++    failureReturnedBy(wrapped(17)).isInstanceOf[SoftFieldsAccessError] shouldBe false
++  }
++}
+diff --git a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+index 3f4af1348..afa3a998d 100644
+--- a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
++++ b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+@@ -11,7 +11,7 @@ import org.ergoplatform.modifiers.history._
+ import org.ergoplatform.modifiers.history.extension.{Extension, ExtensionCandidate}
+ import org.ergoplatform.modifiers.history.header.{Header, HeaderWithoutPow}
+ import org.ergoplatform.modifiers.history.popow.NipopowAlgos
+-import org.ergoplatform.modifiers.mempool.{ErgoTransaction, UnconfirmedTransaction}
++import org.ergoplatform.modifiers.mempool.{ErgoTransaction, ErgoTransactionSerializer, UnconfirmedTransaction}
+ import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages._
+ import org.ergoplatform.network.message.inputblocks.InputBlockTransactionsData
+ import org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.EliminateTransactions
+@@ -21,6 +21,7 @@ import org.ergoplatform.nodeView.history.ErgoHistoryUtils.Height
+ import org.ergoplatform.nodeView.history.{ErgoHistoryReader, ErgoHistoryUtils}
+ import org.ergoplatform.nodeView.mempool.ErgoMemPoolReader
+ import org.ergoplatform.nodeView.state.{ErgoState, ErgoStateContext, UtxoStateReader}
++import org.ergoplatform.sdk.wallet.Constants.MaxAssetsPerBox
+ import org.ergoplatform.settings.{Algos, ErgoSettings, ErgoValidationSettingsUpdate, Parameters}
+ import org.ergoplatform.subblocks.InputBlockAnnouncement
+ import org.ergoplatform.validation.SoftFieldsAccessError
+@@ -30,8 +31,10 @@ import scorex.crypto.authds.{ADDigest, LeafData, SerializedAdProof}
+ import scorex.crypto.authds.merkle.BatchMerkleProof
+ import scorex.crypto.hash.Digest32
+ import scorex.util.encode.Base16
+-import scorex.util.{ModifierId, ScorexLogging, idToBytes}
++import scorex.util.{ModifierId, ScorexLogging, bytesToId, idToBytes}
+ import sigma.data.{Digest32Coll, ProveDlog}
++import sigma.Extensions.ArrayOps
++import sigma.ast.syntax.ErgoBoxRType
+ import sigma.crypto.CryptoFacade
+ import sigma.interpreter.ProverResult
+ import sigma.validation.ReplacedRule
+@@ -185,7 +188,11 @@ class CandidateGenerator(
+     case gen @ GenerateCandidate(txsToInclude, reply, forced, optPk) =>
+       val senderOpt = if (reply) Some(sender()) else None
+       val effectiveMinerPk = optPk.getOrElse(minerPk)
+-      if (!forced && cachedFor(state.cachedCandidate, txsToInclude, effectiveMinerPk)) {
++      val selectedInputBlockId = state.hr.bestBlocks._2.map(_.id)
++      lazy val selectedInputTransactionsDigest = Algos.merkleTreeRoot(
++        state.hr.getBestOrderingCollectedInputBlocksTransactions().map(tx => LeafData @@ tx.serializedId))
++      if (!forced && cachedFor(state.cachedCandidate, txsToInclude, effectiveMinerPk,
++        selectedInputBlockId, selectedInputTransactionsDigest)) {
+         senderOpt.foreach(_ ! StatusReply.success(state.cachedCandidate.get))
+       } else {
+         val start = System.currentTimeMillis()
+@@ -353,7 +360,9 @@ object CandidateGenerator extends ScorexLogging {
+     )
+ 
+   /**
+-   * Checks that current candidate block is cached with given `txs` and `minerPk`.
++   * Checks the request, miner key, selected input tip and processed transaction prefix.
++   * A peer can advance these without this miner solving a local input block, and a body
++   * can extend the processed prefix after its announcement already updated the tip.
+    *
+    * Note: candidate cache is a single slot keyed by `minerPk`. If multiple miner public keys
+    * are used concurrently (e.g. node’s own miner and external `/mining/candidateWithTxsAndPk`
+@@ -364,10 +373,15 @@ object CandidateGenerator extends ScorexLogging {
+   def cachedFor(
+     candidateOpt: Option[Candidate],
+     txs: Seq[ErgoTransaction],
+-    minerPk: ProveDlog
++    minerPk: ProveDlog,
++    selectedInputBlockId: Option[ModifierId] = None,
++    selectedInputTransactionsDigest: Digest32 = Algos.emptyMerkleTreeRoot
+   ): Boolean = {
+     candidateOpt.isDefined && candidateOpt.exists { c =>
+       c.externalVersion.pk == minerPk &&
++        c.candidateBlock.inputBlockFields.prevInputBlockId.map(bytesToId) == selectedInputBlockId &&
++        (selectedInputBlockId.isEmpty || java.util.Arrays.equals(
++          c.candidateBlock.inputBlockFields.prevTransactionsDigest, selectedInputTransactionsDigest)) &&
+         (txs.isEmpty || (txs.size == c.txsToInclude.size && txs.forall(
+           c.txsToInclude.contains
+         )))
+@@ -714,14 +728,19 @@ object CandidateGenerator extends ScorexLogging {
+       // within collectTxs(), transactions from previous input blocks will be accounted in addition to the new txs
+       val newTransactionCandidates = emissionTxOpt.toSeq ++ prioritizedTransactions ++ poolTxs.map(_.transaction)
+ 
+-      val (preInputBlockTransactions, orderingTxs, toEliminate) = collectTxs(
++      val collected = Try(collectTxs(
+         minerPk,
+         state.stateContext.currentParameters.maxBlockCost - safeGap,
+         state.stateContext.currentParameters.maxBlockSize,
+         state,
+         upcomingContext,
+-        newTransactionCandidates
+-      )
++        newTransactionCandidates,
++        previousOrderingBlockTransactions
++      ))
++      // Prefix validation reads the same mutable state as proof generation. A state
++      // change during collection must enter the same bounded retry as a failed proof.
++      val (preInputBlockTransactions, orderingTxs, toEliminate) =
++        collected.getOrElse((Seq.empty, Seq.empty, Seq.empty))
+ 
+       // filter out transactions included in previous input-blocks
+       // todo: clear them from mempool on new best input block / add to mempool on input blocks chain forking
+@@ -729,7 +748,7 @@ object CandidateGenerator extends ScorexLogging {
+ 
+       val eliminateTransactions = EliminateTransactions(toEliminate)
+ 
+-      if (previousOrderingBlockTransactionIds.size + orderingTxs.size == 0) {
++      if (collected.isSuccess && previousOrderingBlockTransactionIds.size + orderingTxs.size == 0) {
+         throw new IllegalArgumentException(
+           s"Proofs for 0 txs cannot be generated : " +
+             s"previousOrderingBlockTransactionIds: ${previousOrderingBlockTransactionIds}, " +
+@@ -800,31 +819,34 @@ object CandidateGenerator extends ScorexLogging {
+ 
+       val txs = previousOrderingBlockTransactions ++ orderingTxs
+ 
+-      state.proofsForTransactions(txs) match {
++      collected.flatMap(_ => state.proofsForTransactions(txs)) match {
+         case Success((adProof, adDigest)) =>
+           Success(mkCandidate(txs, adProof, adDigest, eliminateTransactions,
+             extensionCandidate, inputBlockFields, inputBlockTransactions, orderingTxs))
+         case Failure(t: Throwable) =>
+           // A likely reason of the failure is a state update (new block applied) between
+-          // collectTxs and proofsForTransactions. Re-collect transactions against the current
++          // collection and proofsForTransactions. Re-collect transactions against the current
+           // state and retry once before falling back to an emission-only candidate.
+-          val (retryPreInputBlockTransactions, retryOrderingTxs, retryToEliminate) = collectTxs(
++          val retryCollected = Try(collectTxs(
+             minerPk,
+             state.stateContext.currentParameters.maxBlockCost - safeGap,
+             state.stateContext.currentParameters.maxBlockSize,
+             state,
+             upcomingContext,
+-            newTransactionCandidates
+-          )
++            newTransactionCandidates,
++            previousOrderingBlockTransactions
++          ))
++          val (retryPreInputBlockTransactions, retryOrderingTxs, retryToEliminate) =
++            retryCollected.getOrElse((Seq.empty, Seq.empty, Seq.empty))
+           val retryTxs = previousOrderingBlockTransactions ++ retryOrderingTxs
+           // The first pass may have rejected transactions against a transient state.
+           // Keep only the classifications from the latest collection attempt.
+-          log.error("Retrying candidate generation after failed proofs")
++          log.error("Retrying candidate generation after failed collection or proofs")
+           val retryEliminate = EliminateTransactions(retryToEliminate)
+-          state.proofsForTransactions(retryTxs) match {
++          retryCollected.flatMap(_ => state.proofsForTransactions(retryTxs)) match {
+             case Success((adProof, adDigest)) =>
+               log.warn(
+-                s"Proof generation failed once (${t.getMessage}), " +
++                s"Candidate assembly failed once (${t.getMessage}), " +
+                 s"recovered on retry with ${retryTxs.size} transactions"
+               )
+               // Rebuild input-block related extension fields for the re-collected transactions,
+@@ -841,6 +863,11 @@ object CandidateGenerator extends ScorexLogging {
+                 case None =>
+                   Failure(new IllegalArgumentException("Input block fields proof not available in extension candidate"))
+               }
++            case Failure(ex: Throwable) if version >= Header.Interpreter60Version =>
++              // An emission-only Matrix candidate would retain commitments to the
++              // discarded input payload. Leave work generation to a fresh attempt.
++              log.error("Failed to assemble a Matrix candidate after retry: ", ex)
++              Failure(ex)
+             case Failure(ex: Throwable) =>
+               // We can not produce a block for some reason, so print out an error
+               // and collect only emission transaction if it exists.
+@@ -850,7 +877,7 @@ object CandidateGenerator extends ScorexLogging {
+                   log.error("Failed to produce proofs for transactions, but emission box is found: ", ex)
+                   state.proofsForTransactions(Seq(emissionTx)).map {
+                     case (adProof, adDigest) =>
+-                      // Both collections produced failed proofs; their rejections may be stale.
++                      // Both assembly attempts failed; their rejections may be stale.
+                       mkCandidate(Seq(emissionTx), adProof, adDigest, EliminateTransactions(Seq.empty),
+                         extensionCandidate, InputBlockFields.empty, inputBlockTransactions, Seq(emissionTx))
+                   }
+@@ -884,18 +911,31 @@ object CandidateGenerator extends ScorexLogging {
+     ).headOption
+   }
+ 
++  /**
++    * Maximum number of fee boxes a single fee-collecting transaction is allowed to spend.
++    *
++    * This bound is defensive, not a validity fix. Before chunking, a fee transaction that failed
++    * validation did not invalidate the candidate: `collectTxs` stopped at the last accepted step,
++    * so the block was only shortened. Its cost cap is `maxBlockCost`, while assembly is bounded by
++    * `maxBlockCost - safeGap`, so the block limit binds first, and the per-transaction input bound
++    * (`Short.MaxValue`) is far looser than this constant. Chunking keeps each fee transaction small
++    * and bounded, at the price of `interpreterInitCost` and one extra output per additional chunk.
++    * The value is not derived from a consensus limit (#2185 names none).
++    */
++  val MaxFeeBoxesPerTransaction: Int = 100
++
+   def collectFees(
+     currentHeight: Int,
+     txs: Seq[ErgoTransaction],
+     minerPk: ProveDlog,
+     stateContext: ErgoStateContext
+-  ): Option[ErgoTransaction] = {
+-    collectRewards(None, currentHeight, txs, minerPk, stateContext, Colls.emptyColl).headOption
++  ): Seq[ErgoTransaction] = {
++    collectRewards(None, currentHeight, txs, minerPk, stateContext, Colls.emptyColl)
+   }
+ 
+   /**
+-    * Generate from 0 to 2 transaction that collecting rewards from fee boxes in block transactions `txs` and
+-    * emission box `emissionBoxOpt`
++    * Generate at most one emission transaction, followed by fee transactions with at most
++    * MaxFeeBoxesPerTransaction inputs each, preserving the complete fee payout.
+     */
+   def collectRewards(
+     emissionBoxOpt: Option[ErgoBox],
+@@ -991,38 +1031,15 @@ object CandidateGenerator extends ScorexLogging {
+     val feeBoxes: Seq[ErgoBox] = ErgoState
+       .newBoxes(txs)
+       .filter(b => java.util.Arrays.equals(b.propositionBytes, propositionBytes) && !inputs.exists(i => java.util.Arrays.equals(i.boxId, b.id)))
+-    val feeTxOpt: Option[ErgoTransaction] = if (feeBoxes.nonEmpty) {
+-      // todo: sub-blocks: fix tx fee collection , old code is commented out below for now
+-      /*
+-       import org.ergoplatform.sdk.wallet.Constants.MaxAssetsPerBox
+-       import sigma.ast.syntax.ErgoBoxRType
+-       import sigma.Extensions.ArrayOps
+-
+-       val feeAmount = feeBoxes.map(_.value).sum
+-       val feeAssets =
+-        feeBoxes.toArray.toColl.flatMap(_.additionalTokens).take(MaxAssetsPerBox)
+-       val inputs = feeBoxes.map(b => new Input(b.id, ProverResult.empty))
+-       val minerBox =
+-        new ErgoBoxCandidate(feeAmount, minerProp, nextHeight, feeAssets, Map())
+-       Some(ErgoTransaction(inputs.toIndexedSeq, IndexedSeq(), IndexedSeq(minerBox)))
+-      */
+-      None
+-    } else {
+-      None
+-    }
+-
+-    Seq(emissionTxOpt, feeTxOpt).flatten
+-  }
+-
+-  /**
+-    * Helper function which decides whether transactions can fit into a block with given cost and size limits
+-    */
+-  private def correctLimits(
+-    blockTxs: Seq[CostedTransaction],
+-    maxBlockCost: Long,
+-    maxBlockSize: Long
+-  ): Boolean = {
+-    blockTxs.map(_._2).sum < maxBlockCost && blockTxs.map(_._1.size).sum < maxBlockSize
++    val feeTxs = feeBoxes.grouped(MaxFeeBoxesPerTransaction).map { chunk =>
++      val feeAmount = chunk.map(_.value).sum
++      val feeAssets = chunk.toArray.toColl.flatMap(_.additionalTokens).take(MaxAssetsPerBox)
++      val feeInputs = chunk.map(b => new Input(b.id, ProverResult.empty))
++      val minerBox = new ErgoBoxCandidate(feeAmount, minerProp, nextHeight, feeAssets, Map())
++      ErgoTransaction(feeInputs.toIndexedSeq, IndexedSeq.empty, IndexedSeq(minerBox))
++    }.toSeq
++
++    emissionTxOpt.toSeq ++ feeTxs
+   }
+ 
+   /**
+@@ -1032,6 +1049,11 @@ object CandidateGenerator extends ScorexLogging {
+     * Resulting transactions total cost does not exceed `maxBlockCost`, total size does not exceed `maxBlockSize`,
+     * and the miner's transaction is correct.
+     *
++    * The accepted input-block prefix supplies common state to both candidate payloads. Its transactions
++    * are not returned again; its collectible fees belong only to the ordering payload. Each new input
++    * payload must also leave the accumulated prefix within the conservative ordering budget.
++    * Prefix-only rewards may remain unclaimed when the mandatory transactions consume the budget.
++    *
+     * @return - input block transactions to include, ordering blocks transactions to include, transaction ids turned out to be invalid.
+     */
+   def collectTxs(
+@@ -1040,11 +1062,14 @@ object CandidateGenerator extends ScorexLogging {
+                   maxBlockSize: Int,
+                   us: UtxoStateReader,
+                   upcomingContext: ErgoStateContext,
+-                  transactions: Seq[ErgoTransaction]
++                  transactions: Seq[ErgoTransaction],
++                  inputBlockTransactions: Seq[ErgoTransaction] = Seq.empty
+                 ): (Seq[ErgoTransaction], Seq[ErgoTransaction], Seq[ModifierId]) = {
+ 
+     val currentHeight = us.stateContext.currentHeight
+     val nextHeight = upcomingContext.currentHeight
++    // Use the candidate header version, including the first block of an activation epoch.
++    val inputBlocksEnabled = upcomingContext.sigmaPreHeader.version >= Header.Interpreter60Version
+ 
+     log.info(
+       s"Assembling a block candidate for block #$nextHeight from ${transactions.length} transactions available"
+@@ -1052,30 +1077,177 @@ object CandidateGenerator extends ScorexLogging {
+ 
+     val verifier: ErgoInterpreter = ErgoInterpreter(upcomingContext.currentParameters)
+ 
++    val transactionSizes = scala.collection.mutable.Map.empty[(Header.Version, ModifierId, ModifierId), Int]
++    val feeCosts = scala.collection.mutable.Map.empty[ModifierId, Int]
++
++    def unsignedSize(value: Long): Int = {
++      var remaining = value
++      var size = 1
++      while (remaining >= 128L) {
++        remaining = remaining >>> 7
++        size += 1
++      }
++      size
++    }
++
++    def correctLimits(blockTxs: Seq[CostedTransaction], costLimit: Long,
++                      sizeLimit: Long, blockVersion: Header.Version): Boolean = {
++      if (blockTxs.map(_._2.toLong).sum > costLimit) false
++      else if (blockTxs.isEmpty) true
++      else {
++        // Match BlockTransactionsSerializer, including its version marker and count.
++        val framing = 32L + unsignedSize(blockTxs.size.toLong) +
++          (if (blockVersion > Header.InitialVersion)
++            unsignedSize(BlockTransactionsSerializer.MaxTransactionsInBlock.toLong + blockVersion) else 0)
++        val bytes = blockTxs.map { case (tx, _) =>
++          val key = (blockVersion, tx.id, bytesToId(tx.witnessSerializedId))
++          transactionSizes.getOrElseUpdate(key, {
++            if (blockVersion >= sigma.VersionContext.V6SoftForkVersion) {
++              sigma.VersionContext.withVersions(blockVersion, blockVersion) {
++                ErgoTransactionSerializer.toBytes(tx).length
++              }
++            } else ErgoTransactionSerializer.toBytes(tx).length
++          }).toLong
++        }.sum
++        framing + bytes <= sizeLimit
++      }
++    }
++
+     // Mutable state for iterative transaction processing
+-    var remainingTxs = transactions
++    val version = upcomingContext.sigmaPreHeader.version
++    val prefixIds = inputBlockTransactions.map(_.id).toSet
++    val prefixState = us.withTransactions(inputBlockTransactions)
++    val prefix = inputBlockTransactions.map { tx =>
++      val cost = prefixState.validateWithCost(tx, upcomingContext,
++        upcomingContext.currentParameters.maxBlockCost, Some(verifier), softFieldsAllowed = true).get
++      tx -> cost
++    }
++    require(correctLimits(prefix, upcomingContext.currentParameters.maxBlockCost, maxBlockSize, version),
++      "Selected input transactions exceed the ordering block limits")
++    // A mandatory prefix can consume the conservative mining cost gap. Keep that valid prefix,
++    // but give optional transactions no additional cost allowance in that case.
++    val orderingCostLimit = math.max(maxBlockCost.toLong, prefix.map(_._2.toLong).sum)
++    var remainingTxs = transactions.filterNot(tx => prefixIds.contains(tx.id))
++    val pendingOutputCounts = scala.collection.mutable.Map.empty[ModifierId, Int]
++    remainingTxs.iterator.flatMap(_.outputs).foreach { output =>
++      val id = bytesToId(output.id)
++      pendingOutputCounts.update(id, pendingOutputCounts.getOrElse(id, 0) + 1)
++    }
+     val accInput = MutableArray.empty[CostedTransaction]
+     val accOrdering = MutableArray.empty[CostedTransaction]
+-    var lastFeeTx: Option[CostedTransaction] = None
++    val deferredOutputs = scala.collection.mutable.Set.empty[ModifierId]
++    var lastFeeTxs = Seq.empty[CostedTransaction]
+     val invalidTxs = MutableArray.empty[ModifierId]
+     var done = false
+ 
+-    while (!done) {
+-      val acc: Seq[CostedTransaction] = accInput ++ accOrdering
++    // Failure means a derived fee transaction is invalid; None means the valid
++    // candidate has reached its cost or size budget.
++    def feesFor(ordering: Seq[CostedTransaction]): Try[Option[Seq[CostedTransaction]]] = {
++      val sources = inputBlockTransactions ++ ordering.map(_._1)
++      val boxes = sources.flatMap(_.outputs).map(b => bytesToId(b.id) -> b).toMap
++      val feeTxs = collectFees(currentHeight, sources, minerPk, upcomingContext)
++      val newOutputIds = ordering.flatMap(_._1.outputs).map(b => bytesToId(b.id)).toSet
++      val (requiredTxs, optionalTxs) = feeTxs.partition { tx =>
++        tx.inputs.exists(i => newOutputIds.contains(bytesToId(i.boxId)))
++      }
++      def costFee(feeTx: ErgoTransaction): Try[CostedTransaction] = {
++        val checkedCost = feeCosts.get(feeTx.id) match {
++          case Some(cost) => Success(cost)
++          case None =>
++            val inputs = feeTx.inputs.flatMap(i => boxes.get(bytesToId(i.boxId)))
++            feeTx.statefulValidity(inputs, IndexedSeq.empty, upcomingContext)(verifier).map { cost =>
++              feeCosts.put(feeTx.id, cost)
++              cost
++            }
++        }
++        checkedCost.map(cost => feeTx -> cost)
++      }
++      val required = requiredTxs.foldLeft(Try(Vector.empty[CostedTransaction])) { (result, feeTx) =>
++        result.flatMap(accumulated => costFee(feeTx).map(accumulated :+ _))
++      }
++      required match {
++        case Success(costedRequired) =>
++          val base = prefix ++ ordering
++          if (!correctLimits(base ++ costedRequired, orderingCostLimit, maxBlockSize, version)) {
++            Success(None)
++          } else {
++            var selected: Seq[CostedTransaction] = costedRequired
++            var optionalCapacity = true
++            // Already selected input transactions remain mandatory. Optional rewards must not
++            // prevent their ordering confirmation when only part of the fee collection fits.
++            optionalTxs.iterator.takeWhile(_ => optionalCapacity).foreach { feeTx =>
++              costFee(feeTx) match {
++                case Success(costed) =>
++                  if (correctLimits(base ++ selected :+ costed,
++                    orderingCostLimit, maxBlockSize, version)) {
++                    selected = selected :+ costed
++                  } else optionalCapacity = false
++                case Failure(error) =>
++                  log.warn(s"Optional fee collection is not selectable: ${error.getMessage}")
++              }
++            }
++            Success(Some(selected))
++          }
++        case Failure(error) =>
++          log.warn(s"Fee collection is not selectable: ${error.getMessage}")
++          Failure(error)
++      }
++    }
++
++    // A mandatory prefix cannot be deferred here. Keep the existing prefix-only fallback.
++    lastFeeTxs = feesFor(Seq.empty).toOption.flatten.getOrElse(Seq.empty)
+ 
++    while (!done) {
+       def currentInput: Seq[ErgoTransaction] = accInput.map(_._1)
+-      def currentOrdering: Seq[ErgoTransaction] = (accOrdering ++ lastFeeTx.toSeq).map(_._1)
+-      val allCurrent = currentInput ++ currentOrdering
++      def currentOrdering: Seq[ErgoTransaction] = (accOrdering ++ lastFeeTxs).map(_._1)
++      // Generated fee rewards can change as selection proceeds, so their outputs are not
++      // stable dependencies for user transactions in this candidate.
++      val feeOutputIds = lastFeeTxs.flatMap(_._1.outputs).map(b => bytesToId(b.id)).toSet
++      val allCurrent = inputBlockTransactions ++ currentInput ++ accOrdering.map(_._1)
+       val stateWithTxs = us.withTransactions(allCurrent)
+ 
+       remainingTxs.headOption match {
+         case Some(tx) =>
+-          if (!inputsNotSpent(tx, stateWithTxs) || doublespend(allCurrent, tx)) {
+-            // Mark transaction as invalid if it tries to do double-spending or trying to spend outputs not present
+-            // Do these checks before validating the scripts to save time
+-            log.debug(s"Transaction ${tx.id} double-spending or spending non-existing inputs")
++          tx.outputs.foreach { output =>
++            val id = bytesToId(output.id)
++            val remainingCount = pendingOutputCounts(id) - 1
++            if (remainingCount == 0) pendingOutputCounts.remove(id)
++            else pendingOutputCounts.update(id, remainingCount)
++          }
++
++          def dependsOn(outputIds: collection.Set[ModifierId]): Boolean =
++            tx.inputs.exists(i => outputIds.contains(bytesToId(i.boxId))) ||
++              tx.dataInputs.exists(i => outputIds.contains(bytesToId(i.boxId)))
++
++          def deferTx(): Unit = {
++            deferredOutputs ++= tx.outputs.map(b => bytesToId(b.id))
++            remainingTxs = remainingTxs.tail
++          }
++
++          val unresolvedIds = (tx.inputs.map(_.boxId) ++ tx.dataInputs.map(_.boxId))
++            .filter(id => stateWithTxs.boxById(id).isEmpty)
++            .map(id => bytesToId(id))
++            .toSet
++          val allUnresolvedDeferred = unresolvedIds.forall { id =>
++            deferredOutputs.contains(id) || feeOutputIds.contains(id) || pendingOutputCounts.contains(id)
++          }
++
++          if (unresolvedIds.nonEmpty && !allUnresolvedDeferred) {
++            log.debug(s"Transaction ${tx.id} has non-existing spending or data inputs")
++            invalidTxs += tx.id
++            remainingTxs = remainingTxs.tail
++          } else if (unresolvedIds.nonEmpty) {
++            // Preserve the transaction only when every unavailable dependency is deferred
++            // or produced later in this candidate's priority order.
++            deferTx()
++          } else if (doublespend(inputBlockTransactions, tx)) {
++            log.debug(s"Transaction ${tx.id} double-spending a mandatory input transaction")
+             invalidTxs += tx.id
+             remainingTxs = remainingTxs.tail
++          } else if (doublespend(currentInput ++ accOrdering.map(_._1), tx)) {
++            // This candidate may never be mined. A conflicting alternative can remain
++            // valid for a later candidate, so do not eliminate it from the mempool.
++            deferTx()
+           } else {
+ 
+             def validateTx(softFieldsAllowed: Boolean): Try[Int] = {
+@@ -1087,59 +1259,45 @@ object CandidateGenerator extends ScorexLogging {
+                 softFieldsAllowed)
+             }
+ 
+-            def collectFeeAndCheckLimits(newTxs: Seq[CostedTransaction],
+-                                         inputTx: Boolean,
++            def collectFeeAndCheckLimits(inputTx: Boolean,
+                                          costConsumed: Int): Boolean = {
+-              val newBoxes = newTxs.flatMap(_._1.outputs)
+-
+-              collectFees(currentHeight, newTxs.map(_._1), minerPk, upcomingContext) match {
+-                case Some(feeTx) =>
+-                  val boxesToSpend = feeTx.inputs.flatMap(i =>
+-                    newBoxes.find(b => java.util.Arrays.equals(b.id, i.boxId))
+-                  )
+-                  feeTx.statefulValidity(boxesToSpend, IndexedSeq(), upcomingContext)(verifier) match {
+-                    case Success(cost) =>
+-                      val blockTxs: Seq[CostedTransaction] = (feeTx -> cost) +: newTxs
+-                      if (correctLimits(blockTxs, maxBlockCost, maxBlockSize)) {
+-                        if (inputTx) {
+-                          accInput += ((tx, costConsumed))
+-                          lastFeeTx = Some(feeTx -> cost)
+-                        } else {
+-                          accOrdering += ((tx, costConsumed))
+-                          lastFeeTx = Some(feeTx -> cost)
+-                        }
+-                        remainingTxs = remainingTxs.tail
+-                        true // continue
+-                      } else {
+-                        lazy val totalCost = (accOrdering ++ lastFeeTx.toSeq).map(_._2).sum
+-                        log.debug(s"Finishing block assembly on limits overflow, " +
+-                                  s"cost is $totalCost, cost limit: $maxBlockCost")
+-                        done = true
+-                        false // stop
+-                      }
+-                    case Failure(e) =>
+-                      log.warn(
+-                        s"Fee collecting tx is invalid, not including it, " +
+-                          s"details: ${e.getMessage} from ${stateWithTxs.stateContext}"
+-                      )
+-                      done = true
+-                      false // stop
+-                  }
+-                case None =>
+-                  log.info(s"No fee proposition found in txs ${newTxs.map(_._1.id)} ")
+-                  val blockTxs: Seq[CostedTransaction] = newTxs ++ lastFeeTx.toSeq
+-                  if (correctLimits(blockTxs, maxBlockCost, maxBlockSize)) {
+-                    if (inputTx) {
+-                      accInput += ((tx, costConsumed))
+-                    } else {
+-                      accOrdering += ((tx, costConsumed))
+-                    }
++              val otherPartition = if (inputTx) currentOrdering else currentInput
++              val otherOutputs = otherPartition.flatMap(_.outputs).map(b => bytesToId(b.id)).toSet
++              if (dependsOn(otherOutputs)) {
++                // Each payload must be executable without the other candidate's new outputs.
++                // Deferral is a selection decision, not evidence that the transaction is invalid.
++                deferTx()
++                return true
++              }
++              val costed = tx -> costConsumed
++              if (inputTx) {
++                if (correctLimits(accInput :+ costed, maxBlockCost, maxBlockSize, version) &&
++                  correctLimits(prefix ++ accInput :+ costed,
++                    math.min(orderingCostLimit, upcomingContext.currentParameters.maxBlockCost.toLong),
++                    maxBlockSize, version)) {
++                  accInput += costed
++                  remainingTxs = remainingTxs.tail
++                  true
++                } else {
++                  done = true
++                  false
++                }
++              } else {
++                feesFor(accOrdering :+ costed) match {
++                  case Success(Some(fees)) =>
++                    accOrdering += costed
++                    lastFeeTxs = fees
+                     remainingTxs = remainingTxs.tail
+-                    true // continue
+-                  } else {
++                    true
++                  case Success(None) =>
+                     done = true
+-                    false // stop
+-                  }
++                    false
++                  case Failure(_) =>
++                    // The new transaction made its derived fee collector invalid.
++                    // Preserve it and its descendants for a later candidate.
++                    deferTx()
++                    true
++                }
+               }
+             }
+ 
+@@ -1150,16 +1308,14 @@ object CandidateGenerator extends ScorexLogging {
+             }
+ 
+             // Check validity and calculate transaction cost
+-            validateTx(softFieldsAllowed = false) match {
++            validateTx(softFieldsAllowed = !inputBlocksEnabled) match {
+               case Success(costConsumed) =>
+-                val newTxs = acc :+ (tx -> costConsumed)
+-                collectFeeAndCheckLimits(newTxs, inputTx = true, costConsumed)
+-              case Failure(e) if e.isInstanceOf[SoftFieldsAccessError] =>
++                collectFeeAndCheckLimits(inputTx = inputBlocksEnabled, costConsumed)
++              case Failure(e) if inputBlocksEnabled && e.isInstanceOf[SoftFieldsAccessError] =>
+                 log.info(s"Rechecking transaction: $tx.id")
+                 validateTx(softFieldsAllowed = true) match {
+                   case Success(costConsumed) =>
+-                    val newTxs = acc :+ (tx -> costConsumed)
+-                    collectFeeAndCheckLimits(newTxs, inputTx = false, costConsumed)
++                    collectFeeAndCheckLimits(inputTx = false, costConsumed)
+                   case Failure(e) =>
+                     failTx(e)
+                 }
+@@ -1172,10 +1328,16 @@ object CandidateGenerator extends ScorexLogging {
+       }
+     }
+ 
+-    val res = (accInput.map(_._1), accOrdering.map(_._1), invalidTxs)
++    val res = (accInput.map(_._1), (accOrdering ++ lastFeeTxs).map(_._1), invalidTxs)
++    val feeProposition = upcomingContext.chainSettings.monetary.feePropositionBytes
++    val unclaimed = ErgoState.newBoxes(inputBlockTransactions ++ res._2)
++      .count(b => java.util.Arrays.equals(b.propositionBytes, feeProposition))
++    if (unclaimed > 0) {
++      log.warn(s"Ordering candidate leaves $unclaimed fee boxes unclaimed; they remain in the UTXO set")
++    }
+     log.debug(
+-      s"Collected ${res._1.length} transactions for block #$currentHeight, " +
+-        s"invalid transaction ids (total:${res._2.length}) for block #$currentHeight : ${res._2}")
++      s"Collected ${res._1.length} input and ${res._2.length} ordering transactions for block #$currentHeight, " +
++        s"invalid transaction ids (total:${res._3.length}): ${res._3}")
+ 
+     res
+   }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala b/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala
+index 685235991..877371d40 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala
+@@ -127,7 +127,7 @@ class ErgoMemPool private[mempool](private[mempool] val pool: OrderedTxPool,
+   private def updateStatsOnRemoval(tx: ErgoTransaction): MemPoolStatistics = {
+     val wtx = pool.transactionsRegistry.get(tx.id)
+     wtx.map(wgtx => stats.add(System.currentTimeMillis(), wgtx))
+-       .getOrElse(MemPoolStatistics(System.currentTimeMillis(), 0, System.currentTimeMillis()))
++       .getOrElse(stats)
+   }
+ 
+   /**
+@@ -135,10 +135,16 @@ class ErgoMemPool private[mempool](private[mempool] val pool: OrderedTxPool,
+     */
+   def removeTxAndDoubleSpends(tx: ErgoTransaction): ErgoMemPool = {
+     def removeTx(mp: ErgoMemPool, tx: ErgoTransaction): ErgoMemPool = {
+-      log.debug(s"Removing transaction ${tx.id} from the mempool")
+-      new ErgoMemPool(mp.pool.remove(tx), mp.updateStatsOnRemoval(tx), sortingOption)
++      val updatedPool = mp.pool.remove(tx)
++      if (updatedPool eq mp.pool) {
++        mp
++      } else {
++        log.debug(s"Removing transaction ${tx.id} from the mempool")
++        new ErgoMemPool(updatedPool, mp.updateStatsOnRemoval(tx), sortingOption)
++      }
+     }
+ 
++    // An applied transaction may arrive through a block without ever entering the pool.
+     val poolWithoutTx = removeTx(this, tx)
+     val doubleSpentTransactionIds = tx.inputs.flatMap(i =>
+       poolWithoutTx.pool.inputs.get(i.boxId)
+@@ -156,11 +162,7 @@ class ErgoMemPool private[mempool](private[mempool] val pool: OrderedTxPool,
+     */
+   def removeWithDoubleSpends(txs: TraversableOnce[ErgoTransaction]): ErgoMemPool = {
+     txs.foldLeft(this) { case (memPool, tx) =>
+-      if (memPool.contains(tx.id)) { // tx could be removed earlier in this loop as double-spend of another tx
+-        memPool.removeTxAndDoubleSpends(tx)
+-      } else {
+-        memPool
+-      }
++      memPool.removeTxAndDoubleSpends(tx)
+     }
+   }
+ 
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidateFeeCollectorPrefixSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateFeeCollectorPrefixSpec.scala
+new file mode 100644
+index 000000000..348deae69
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/CandidateFeeCollectorPrefixSpec.scala
+@@ -0,0 +1,100 @@
++package org.ergoplatform.mining
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.{ErgoBoxCandidate, Input}
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.modifiers.mempool.ErgoTransaction
++import org.ergoplatform.nodeView.state.{BoxHolder, UtxoState}
++import org.ergoplatform.settings.Constants.TrueTree
++import org.ergoplatform.settings.{NetworkType, Parameters}
++import org.ergoplatform.utils.{ErgoCompilerHelpers, ErgoCorePropertyTest}
++import org.ergoplatform.validation.SoftFieldsAccessError
++import org.ergoplatform.wallet.interpreter.ErgoInterpreter
++import org.ergoplatform.wallet.utils.WalletGenerators.ergoBoxGen
++import org.scalacheck.Gen
++import scorex.crypto.hash.Blake2b256
++import sigma.Colls
++import sigma.data.SigmaConstants.MaxBoxSize
++import sigmastate.eval.Extensions._
++
++class CandidateFeeCollectorPrefixSpec extends ErgoCorePropertyTest with ErgoCompilerHelpers {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++  import org.ergoplatform.utils.ErgoNodeTestConstants.settings
++  import org.ergoplatform.utils.generators.ErgoCoreGenerators._
++
++  property("invalid optional V4 prefix collector does not block independent ordering transaction") {
++    val matrixParameters = Parameters(parameters.height,
++      parameters.parametersTable.updated(Parameters.BlockVersion, Header.Interpreter60Version.toInt),
++      parameters.proposedUpdate)
++    val matrixSettings = settings.copy(networkType = NetworkType.DevNet60)
++    val tokens = (0 until 100).map(i => Blake2b256(s"prefix-fee-token-$i").toTokenId -> Long.MaxValue)
++    val tokenInputs = tokens.grouped(50).map(group =>
++      ergoBoxGen(
++        propGen = trueLeafGen,
++        tokensGen = Gen.const(group),
++        valueGenOpt = Some(Gen.const(1000000000000L)),
++        heightGen = Gen.const(0)
++      ).sample.get
++    ).toIndexedSeq
++    val softTree = compileSourceV5("CONTEXT.minerPubKey.size >= 0", 0)
++    val orderingInput = ergoBoxGen(
++      propGen = Gen.const(softTree),
++      tokensGen = Gen.const(Seq.empty),
++      valueGenOpt = Some(Gen.const(10000000L)),
++      heightGen = Gen.const(0)
++    ).sample.get
++    val us = UtxoState.fromBoxHolder(
++      BoxHolder(tokenInputs :+ orderingInput), None, createTempDir(), matrixSettings, matrixParameters
++    )
++    val upcomingContext = us.stateContext.upcoming(
++      defaultMinerPk.value, System.currentTimeMillis(), matrixSettings.chainSettings.initialNBits,
++      Array.fill[Byte](3)(0), emptyVSUpdate, Header.Interpreter60Version
++    )
++    val verifier = ErgoInterpreter(upcomingContext.currentParameters)
++    upcomingContext.sigmaPreHeader.version shouldBe Header.Interpreter60Version
++    upcomingContext.currentParameters.blockVersion shouldBe Header.Interpreter60Version
++
++    val prefixOutputs = tokens.map(token =>
++      new ErgoBoxCandidate(20000000000L, feeProp, 0, Colls.fromItems(token))
++    ).toIndexedSeq
++    val prefix = ErgoTransaction(
++      tokenInputs.map(box => new Input(box.id, emptyProverResult)), IndexedSeq.empty, prefixOutputs
++    )
++    val ordering = ErgoTransaction(
++      IndexedSeq(new Input(orderingInput.id, emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(orderingInput.value, TrueTree, 0))
++    )
++    us.validateWithCost(prefix, upcomingContext, matrixParameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = true).isSuccess shouldBe true
++    us.validateWithCost(ordering, upcomingContext, matrixParameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = false).failed.get shouldBe a[SoftFieldsAccessError]
++    us.validateWithCost(ordering, upcomingContext, matrixParameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = true).isSuccess shouldBe true
++
++    val collectors = CandidateGenerator.collectFees(
++      us.stateContext.currentHeight, Seq(prefix, ordering), defaultMinerPk, upcomingContext
++    )
++    collectors.length shouldBe 1
++    collectors.head.outputs.head.bytes.length should be > MaxBoxSize.value
++    val prefixBoxes = prefix.outputs.map(box => box.id.toSeq -> box).toMap
++    val collectorInputs = collectors.head.inputs.map(i => prefixBoxes(i.boxId.toSeq))
++    collectors.head.statefulValidity(collectorInputs, IndexedSeq.empty, upcomingContext)(verifier)
++      .failed.get.getMessage should include ("Box size should not exceed")
++
++    val control = CandidateGenerator.collectTxs(
++      defaultMinerPk, matrixParameters.maxBlockCost, matrixParameters.maxBlockSize,
++      us, upcomingContext, Seq(ordering)
++    )
++    control._1 shouldBe empty
++    control._2 should contain (ordering)
++
++    val result = CandidateGenerator.collectTxs(
++      defaultMinerPk, matrixParameters.maxBlockCost, matrixParameters.maxBlockSize,
++      us, upcomingContext, Seq(ordering), Seq(prefix)
++    )
++    result._1 shouldBe empty
++    result._2 should contain (ordering)
++    result._2 should not contain collectors.head
++    result._3 shouldBe empty
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidateFeeCollectorSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateFeeCollectorSpec.scala
+new file mode 100644
+index 000000000..4fe0df383
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/CandidateFeeCollectorSpec.scala
+@@ -0,0 +1,130 @@
++package org.ergoplatform.mining
++
++import org.ergoplatform._
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.modifiers.mempool.ErgoTransaction
++import org.ergoplatform.nodeView.state.BoxHolder
++import org.ergoplatform.settings.Constants.TrueTree
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.wallet.interpreter.ErgoInterpreter
++import org.ergoplatform.wallet.utils.WalletGenerators.ergoBoxGen
++import org.scalacheck.Gen
++import scorex.crypto.authds.ADKey
++import scorex.crypto.hash.Blake2b256
++import sigma.data.SigmaConstants.MaxBoxSize
++import sigmastate.eval.Extensions._
++
++class CandidateFeeCollectorSpec extends ErgoCorePropertyTest {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++  import org.ergoplatform.utils.generators.ErgoCoreGenerators._
++  import org.ergoplatform.utils.generators.ValidBlocksGenerators._
++
++  implicit private val verifier: ErgoInterpreter = ErgoInterpreter(parameters)
++
++  property("oversized fee collector defers its source and descendants without starving valid transactions") {
++    val tokens = (0 until 100).map(i => Blake2b256(s"mining-fee-token-$i").toTokenId -> Long.MaxValue)
++    val tokenInputs = tokens.grouped(50).map(group =>
++      ergoBoxGen(
++        propGen = trueLeafGen,
++        tokensGen = Gen.const(group),
++        valueGenOpt = Some(Gen.const(1000000000000L)),
++        heightGen = Gen.const(0)
++      ).sample.get
++    ).toIndexedSeq
++    tokenInputs.map(_.additionalTokens.size) shouldBe IndexedSeq(50, 50)
++
++    def plainInput(value: Long) = ergoBoxGen(
++      propGen = trueLeafGen,
++      tokensGen = Gen.const(Seq.empty),
++      valueGenOpt = Some(Gen.const(value)),
++      heightGen = Gen.const(0)
++    ).sample.get
++    val ordinaryInput = plainInput(10000000L)
++    val dataOnlyInput = plainInput(100000000L)
++    val zeroFeeInput = plainInput(10000000L)
++    val allInputs = tokenInputs ++ IndexedSeq(ordinaryInput, dataOnlyInput, zeroFeeInput)
++    val us = createUtxoState(BoxHolder(allInputs), parameters)
++
++    def payingFees(inputs: IndexedSeq[ErgoBox]): ErgoTransaction = {
++      val outputs = inputs.map(box =>
++        new ErgoBoxCandidate(box.value, feeProp, box.creationHeight, box.additionalTokens)
++      )
++      ErgoTransaction(inputs.map(box => new Input(box.id, emptyProverResult)), IndexedSeq.empty, outputs)
++    }
++
++    val poisonFeeOutputs = tokenInputs.map(box =>
++      new ErgoBoxCandidate(box.value - 5000000L, feeProp, box.creationHeight, box.additionalTokens)
++    )
++    val poison = ErgoTransaction(
++      tokenInputs.map(box => new Input(box.id, emptyProverResult)), IndexedSeq.empty,
++      poisonFeeOutputs :+ new ErgoBoxCandidate(10000000L, TrueTree, 0)
++    )
++    val child = ErgoTransaction(
++      IndexedSeq(new Input(poison.outputs.last.id, emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(5000000L, feeProp, 0),
++        new ErgoBoxCandidate(5000000L, TrueTree, 0))
++    )
++    val grandchild = payingFees(IndexedSeq(child.outputs.last))
++    val dataOnly = ErgoTransaction(
++      IndexedSeq(new Input(dataOnlyInput.id, emptyProverResult)),
++      IndexedSeq(DataInput(poison.outputs.last.id)),
++      IndexedSeq(new ErgoBoxCandidate(90000000L, feeProp, 0),
++        new ErgoBoxCandidate(10000000L, TrueTree, 0))
++    )
++    val dataOnlyChild = payingFees(IndexedSeq(dataOnly.outputs.last))
++    val ordinary = payingFees(IndexedSeq(ordinaryInput))
++    val zeroFee = ErgoTransaction(
++      IndexedSeq(new Input(zeroFeeInput.id, emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(zeroFeeInput.value, TrueTree, zeroFeeInput.creationHeight))
++    )
++    val missing = ErgoTransaction(
++      IndexedSeq(new Input(ADKey @@ Array.fill(32)(42.toByte), emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(1000000L, feeProp, 0))
++    )
++
++    val h = validFullBlock(None, us, BoxHolder(allInputs)).header
++    val upcomingContext = us.stateContext.upcoming(
++      h.minerPk, h.timestamp, h.nBits, h.votes, emptyVSUpdate, h.version
++    )
++    upcomingContext.sigmaPreHeader.version should be < Header.Interpreter60Version
++    us.validateWithCost(poison, upcomingContext, parameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = true).isSuccess shouldBe true
++    us.validateWithCost(ordinary, upcomingContext, parameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = true).isSuccess shouldBe true
++
++    val collector = CandidateGenerator.collectFees(
++      us.stateContext.currentHeight, Seq(poison), defaultMinerPk, upcomingContext
++    ).head
++    collector.outputs.head.bytes.length should be > MaxBoxSize.value
++    val poisonBoxes = poison.outputs.map(box => box.id.toSeq -> box).toMap
++    val collectorInputs = collector.inputs.map(i => poisonBoxes(i.boxId.toSeq))
++    collector.statefulValidity(collectorInputs, IndexedSeq.empty, upcomingContext)
++      .failed.get.getMessage should include ("Box size should not exceed")
++
++    val control = CandidateGenerator.collectTxs(
++      defaultMinerPk, parameters.maxBlockCost, parameters.maxBlockSize,
++      us, upcomingContext, Seq(ordinary, zeroFee, missing)
++    )
++    control._2 should contain (ordinary)
++    control._2 should contain (zeroFee)
++    control._3 shouldBe Seq(missing.id)
++
++    val result = CandidateGenerator.collectTxs(
++      defaultMinerPk, parameters.maxBlockCost, parameters.maxBlockSize,
++      us, upcomingContext,
++      Seq(poison, child, grandchild, dataOnly, dataOnlyChild, ordinary, zeroFee, missing)
++    )
++    result._1 shouldBe empty
++    result._2 should contain (ordinary)
++    result._2 should contain (zeroFee)
++    result._2 should not contain poison
++    result._2 should not contain child
++    result._2 should not contain grandchild
++    result._2 should not contain dataOnly
++    result._2 should not contain dataOnlyChild
++    result._3 shouldBe Seq(missing.id)
++    val selectedCollector = result._2.filterNot(tx => tx == ordinary || tx == zeroFee).head
++    selectedCollector.inputs.map(_.boxId.toSeq) shouldBe ordinary.outputs.map(_.id.toSeq)
++    selectedCollector.outputs.head.value shouldBe ordinary.outputs.head.value
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala
+index 2558d9fd8..bc11fa79a 100644
+--- a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala
++++ b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala
+@@ -159,7 +159,7 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+           upcomingContext,
+           Seq(head)
+         )
+-        ._1
++        ._2
+       fromSmallMempool.size shouldBe 2
+       fromSmallMempool.contains(head) shouldBe true
+ 
+@@ -172,7 +172,7 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+           upcomingContext,
+           txsWithFees
+         )
+-        ._1
++        ._2
+ 
+       val newBoxes = fromBigMempool.flatMap(_.outputs)
+       val costs: Seq[Int] = fromBigMempool.map { tx =>
+@@ -265,7 +265,9 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+         defaultMinerPk,
+         emptyStateContext
+       )
+-      txs.length shouldBe 2
++      val feeBoxes = blockTxs.flatMap(_.outputs)
++      val chunkSize = CandidateGenerator.MaxFeeBoxesPerTransaction
++      txs.length shouldBe 1 + (feeBoxes.size + chunkSize - 1) / chunkSize
+ 
+       val emissionTx = txs.head
+       emissionTx.outputs.length shouldBe 2
+@@ -274,12 +276,16 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+         defaultMinerPk
+       )
+ 
+-      val feeTx = txs.last
+-      feeTx.outputs.length shouldBe 1
+-      feeTx.outputs.head.value shouldBe blockTxs.flatMap(_.outputs).map(_.value).sum
+-      feeTx.outputs.head.propositionBytes shouldEqual expectedRewardOutputScriptBytes(
+-        defaultMinerPk
+-      )
++      val feeTxs = txs.tail
++      feeTxs.foreach { feeTx =>
++        feeTx.inputs.length should be <= chunkSize
++        feeTx.outputs.length shouldBe 1
++        feeTx.outputs.head.propositionBytes shouldEqual expectedRewardOutputScriptBytes(defaultMinerPk)
++      }
++      feeTxs.flatMap(_.outputs).map(_.value).sum shouldBe feeBoxes.map(_.value).sum
++      val spent = feeTxs.flatMap(_.inputs).map(in => in.boxId.toSeq)
++      spent.distinct.size shouldBe spent.size
++      spent.toSet shouldBe feeBoxes.map(_.id.toSeq).toSet
+     }
+   }
+ 
+@@ -320,7 +326,8 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     // Verify we collected some transactions
+-    result._1.length should be > 0
++    result._1 shouldBe empty
++    result._2.length should be > 0
+     // Invalid transactions should be tracked
+     result._3.length should be >= 0
+   }
+@@ -429,6 +436,7 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     invalid shouldBe empty
++    inputCollected shouldBe empty
+     (inputCollected ++ orderingCollected) should contain theSameElementsAs zeroFeeTxs
+   }
+ 
+@@ -473,7 +481,8 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+   /**
+    * Test: Double-spend detection within collectTxs
+    * Verifies that when multiple transactions attempt to spend the same inputs,
+-   * only the first valid one is included and others are marked as invalid.
++   * only the first valid one is included. The other remains a valid alternative
++   * if this candidate is never mined.
+    */
+   property("should filter double-spending transactions in collectTxs") {
+     val bh = boxesHolderGen.sample.get
+@@ -505,16 +514,17 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     // At least tx3 should be included (non-conflicting)
+-    result._1.exists(_.id sameElements tx3.id) shouldBe true
++    result._1 shouldBe empty
++    result._2.exists(_.id sameElements tx3.id) shouldBe true
+     
+     // At most 2 transactions should be included (one of tx1/tx2, plus tx3)
+-    result._1.length should be <= 2
+-    result._1.length should be >= 1
++    result._2.length should be <= 2
++    result._2.length should be >= 1
+ 
+-    // At least one of the conflicting txs should be in invalid list (result._3)
+-    // Both result._3 and tx.id are ModifierId (String type)
+-    val conflictingInvalid = result._3.count(id => id == tx1.id || id == tx2.id)
+-    conflictingInvalid should be >= 1
++    val selectedConflicts = result._2.count(tx => tx.id == tx1.id || tx.id == tx2.id)
++    selectedConflicts shouldBe 1
++    result._3 should not contain tx1.id
++    result._3 should not contain tx2.id
+   }
+ 
+   /**
+@@ -561,7 +571,8 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     // Valid transaction should be collected
+-    result._1.exists(_.id sameElements validTx.id) shouldBe true
++    result._1 shouldBe empty
++    result._2.exists(_.id sameElements validTx.id) shouldBe true
+     // Invalid transaction should be in the invalid list (result._3)
+     result._3.contains(invalidTx.id) shouldBe true
+   }
+@@ -640,11 +651,12 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     // Should have collected some transactions but not all
+-    result._1.length should be > 0
+-    result._1.length should be < manyTxs.length
++    result._1 shouldBe empty
++    result._2.length should be > 0
++    result._2.length should be < manyTxs.length
+ 
+     // Verify total cost doesn't exceed limit
+-    val totalCost = result._1.map { tx =>
++    val totalCost = result._2.map { tx =>
+       us.validateWithCost(tx, upcomingContext, Int.MaxValue, Some(verifier), true).getOrElse(0)
+     }.sum
+ 
+@@ -690,20 +702,21 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     // Should have collected some transactions but not all
+-    result._1.length should be > 0
+-    result._1.length should be < manyTxs.length
++    result._1 shouldBe empty
++    result._2.length should be > 0
++    result._2.length should be < manyTxs.length
+ 
+     // Verify total size doesn't exceed limit
+-    val totalSize = result._1.map(_.size).sum
++    val totalSize = result._2.map(_.size).sum
+     totalSize should be <= smallSizeLimit
+   }
+ 
+   /**
+-   * Test: Mixed valid and invalid transactions
++   * Test: Mixed valid and conflicting candidate alternatives
+    * Verifies that collectTxs correctly processes a mixed mempool,
+-   * collecting valid transactions while filtering out invalid ones.
++   * collecting valid transactions while leaving unselected alternatives in the pool.
+    */
+-  property("should process mixed valid and invalid transactions") {
++  property("should preserve conflicting alternatives while collecting valid transactions") {
+     val bh = boxesHolderGen.sample.get
+     val us = createUtxoState(bh, parameters)
+     val inputs = bh.boxes.values.toIndexedSeq.take(10)
+@@ -714,7 +727,7 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+       validTransactionFromBoxes(IndexedSeq(i), rnd, issueNew = false, feeProp)
+     }
+ 
+-    // Create invalid transaction (double-spend)
++    // Create alternatives conflicting with the earlier valid selections.
+     val doubleSpendTx1 = validTransactionFromBoxes(inputs.take(2), rnd, issueNew = false)
+     val doubleSpendTx2 = validTransactionFromBoxes(inputs.take(2), rnd, issueNew = false) // Same inputs
+ 
+@@ -740,10 +753,13 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     )
+ 
+     // Should collect all valid transactions
+-    validTxs.foreach(tx => result._1.exists(_.id sameElements tx.id) shouldEqual true)
++    result._1 shouldBe empty
++    validTxs.foreach(tx => result._2.exists(_.id sameElements tx.id) shouldEqual true)
+ 
+-    // At least one double-spend should be in invalid list (result._3)
+-    result._3.length should be >= 1
++    Seq(doubleSpendTx1, doubleSpendTx2).foreach { tx =>
++      result._2 should not contain tx
++      result._3 should not contain tx.id
++    }
+   }
+ 
+ }
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala
+index a85328684..578334b50 100644
+--- a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala
++++ b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala
+@@ -52,6 +52,35 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+   private val candidateGenDelay: FiniteDuration    = 3.seconds
+   private val blockValidationDelay: FiniteDuration = 2.seconds
+ 
++  private def expectAppliedBlock(events: TestProbe,
++                                 submitted: Header,
++                                 max: FiniteDuration = candidateGenDelay): Unit = {
++    events.fishForMessage(max) {
++      case LocalBlockApplied(header, _) if header.id == submitted.id => true
++      // A duplicate of the preceding submission can remain from the outer local handler.
++      // Accept no other header as either success or a discardable message.
++      case LocalBlockApplied(header, _) if header.id == submitted.parentId => false
++      case unexpected => fail(s"Unexpected application event while awaiting ${submitted.id}: $unexpected")
++    }
++  }
++
++  private val actorSystems = scala.collection.mutable.ArrayBuffer.empty[ActorSystem]
++
++  private def newActorSystem(): ActorSystem = {
++    val system = ActorSystem()
++    actorSystems += system
++    system
++  }
++
++  override protected def withFixture(test: NoArgTest): org.scalatest.Outcome = {
++    try super.withFixture(test)
++    finally {
++      val systemsToStop = actorSystems.toVector
++      actorSystems.clear()
++      systemsToStop.foreach(system => TestKit.shutdownActorSystem(system))
++    }
++  }
++
+   val defaultSettings: ErgoSettings = {
+     val empty = ErgoSettingsReader.read()
+     val nodeSettings = empty.nodeSettings.copy(
+@@ -233,7 +262,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     system.terminate()
+   }
+ 
+-  it should "let multiple miners compete" in new TestKit(ActorSystem()) {
++  it should "let multiple miners compete" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+     system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+ 
+@@ -257,25 +286,21 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+     testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+ 
+-    m1.tell(ErgoMiningThread.GetSolvedBlocksCount, testProbe.ref)
+-
+-    val m1Count =
+-      testProbe.expectMsgClass(50.millis, classOf[ErgoMiningThread.SolvedBlocksCount])
+-    m2.tell(ErgoMiningThread.GetSolvedBlocksCount, testProbe.ref)
+-
+-    val m2Count =
+-      testProbe.expectMsgClass(50.millis, classOf[ErgoMiningThread.SolvedBlocksCount])
+-    m3.tell(ErgoMiningThread.GetSolvedBlocksCount, testProbe.ref)
+-
+-    val m3Count =
+-      testProbe.expectMsgClass(50.millis, classOf[ErgoMiningThread.SolvedBlocksCount])
+-
+-    List(m1Count, m2Count, m3Count).map(_.count).sum should be >= 3
++    val countProbe = new TestProbe(system)
++    eventually(timeout(newBlockDelay), interval(100.millis)) {
++      m1.tell(ErgoMiningThread.GetSolvedBlocksCount, countProbe.ref)
++      val m1Count = countProbe.expectMsgClass(candidateGenDelay, classOf[ErgoMiningThread.SolvedBlocksCount])
++      m2.tell(ErgoMiningThread.GetSolvedBlocksCount, countProbe.ref)
++      val m2Count = countProbe.expectMsgClass(candidateGenDelay, classOf[ErgoMiningThread.SolvedBlocksCount])
++      m3.tell(ErgoMiningThread.GetSolvedBlocksCount, countProbe.ref)
++      val m3Count = countProbe.expectMsgClass(candidateGenDelay, classOf[ErgoMiningThread.SolvedBlocksCount])
++      List(m1Count, m2Count, m3Count).map(_.count).sum should be >= 3
++    }
+     system.terminate()
+   }
+ 
+   it should "cache candidate until newly mined block is applied" in new TestKit(
+-    ActorSystem()
++    newActorSystem()
+   ) {
+     val testProbe = new TestProbe(system)
+     system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+@@ -318,9 +343,10 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     system.terminate()
+   }
+ 
+-  it should "accept solution for previous candidate after regeneration" in new TestKit(ActorSystem()) {
++  it should "accept an earlier solution after explicitly requested regeneration" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+-    system.eventStream.subscribe(testProbe.ref, newBlockSignal)
++    val appliedProbe = new TestProbe(system)
++    system.eventStream.subscribe(appliedProbe.ref, newBlockSignal)
+ 
+     val settingsWithShortRegeneration: ErgoSettings =
+       ErgoSettingsReader.read()
+@@ -359,17 +385,8 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+           case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+         }
+         candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++        testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++        expectAppliedBlock(appliedProbe, block.header)
+     }
+ 
+     // build new transaction that uses miner's reward as input
+@@ -393,7 +410,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         .get
+     )
+ 
+-    // candidate should be regenerated immediately after a mempool change
++    // A non-forced request remains cached; regeneration is an explicit request.
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = None), testProbe.ref)
+     testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(candidate: Candidate) =>
+@@ -408,41 +425,48 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+           case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+         }
+ 
+-        // this triggers mempool change that triggers candidate regeneration
++        // Add a pool transaction, observe the unchanged cache, then explicitly regenerate.
+         viewHolderRef ! LocallyGeneratedTransaction(UnconfirmedTransaction(tx, None))
+         expectNoMessage(candidateGenDelay)
+         candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = None), testProbe.ref)
+-        testProbe.expectMsgPF(candidateGenDelay) {
++        val stillCached = testProbe.expectMsgPF(candidateGenDelay) {
++          case StatusReply.Success(c: Candidate) => c
++        }
++        stillCached should be theSameInstanceAs candidate
++        candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = true), testProbe.ref)
++        val regeneratedCandidate = testProbe.expectMsgPF(candidateGenDelay) {
+           case StatusReply.Success(regeneratedCandidate: Candidate) =>
+             // regeneratedCandidate now contains new transaction
+             regeneratedCandidate.candidateBlock shouldNot be(
+               candidate.candidateBlock
+             )
++            regeneratedCandidate
+         }
+ 
+         // we are submitting solution for previous candidate
+         candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++        testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++        // This fake scheme accepts the old nonce on the current candidate. Pin that exact header.
++        val acceptedHeader = CandidateGenerator.completeOrderingBlock(
++          regeneratedCandidate.candidateBlock, block.header.powSolution).header
++        powScheme.validate(acceptedHeader).get
++        expectAppliedBlock(appliedProbe, acceptedHeader)
+     }
+     system.terminate()
+   }
+ 
+-  it should "pool transactions should be removed from pool when block is mined" in new TestKit(
+-    ActorSystem()
++  it should "remove pool transactions when a legacy V1 block is mined" in new TestKit(
++    newActorSystem()
+   ) {
++    val legacySettings = defaultSettings.copy(
++      networkType = org.ergoplatform.settings.NetworkType.Tests,
++      directory = s"${defaultSettings.directory}-legacy-pool-${java.util.UUID.randomUUID()}"
++    )
++    legacySettings.launchParameters.blockVersion shouldBe Header.InitialVersion
+     val testProbe = new TestProbe(system)
+-    system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+-    val viewHolderRef: ActorRef    = ErgoNodeViewRef(defaultSettings)
++    val appliedProbe = new TestProbe(system)
++    system.eventStream.subscribe(appliedProbe.ref, newBlockSignal)
++    val viewHolderRef: ActorRef    = ErgoNodeViewRef(legacySettings)
+     val readersHolderRef: ActorRef = ErgoReadersHolderRef(viewHolderRef)
+ 
+     val candidateGenerator: ActorRef =
+@@ -450,7 +474,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         defaultMinerSecret.publicImage,
+         readersHolderRef,
+         viewHolderRef,
+-        defaultSettings
++        legacySettings
+       )
+ 
+     val readers: Readers = await((readersHolderRef ? GetReaders).mapTo[Readers])
+@@ -462,7 +486,8 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = None), testProbe.ref)
+     testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(candidate: Candidate) =>
+-        val result = defaultSettings.chainSettings.powScheme
++        candidate.candidateBlock.version shouldBe Header.InitialVersion
++        val result = legacySettings.chainSettings.powScheme
+           .proveCandidate(candidate.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate.parameters)
+         val block = result match {
+           case org.ergoplatform.OrderingBlockFound(h) => h
+@@ -473,17 +498,8 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         expectNoMessage(200.millis)
+         candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+ 
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++        testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++        expectAppliedBlock(appliedProbe, block.header)
+     }
+ 
+     // build new transaction that uses miner's reward as input
+@@ -508,11 +524,17 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     )
+ 
+     testProbe.expectNoMessage(200.millis)
++    // Put the transaction in the real pool before checking removal on block application.
++    viewHolderRef ! LocallyGeneratedTransaction(UnconfirmedTransaction(tx, None))
++    eventually(timeout(candidateGenDelay), interval(25.millis)) {
++      await((readersHolderRef ? GetReaders).mapTo[Readers]).m.getAllPrioritized.map(_.id) should contain(tx.id)
++    }
+     // mine a block with that transaction
+-    candidateGenerator.tell(GenerateCandidate(Seq(tx), reply = true, forced = false, optPk = None), testProbe.ref)
++    candidateGenerator.tell(GenerateCandidate(Seq(tx), reply = true, forced = true, optPk = None), testProbe.ref)
+     testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(candidate: Candidate) =>
+-        val result = defaultSettings.chainSettings.powScheme
++        candidate.candidateBlock.version shouldBe Header.InitialVersion
++        val result = legacySettings.chainSettings.powScheme
+           .proveCandidate(candidate.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate.parameters)
+         val block = result match {
+           case org.ergoplatform.OrderingBlockFound(h) => h
+@@ -522,21 +544,14 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         testProbe.expectNoMessage(200.millis)
+         candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+ 
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++        testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++        expectAppliedBlock(appliedProbe, block.header)
+     }
+ 
+     // new transaction should be cleared from pool after applying new block
+-    await((readersHolderRef ? GetReaders).mapTo[Readers]).m.size shouldBe 0
++    eventually(timeout(candidateGenDelay), interval(25.millis)) {
++      await((readersHolderRef ? GetReaders).mapTo[Readers]).m.size shouldBe 0
++    }
+ 
+     // validate total amount of transactions created
+     val blocks: IndexedSeq[ErgoFullBlock] = readers.h
+@@ -550,12 +565,17 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     system.terminate()
+   }
+ 
+-  it should "6.0 pool transactions should be added to 6.0 block" in new TestKit(
+-    ActorSystem()
++  it should "select an executable V4 input chain separately from its ordering alternative" in new TestKit(
++    newActorSystem()
+   ) {
++    val matrixSettings = defaultSettings60.copy(
++      directory = s"${defaultSettings60.directory}-matrix-dependency-${java.util.UUID.randomUUID()}"
++    )
++    matrixSettings.launchParameters.blockVersion shouldBe Header.Interpreter60Version
+     val testProbe = new TestProbe(system)
+-    system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+-    val viewHolderRef: ActorRef    = ErgoNodeViewRef(defaultSettings60)
++    val appliedProbe = new TestProbe(system)
++    system.eventStream.subscribe(appliedProbe.ref, newBlockSignal)
++    val viewHolderRef: ActorRef    = ErgoNodeViewRef(matrixSettings)
+     val readersHolderRef: ActorRef = ErgoReadersHolderRef(viewHolderRef)
+ 
+     val candidateGenerator: ActorRef =
+@@ -563,19 +583,16 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         defaultMinerSecret.publicImage,
+         readersHolderRef,
+         viewHolderRef,
+-        defaultSettings60
++        matrixSettings
+       )
+ 
+     val readers: Readers = await((readersHolderRef ? GetReaders).mapTo[Readers])
+ 
+-    val history: ErgoHistoryReader = readers.h
+-    val startBlock: Option[Header] = history.bestHeaderOpt
+-
+     // generate block to use reward as our tx input
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = None), testProbe.ref)
+     testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(candidate: Candidate) =>
+-        val result = defaultSettings.chainSettings.powScheme
++        val result = matrixSettings.chainSettings.powScheme
+           .proveCandidate(candidate.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate.parameters)
+         val block = result match {
+           case org.ergoplatform.OrderingBlockFound(h) => h
+@@ -586,17 +603,8 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         expectNoMessage(200.millis)
+         candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+ 
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++        testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++        expectAppliedBlock(appliedProbe, block.header)
+     }
+ 
+     // build new transaction that uses miner's reward as input
+@@ -630,48 +638,60 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       inputs = IndexedSeq(new Input(spendingBox.id, emptyProverResult)),
+       outputCandidates = IndexedSeq(o2))
+ 
+-    testProbe.expectNoMessage(200.millis)
+-    // mine a block with that transaction
+-    candidateGenerator.tell(GenerateCandidate(Seq(tx, tx2), reply = true, forced = false, optPk = None), testProbe.ref)
+-    testProbe.expectMsgPF(candidateGenDelay) {
+-      case StatusReply.Success(candidate: Candidate) =>
+-        val result = defaultSettings.chainSettings.powScheme
+-          .proveCandidate(candidate.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate.parameters)
+-        val block = result match {
+-          case org.ergoplatform.OrderingBlockFound(h) => h
+-          case org.ergoplatform.InputBlockFound(fb) => fb
+-          case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+-        }
+-        testProbe.expectNoMessage(200.millis)
+-        candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+-
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++    // Classify this concrete fixture using real validation, including the child's dependency.
++    candidateGenerator.tell(GenerateCandidate(Seq(tx, tx2), reply = true, forced = true), testProbe.ref)
++    val chainCandidate = testProbe.expectMsgPF(candidateGenDelay) {
++      case StatusReply.Success(candidate: Candidate) => candidate
+     }
+-
+-    // new transactions should be cleared from pool after applying new block
+-    await((readersHolderRef ? GetReaders).mapTo[Readers]).m.size shouldBe 0
+-
+-    // validate total amount of transactions created
+-    val blocks: IndexedSeq[ErgoFullBlock] = readers.h
+-      .chainToHeader(startBlock, readers.h.bestHeaderOpt.get)
+-      ._2
+-      .headers
+-      .flatMap(readers.h.getFullBlock)
+-      .filter(_.blockTransactions.transactions.map(_.id).contains(tx.id))
+-
+-    val txs: Seq[ErgoTransaction] = blocks.flatMap(_.blockTransactions.transactions)
+-
+-    txs should have length 3 // 1 rewards and two regular txs, no fee collection
++    val candidateBlock = chainCandidate.candidateBlock
++    candidateBlock.version shouldBe Header.Interpreter60Version
++    val currentReaders = eventually(timeout(candidateGenDelay), interval(25.millis)) {
++      val current = await((readersHolderRef ? GetReaders).mapTo[Readers])
++      current.s.stateContext.lastHeaderOpt.map(_.id) shouldBe candidateBlock.parentOpt.map(_.id)
++      current
++    }
++    val currentState = currentReaders.s.asInstanceOf[UtxoStateReader]
++    val upcoming = currentState.stateContext.upcoming(
++      defaultMinerPk.value, candidateBlock.timestamp, candidateBlock.nBits, candidateBlock.votes,
++      matrixSettings.votingTargets.desiredUpdate, candidateBlock.version)
++    currentState.validateWithCost(tx, upcoming,
++      chainCandidate.parameters.maxBlockCost, None, softFieldsAllowed = false).get
++    currentState.validateWithCost(tx2, upcoming,
++      chainCandidate.parameters.maxBlockCost, None, softFieldsAllowed = false).isFailure shouldBe true
++    currentState.withTransactions(Seq(tx)).validateWithCost(tx2, upcoming,
++      chainCandidate.parameters.maxBlockCost, None, softFieldsAllowed = false).get
++
++    val expectedInput = Seq(tx, tx2)
++    val expectedOrdering = CandidateGenerator.collectEmission(
++      currentState, defaultMinerPk, currentState.stateContext).toSeq
++    expectedOrdering should have length 1
++    candidateBlock.inputBlockTransactions.map(_.id) shouldBe expectedInput.map(_.id)
++    candidateBlock.orderingBlockTransactions.map(_.id) shouldBe expectedOrdering.map(_.id)
++    candidateBlock.transactions.map(_.id) shouldBe expectedOrdering.map(_.id)
++    currentState.proofsForTransactions(expectedInput).get
++    val (_, orderingRoot) = currentState.proofsForTransactions(expectedOrdering).get
++    candidateBlock.stateRoot.toSeq shouldBe orderingRoot.toSeq
++
++    // Submit the ordering alternative. This applies emission only; the input chain
++    // remains separately executable and is not falsely counted as applied here.
++    val orderingBlock = matrixSettings.chainSettings.powScheme
++      .proveCandidate(candidateBlock, defaultMinerSecret.w, 0, 1000, chainCandidate.parameters) match {
++      case org.ergoplatform.OrderingBlockFound(block) => block
++      case other => fail(s"Expected ordering result, got $other")
++    }
++    orderingBlock.transactions.map(_.id) shouldBe expectedOrdering.map(_.id)
++    candidateGenerator.tell(OrderingSolutionFound(orderingBlock.header.powSolution), testProbe.ref)
++    testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++    expectAppliedBlock(appliedProbe, orderingBlock.header)
++    val afterOrdering = eventually(timeout(candidateGenDelay), interval(25.millis)) {
++      val current = await((readersHolderRef ? GetReaders).mapTo[Readers])
++      current.s.stateContext.lastHeaderOpt.map(_.id) shouldBe Some(orderingBlock.header.id)
++      current
++    }
++    afterOrdering.h.getFullBlock(orderingBlock.header).get.transactions.map(_.id) shouldBe expectedOrdering.map(_.id)
++    val stateAfterOrdering = afterOrdering.s.asInstanceOf[UtxoStateReader]
++    stateAfterOrdering.boxById(rewardBox.id).isDefined shouldBe true
++    stateAfterOrdering.boxById(spendingBox.id).isDefined shouldBe false
+ 
+     system.terminate()
+   }
+@@ -912,9 +932,10 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     system.terminate()
+   }
+ 
+-  it should "preserve previous candidate when forced regeneration occurs" in new TestKit(ActorSystem()) {
++  it should "accept an earlier nonce after forced candidate regeneration" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+-    system.eventStream.subscribe(testProbe.ref, newBlockSignal)
++    val appliedProbe = new TestProbe(system)
++    system.eventStream.subscribe(appliedProbe.ref, newBlockSignal)
+ 
+     val testDir = s"${defaultSettings.directory}-preserve-candidate-${System.currentTimeMillis()}"
+     val settingsWithShortRegeneration: ErgoSettings =
+@@ -952,18 +973,10 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+     }
+     candidateGenerator.tell(OrderingSolutionFound(initBlock.header.powSolution), testProbe.ref)
+-    // Wait for both the direct mining ACK and the async local block application
+-    var ackSeen = false
+-    var appliedSeen = false
+-    testProbe.fishForMessage(blockValidationDelay) {
+-      case StatusReply.Success(()) =>
+-        ackSeen = true
+-        ackSeen && appliedSeen
+-      case FullBlockApplied(header) if header.id == initBlock.header.id =>
+-        appliedSeen = true
+-        ackSeen && appliedSeen
+-      case _ => false
+-    }
++    // Retain the original shared deadline while observing replies and events separately.
++    val applicationDeadline = blockValidationDelay.fromNow
++    testProbe.expectMsg(applicationDeadline.timeLeft, StatusReply.Success(()))
++    expectAppliedBlock(appliedProbe, initBlock.header, applicationDeadline.timeLeft)
+ 
+     // Get first candidate after chain is established
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false), testProbe.ref)
+@@ -971,7 +984,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       case StatusReply.Success(c: Candidate) => c
+     }
+ 
+-    // Force regeneration - this should preserve candidate1 as cachedPreviousCandidate
++    // Force regeneration before submitting work obtained from candidate1.
+     val candidate2 = eventually(timeout(candidateGenDelay), interval(100.millis)) {
+       candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = true), testProbe.ref)
+       testProbe.expectMsgPF(500.millis) {
+@@ -982,7 +995,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     // candidate2 should be different from candidate1 (regenerated)
+     candidate2.candidateBlock.timestamp should be >= candidate1.candidateBlock.timestamp
+ 
+-    // Solve a block using candidate1 (the "previous" candidate)
++    // Solve a block using the earlier candidate1.
+     val solvedBlock = powScheme
+       .proveCandidate(candidate1.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate1.parameters) match {
+       case org.ergoplatform.OrderingBlockFound(h) => h
+@@ -990,20 +1003,26 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+     }
+ 
+-    // Submit solution - should succeed because candidate1 should be in cachedPreviousCandidate
++    // Fake PoW accepts this earlier nonce on candidate2; assert that exact completion below.
+     candidateGenerator.tell(OrderingSolutionFound(solvedBlock.header.powSolution), testProbe.ref)
+ 
+-    // CandidateGenerator should accept the solution against cachedPreviousCandidate.
++    // Acceptance here does not establish use of the previous-candidate fallback.
+     testProbe.expectMsgPF(blockValidationDelay) {
+       case StatusReply.Success(()) =>
+     }
+ 
++    val acceptedHeader = CandidateGenerator.completeOrderingBlock(
++      candidate2.candidateBlock, solvedBlock.header.powSolution).header
++    powScheme.validate(acceptedHeader).get
++    expectAppliedBlock(appliedProbe, acceptedHeader)
++
+     system.terminate()
+   }
+ 
+-  it should "handle multiple consecutive forced regenerations correctly" in new TestKit(ActorSystem()) {
++  it should "handle multiple consecutive forced regenerations correctly" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+-    system.eventStream.subscribe(testProbe.ref, newBlockSignal)
++    val appliedProbe = new TestProbe(system)
++    system.eventStream.subscribe(appliedProbe.ref, newBlockSignal)
+ 
+     // Use unique directory to avoid state conflicts
+     val testDir = s"${defaultSettings.directory}-multi-forced-${System.currentTimeMillis()}"
+@@ -1042,18 +1061,9 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+     }
+     candidateGenerator.tell(OrderingSolutionFound(initBlock.header.powSolution), testProbe.ref)
+-    // Wait for both StatusReply and FullBlockApplied messages
+-    testProbe.fishForMessage(blockValidationDelay) {
+-      case StatusReply.Success(()) => true
+-      case _: FullBlockApplied => true
+-      case _ => false
+-    }
+-    // Try to consume the second message if it exists
+-    try {
+-      testProbe.expectMsgClass(1.second, classOf[Any])
+-    } catch {
+-      case _: AssertionError => // No more messages, that's fine
+-    }
++    val applicationDeadline = blockValidationDelay.fromNow
++    testProbe.expectMsg(applicationDeadline.timeLeft, StatusReply.Success(()))
++    expectAppliedBlock(appliedProbe, initBlock.header, applicationDeadline.timeLeft)
+ 
+     // Now get candidate after chain is established
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false), testProbe.ref)
+@@ -1063,19 +1073,13 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+ 
+     // Force regenerate first time
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = true), testProbe.ref)
+-    val candidate2 = testProbe.fishForMessage(candidateGenDelay) {
+-      case StatusReply.Success(_: Candidate) => true
+-      case _: FullBlockApplied => false
+-    } match {
++    val candidate2 = testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(c: Candidate) => c
+     }
+ 
+     // Force regenerate second time
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = true), testProbe.ref)
+-    val candidate3 = testProbe.fishForMessage(candidateGenDelay) {
+-      case StatusReply.Success(_: Candidate) => true
+-      case _: FullBlockApplied => false
+-    } match {
++    val candidate3 = testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(c: Candidate) => c
+     }
+ 
+@@ -1083,7 +1087,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     candidate2.candidateBlock.timestamp should be >= candidate1.candidateBlock.timestamp
+     candidate3.candidateBlock.timestamp should be >= candidate2.candidateBlock.timestamp
+ 
+-    // Solve block with candidate2 (should be in cachedPreviousCandidate after candidate3 generation)
++    // Solve earlier candidate2; fake PoW accepts this nonce on current candidate3.
+     val solvedBlock = powScheme
+       .proveCandidate(candidate2.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate2.parameters) match {
+       case org.ergoplatform.OrderingBlockFound(h) => h
+@@ -1093,12 +1097,11 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+ 
+     candidateGenerator.tell(OrderingSolutionFound(solvedBlock.header.powSolution), testProbe.ref)
+ 
+-    // Should successfully apply the block
+-    testProbe.fishForMessage(blockValidationDelay) {
+-      case StatusReply.Success(()) => true
+-      case _: FullBlockApplied => true
+-      case _ => false
+-    }
++    testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++    val acceptedHeader = CandidateGenerator.completeOrderingBlock(
++      candidate3.candidateBlock, solvedBlock.header.powSolution).header
++    powScheme.validate(acceptedHeader).get
++    expectAppliedBlock(appliedProbe, acceptedHeader)
+ 
+     system.terminate()
+   }
+@@ -1144,9 +1147,10 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     system.terminate()
+   }
+ 
+-  it should "accept solution for previous candidate after forced regeneration triggered by mempool" in new TestKit(ActorSystem()) {
++  it should "retain cached work after a mempool change and accept its solution" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+-    system.eventStream.subscribe(testProbe.ref, newBlockSignal)
++    val appliedProbe = new TestProbe(system)
++    system.eventStream.subscribe(appliedProbe.ref, newBlockSignal)
+ 
+     val testDir = s"${defaultSettings.directory}-mempool-forced-${System.currentTimeMillis()}"
+     val settingsWithShortRegeneration: ErgoSettings =
+@@ -1188,17 +1192,8 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+         expectNoMessage(200.millis)
+         candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+ 
+-        // we fish either for ack or SSM as the order is non-deterministic
+-        testProbe.fishForMessage(blockValidationDelay) {
+-          case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
+-        }
++        testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++        expectAppliedBlock(appliedProbe, block.header)
+     }
+ 
+     // Get candidate and solve it
+@@ -1214,7 +1209,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       case _ => throw new RuntimeException("Unexpected result from proveCandidate")
+     }
+ 
+-    // Build new transaction to trigger mempool change
++    // Build a new transaction to change the mempool independently of the cached work.
+     val prop: ProveDlog =
+       DLogProverInput(BigIntegers.fromUnsignedByteArray("forced-mempool-test".getBytes())).publicImage
+     val newlyMinedBlock = readers.h.bestFullBlockOpt.get
+@@ -1234,27 +1229,26 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+     // Submit transaction to mempool
+     viewHolderRef ! LocallyGeneratedTransaction(UnconfirmedTransaction(tx, None))
+ 
+-    // Wait for candidate to be regenerated with new tx
++    // Allow the mempool event to arrive; it does not itself regenerate cached work.
+     testProbe.expectNoMessage(200.millis)
+ 
+-    // Request new candidate - should be regenerated due to mempool change
++    // A non-forced request still returns the cached candidate after ChangedMempool.
+     candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false), testProbe.ref)
+     val regeneratedCandidate = testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(c: Candidate) => c
+     }
+ 
+-    // Should include the new transaction
+-    regeneratedCandidate.candidateBlock.transactions.size should be >= candidateToSolve.candidateBlock.transactions.size
++    regeneratedCandidate should be theSameInstanceAs candidateToSolve
+ 
+-    // Submit solution for the old candidate (should still work via cachedPreviousCandidate)
++    // Submit the solution for that same cached candidate.
+     candidateGenerator.tell(OrderingSolutionFound(solvedBlock.header.powSolution), testProbe.ref)
+ 
+-    // Should successfully apply the block
+-    testProbe.fishForMessage(blockValidationDelay) {
+-      case StatusReply.Success(()) => true
+-      case FullBlockApplied(header) if header.id != solvedBlock.header.parentId => true
+-      case _ => false
+-    }
++    // Require both the direct acknowledgement and the local application event.
++    testProbe.expectMsg(blockValidationDelay, StatusReply.Success(()))
++    val acceptedHeader = CandidateGenerator.completeOrderingBlock(
++      regeneratedCandidate.candidateBlock, solvedBlock.header.powSolution).header
++    powScheme.validate(acceptedHeader).get
++    expectAppliedBlock(appliedProbe, acceptedHeader)
+ 
+     system.terminate()
+   }
+@@ -1471,7 +1465,7 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+   }
+ 
+   it should "recover with a filled candidate when proof generation fails once" in new TestKit(
+-    ActorSystem()
++    newActorSystem()
+   ) {
+     val testDir = s"${defaultSettings.directory}-proof-retry-${System.currentTimeMillis()}"
+     val settings = testSettings(testDir)
+@@ -1500,20 +1494,32 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       Seq(block1, block2)
+     )
+ 
+-    val (txs3, _) = validTransactionsFromBoxHolder(bh2, rnd)
++    // This TestNet fixture has V4 parameters: regular transactions belong to the input
++    // payload. Use existing boxes so that they do not depend on this candidate's emission.
++    settings.networkType shouldBe org.ergoplatform.settings.NetworkType.TestNet
++    us2.stateContext.currentParameters.blockVersion shouldBe Header.Interpreter60Version
++    val emissionBox = us2.emissionBoxOpt.get
++    val (_, regularBoxes) = bh2.take(box => box.id.sameElements(emissionBox.id))
++    val (txs3, _) = validTransactionsFromBoxHolder(regularBoxes, rnd)
+     txs3 should not be empty
++    val expectedOrdering = CandidateGenerator.collectEmission(us2, defaultMinerPk, us2.stateContext).toSeq
++    expectedOrdering should have length 1
+ 
+-    // simulate the race: state is updated between transaction collection and proof generation,
+-    // so the first proofsForTransactions call fails
++    // Arm after startup so the requested filled candidate, rather than the actor's
++    // automatic emission-only candidate, encounters the one-shot proof failure.
++    @volatile var proofFailureArmed = false
+     var proofsFailed = false
++    var armedProofInputs = Vector.empty[Seq[ErgoTransaction]]
+     val failingOnceState = new UtxoState(us2.persistentProver, us2.version, us2.store, settings) {
+-      override def proofsForTransactions(txs: Seq[ErgoTransaction]): Try[(SerializedAdProof, ADDigest)] =
+-        if (!proofsFailed) {
++      override def proofsForTransactions(txs: Seq[ErgoTransaction]): Try[(SerializedAdProof, ADDigest)] = {
++        if (proofFailureArmed) armedProofInputs :+= txs
++        if (proofFailureArmed && !proofsFailed) {
+           proofsFailed = true
+           Failure(new Exception("Simulating state update during candidate assembly"))
+         } else {
+           super.proofsForTransactions(txs)
+         }
++      }
+     }
+ 
+     val readers = Readers(history2, failingOnceState, ErgoMemPool.empty(settings), walletStub)
+@@ -1525,14 +1531,26 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+       settings
+     )
+ 
++    candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false), senderProbe.ref)
++    senderProbe.expectMsgPF(candidateGenDelay) {
++      case StatusReply.Success(_: Candidate) => ()
++    }
++    proofFailureArmed = true
+     candidateGenerator.tell(GenerateCandidate(txs3, reply = true, forced = true), senderProbe.ref)
+     val candidate = senderProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(c: Candidate) => c
+     }
+ 
+-    // proof generation failed on the first attempt, but the retry succeeded with the pool txs
++    // Both attempts prove precisely the ordering payload; successful retry retains every
++    // regular transaction in its input payload without promoting it to ordering.
+     proofsFailed shouldBe true
+-    candidate.candidateBlock.transactions.map(_.id) should contain allElementsOf txs3.map(_.id)
++    candidate.candidateBlock.version shouldBe Header.Interpreter60Version
++    candidate.candidateBlock.inputBlockTransactions.map(_.id) shouldBe txs3.map(_.id)
++    candidate.candidateBlock.orderingBlockTransactions.map(_.id) shouldBe expectedOrdering.map(_.id)
++    candidate.candidateBlock.transactions.map(_.id) shouldBe expectedOrdering.map(_.id)
++    armedProofInputs.map(_.map(_.id)) shouldBe Vector.fill(2)(expectedOrdering.map(_.id))
++    val (_, expectedRoot) = us2.proofsForTransactions(expectedOrdering).get
++    candidate.candidateBlock.stateRoot.toSeq shouldBe expectedRoot.toSeq
+ 
+     system.terminate()
+   }
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidatePreParentDataInputSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidatePreParentDataInputSpec.scala
+new file mode 100644
+index 000000000..e351545b8
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/CandidatePreParentDataInputSpec.scala
+@@ -0,0 +1,238 @@
++package org.ergoplatform.mining
++
++import org.ergoplatform.{DataInput, ErgoBox, ErgoBoxCandidate, Input}
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.modifiers.mempool.{ErgoTransaction, UnconfirmedTransaction}
++import org.ergoplatform.nodeView.mempool.ErgoMemPool
++import org.ergoplatform.nodeView.mempool.ErgoMemPoolUtils.ProcessingOutcome
++import org.ergoplatform.nodeView.state.{BoxHolder, UtxoState}
++import org.ergoplatform.settings.Constants.TrueTree
++import org.ergoplatform.settings.{NetworkType, Parameters}
++import org.ergoplatform.utils.{ErgoCompilerHelpers, ErgoCorePropertyTest}
++import org.ergoplatform.validation.SoftFieldsAccessError
++import org.ergoplatform.wallet.interpreter.ErgoInterpreter
++import org.ergoplatform.wallet.utils.WalletGenerators.ergoBoxGen
++import org.scalacheck.Gen
++import scorex.crypto.authds.ADKey
++import sigma.ast.ErgoTree
++
++class CandidatePreParentDataInputSpec extends ErgoCorePropertyTest with ErgoCompilerHelpers {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++  import org.ergoplatform.utils.ErgoNodeTestConstants.settings
++  import org.ergoplatform.utils.generators.ErgoCoreGenerators._
++  import org.ergoplatform.utils.generators.ValidBlocksGenerators._
++
++  property("defer a prioritized data-input reader until its pending producer without invalidating it") {
++    def inputBox(value: Long): ErgoBox = ergoBoxGen(
++      propGen = trueLeafGen,
++      tokensGen = Gen.const(Seq.empty),
++      valueGenOpt = Some(Gen.const(value)),
++      heightGen = Gen.const(0)
++    ).sample.get
++
++    val parentInput = inputBox(1000000000L)
++    val readerInput = inputBox(1000000000L)
++    val missingReaderInput = inputBox(1000000000L)
++    val conflictInput = inputBox(1000000000L)
++    val boxHolder = BoxHolder(Seq(parentInput, readerInput, missingReaderInput, conflictInput))
++    val us = createUtxoState(boxHolder, parameters)
++
++    def outputs(input: ErgoBox, fee: Long): IndexedSeq[ErgoBoxCandidate] =
++      IndexedSeq(
++        new ErgoBoxCandidate(input.value - fee, TrueTree, input.creationHeight),
++        new ErgoBoxCandidate(fee, feeProp, input.creationHeight)
++      )
++
++    val parent = ErgoTransaction(
++      IndexedSeq(new Input(parentInput.id, emptyProverResult)),
++      IndexedSeq.empty,
++      outputs(parentInput, fee = 1000000L)
++    )
++    val reader = ErgoTransaction(
++      IndexedSeq(new Input(readerInput.id, emptyProverResult)),
++      IndexedSeq(DataInput(parent.outputs.head.id)),
++      outputs(readerInput, fee = 100000000L)
++    )
++    val missingReader = ErgoTransaction(
++      IndexedSeq(new Input(missingReaderInput.id, emptyProverResult)),
++      IndexedSeq(DataInput(ADKey @@ Array.fill(32)(42.toByte))),
++      outputs(missingReaderInput, fee = 100000000L)
++    )
++    val futureAndMissingReader = ErgoTransaction(
++      IndexedSeq(new Input(missingReaderInput.id, emptyProverResult)),
++      IndexedSeq(
++        DataInput(parent.outputs.head.id),
++        DataInput(ADKey @@ Array.fill(32)(43.toByte))
++      ),
++      outputs(missingReaderInput, fee = 100000000L)
++    )
++    val selectedSpend = ErgoTransaction(
++      IndexedSeq(new Input(conflictInput.id, emptyProverResult)),
++      IndexedSeq.empty,
++      outputs(conflictInput, fee = 1000000L)
++    )
++    val futureAndSelectedConflict = ErgoTransaction(
++      IndexedSeq(new Input(conflictInput.id, emptyProverResult)),
++      IndexedSeq(DataInput(parent.outputs.head.id)),
++      outputs(conflictInput, fee = 2000000L)
++    )
++    val selectedAlternative = ErgoTransaction(
++      IndexedSeq(new Input(conflictInput.id, emptyProverResult)),
++      IndexedSeq.empty,
++      outputs(conflictInput, fee = 3000000L)
++    )
++
++    val emptyPool = ErgoMemPool.empty(settings)
++    val (parentPool, parentOutcome) = emptyPool.process(UnconfirmedTransaction(parent, None), us)
++    parentOutcome shouldBe a[ProcessingOutcome.Accepted]
++    val (pool, readerOutcome) = parentPool.process(UnconfirmedTransaction(reader, None), us)
++    readerOutcome shouldBe a[ProcessingOutcome.Accepted]
++    pool.getAllPrioritized.map(_.id) should contain theSameElementsAs Seq(reader.id, parent.id)
++
++    val h = validFullBlock(None, us, boxHolder).header
++    val upcomingContext = us.stateContext.upcoming(
++      h.minerPk, h.timestamp, h.nBits, h.votes, emptyVSUpdate, h.version
++    )
++    upcomingContext.sigmaPreHeader.version should be < Header.Interpreter60Version
++
++    val collected = CandidateGenerator.collectTxs(
++      defaultMinerPk,
++      parameters.maxBlockCost,
++      parameters.maxBlockSize,
++      us,
++      upcomingContext,
++      Seq(reader, parent)
++    )
++    (collected._1 ++ collected._2) should contain(parent)
++    (collected._1 ++ collected._2) should not contain reader
++    collected._3 shouldBe empty
++
++    val retainedPool = collected._3.foldLeft(pool)((current, id) => current.invalidate(id))
++    retainedPool.getAllPrioritized.map(_.id) should contain(reader.id)
++    retainedPool.isInvalidated(reader.id) shouldBe false
++
++    val futureAndMissing = CandidateGenerator.collectTxs(
++      defaultMinerPk,
++      parameters.maxBlockCost,
++      parameters.maxBlockSize,
++      us,
++      upcomingContext,
++      Seq(futureAndMissingReader, parent)
++    )
++    futureAndMissing._3 shouldBe Seq(futureAndMissingReader.id)
++
++    val futureAndConflict = CandidateGenerator.collectTxs(
++      defaultMinerPk,
++      parameters.maxBlockCost,
++      parameters.maxBlockSize,
++      us,
++      upcomingContext,
++      Seq(selectedSpend, futureAndSelectedConflict, parent)
++    )
++    (futureAndConflict._1 ++ futureAndConflict._2) should contain(selectedSpend)
++    futureAndConflict._3 shouldBe empty
++
++    val selectedOnlyConflict = CandidateGenerator.collectTxs(
++      defaultMinerPk, parameters.maxBlockCost, parameters.maxBlockSize,
++      us, upcomingContext, Seq(selectedSpend, selectedAlternative)
++    )
++    (selectedOnlyConflict._1 ++ selectedOnlyConflict._2) should contain(selectedSpend)
++    (selectedOnlyConflict._1 ++ selectedOnlyConflict._2) should not contain selectedAlternative
++    selectedOnlyConflict._3 shouldBe empty
++
++    val mandatoryPrefixConflict = CandidateGenerator.collectTxs(
++      defaultMinerPk, parameters.maxBlockCost, parameters.maxBlockSize,
++      us, upcomingContext, Seq(futureAndSelectedConflict, parent), Seq(selectedSpend)
++    )
++    mandatoryPrefixConflict._3 shouldBe empty
++
++    val prefixOnlyConflict = CandidateGenerator.collectTxs(
++      defaultMinerPk, parameters.maxBlockCost, parameters.maxBlockSize,
++      us, upcomingContext, Seq(selectedAlternative), Seq(selectedSpend)
++    )
++    prefixOnlyConflict._3 shouldBe Seq(selectedAlternative.id)
++
++    val missing = CandidateGenerator.collectTxs(
++      defaultMinerPk,
++      parameters.maxBlockCost,
++      parameters.maxBlockSize,
++      us,
++      upcomingContext,
++      Seq(missingReader)
++    )
++    missing._3 shouldBe Seq(missingReader.id)
++  }
++
++  property("do not permanently invalidate a V6 ordering alternative with a future data input") {
++    val matrixParameters = Parameters(parameters.height,
++      parameters.parametersTable.updated(Parameters.BlockVersion, Header.Interpreter60Version.toInt),
++      parameters.proposedUpdate)
++    val matrixSettings = settings.copy(networkType = NetworkType.DevNet60)
++    val softTree = compileSourceV5("CONTEXT.minerPubKey.size >= 0", 0)
++
++    def inputBox(tree: ErgoTree, value: Long): ErgoBox = ergoBoxGen(
++      propGen = Gen.const(tree),
++      tokensGen = Gen.const(Seq.empty),
++      valueGenOpt = Some(Gen.const(value)),
++      heightGen = Gen.const(0)
++    ).sample.get
++
++    val sharedInput = inputBox(softTree, 10000000L)
++    val parentInput = inputBox(TrueTree, 10000000L)
++    val us = UtxoState.fromBoxHolder(
++      BoxHolder(Seq(sharedInput, parentInput)), None, createTempDir, matrixSettings, matrixParameters
++    )
++    val upcomingContext = us.stateContext.upcoming(
++      defaultMinerPk.value, System.currentTimeMillis(), matrixSettings.chainSettings.initialNBits,
++      Array.fill[Byte](3)(0), emptyVSUpdate, Header.Interpreter60Version
++    )
++    val verifier = ErgoInterpreter(upcomingContext.currentParameters)
++
++    val parent = ErgoTransaction(
++      IndexedSeq(new Input(parentInput.id, emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(parentInput.value, TrueTree, 0))
++    )
++    val ordering = ErgoTransaction(
++      IndexedSeq(new Input(sharedInput.id, emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(sharedInput.value, TrueTree, 0))
++    )
++    val reader = ErgoTransaction(
++      IndexedSeq(new Input(sharedInput.id, emptyProverResult)),
++      IndexedSeq(DataInput(parent.outputs.head.id)),
++      IndexedSeq(new ErgoBoxCandidate(sharedInput.value, TrueTree, 0))
++    )
++
++    us.validateWithCost(ordering, upcomingContext, matrixParameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = false).failed.get shouldBe a[SoftFieldsAccessError]
++    us.validateWithCost(ordering, upcomingContext, matrixParameters.maxBlockCost,
++      Some(verifier), softFieldsAllowed = true).isSuccess shouldBe true
++    us.withTransactions(Seq(parent)).validateWithCost(reader, upcomingContext,
++      matrixParameters.maxBlockCost, Some(verifier), softFieldsAllowed = true).isSuccess shouldBe true
++
++    val emptyPool = ErgoMemPool.empty(matrixSettings)
++    val (parentPool, parentOutcome) = emptyPool.process(UnconfirmedTransaction(parent, None), us)
++    parentOutcome shouldBe a[ProcessingOutcome.Accepted]
++    val (pool, readerOutcome) = parentPool.process(UnconfirmedTransaction(reader, None), us)
++    readerOutcome shouldBe a[ProcessingOutcome.Accepted]
++    pool.getAllPrioritized.map(_.id) should contain theSameElementsAs Seq(reader.id, parent.id)
++
++    val conflicted = CandidateGenerator.collectTxs(
++      defaultMinerPk, matrixParameters.maxBlockCost, matrixParameters.maxBlockSize,
++      us, upcomingContext, Seq(ordering, reader, parent)
++    )
++    conflicted._2 should contain(ordering)
++    (conflicted._1 ++ conflicted._2) should not contain reader
++    conflicted._3 shouldBe empty
++
++    val retainedPool = conflicted._3.foldLeft(pool)((current, id) => current.invalidate(id))
++    retainedPool.getAllPrioritized.map(_.id) should contain(reader.id)
++    retainedPool.isInvalidated(reader.id) shouldBe false
++
++    val reselected = CandidateGenerator.collectTxs(
++      defaultMinerPk, matrixParameters.maxBlockCost, matrixParameters.maxBlockSize,
++      us, upcomingContext, Seq(reader), Seq(parent)
++    )
++    reselected._2 should contain(reader)
++    reselected._3 shouldBe empty
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidateRetryReorgSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateRetryReorgSpec.scala
+index eea174d3f..aa28c51fe 100644
+--- a/src/test/scala/org/ergoplatform/mining/CandidateRetryReorgSpec.scala
++++ b/src/test/scala/org/ergoplatform/mining/CandidateRetryReorgSpec.scala
+@@ -4,15 +4,18 @@ import org.ergoplatform.consensus.ProgressInfo
+ import org.ergoplatform.core.idToVersion
+ import org.ergoplatform.modifiers.{BlockSection, ErgoFullBlock}
+ import org.ergoplatform.modifiers.history.extension.ExtensionCandidate
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.modifiers.history.popow.NipopowAlgos
+ import org.ergoplatform.modifiers.mempool.{ErgoTransaction, OutputsHolder, UnconfirmedTransaction}
+ import org.ergoplatform.nodeView.history.ErgoHistory
+ import org.ergoplatform.nodeView.mempool.ErgoMemPool
+-import org.ergoplatform.nodeView.state.{BoxHolder, StateType, UtxoState}
+-import org.ergoplatform.settings.Constants
++import org.ergoplatform.nodeView.state.{BoxHolder, ErgoStateContext, StateType, UtxoState}
++import org.ergoplatform.settings.{Constants, NetworkType, Parameters}
+ import org.ergoplatform.subblocks.InputBlockAnnouncement
+ import org.ergoplatform.utils.{HistoryTestHelpers, RandomWrapper}
+-import org.ergoplatform.utils.generators.ChainGenerator.{applyChain, genHeaderChain}
+-import org.ergoplatform.utils.generators.ValidBlocksGenerators.{createUtxoState, validFullBlock, validTransactionsFromBoxHolder}
++import org.ergoplatform.utils.generators.ChainGenerator.applyChain
++import org.ergoplatform.utils.generators.ValidBlocksGenerators.{createUtxoState, validTransactionsFromBoxHolder}
++import org.ergoplatform.wallet.interpreter.ErgoInterpreter
+ import org.ergoplatform.{ErgoBoxCandidate, Input}
+ import org.scalatest.flatspec.AnyFlatSpec
+ import org.scalatest.matchers.should.Matchers
+@@ -27,19 +30,51 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+   import org.ergoplatform.utils.ErgoCoreTestConstants._
+   import org.ergoplatform.utils.ErgoNodeTestConstants.settings
+ 
+-  private class Fixture {
+-    private val initial = createUtxoState(settings)
++  private class Fixture(protocolVersion: Header.Version = Header.InitialVersion) {
++    private val fixtureSettings = settings.copy(networkType =
++      if (protocolVersion >= Header.Interpreter60Version) NetworkType.DevNet60 else NetworkType.Tests)
++    // DevNet60 starts at V4 with the initial validation rules, matching the native
++    // Matrix lifecycle fixture. Do not infer this from the shared Tests profile.
++    private val fixtureParameters = Parameters(parameters.height,
++      parameters.parametersTable.updated(Parameters.BlockVersion, protocolVersion.toInt),
++      parameters.proposedUpdate)
++    fixtureParameters.blockVersion shouldBe protocolVersion
++    private val initial = createUtxoState(fixtureSettings, Some(fixtureParameters))
+     var state: UtxoState = initial._1
+     var history: ErgoHistory = HistoryTestHelpers.generateHistory(
+       verifyTransactions = true, stateType = StateType.Utxo,
+       PoPoWBootstrap = false, blocksToKeep = 100
+     )
+ 
++    private def proveOrdering(parent: Option[Header], rootDigest: ADDigest,
++                              proof: SerializedAdProof, txs: Seq[ErgoTransaction], time: Long,
++                              extension: ExtensionCandidate, votes: Array[Byte],
++                              nBits: Long = settings.chainSettings.initialNBits): ErgoFullBlock = {
++      // Retain the suite's existing test PoW scheme; state proofs and validation are real.
++      powScheme.proveBlock(parent, protocolVersion, nBits, rootDigest, proof, txs, time,
++        extension, votes, defaultMinerSecretNumber, Long.MinValue, Long.MaxValue, fixtureParameters) match {
++        case org.ergoplatform.OrderingBlockFound(block) => block
++        case _ => throw new IllegalStateException("Fixture did not produce an ordering block")
++      }
++    }
++
++    private def validBlock(parent: Option[ErgoFullBlock], txs: Seq[ErgoTransaction], time: Long): ErgoFullBlock = {
++      val (proof, digest) = state.proofsForTransactions(txs).get
++      val interlinks = parent.toSeq.flatMap { block =>
++        nipopowAlgos.updateInterlinks(block.header, NipopowAlgos.unpackInterlinks(block.extension.fields).get)
++      }
++      val extension = fixtureParameters.toExtensionCandidate ++
++        nipopowAlgos.interlinksToExtension(interlinks) ++ state.stateContext.validationSettings.toExtensionCandidate
++      proveOrdering(parent.map(_.header), digest, proof, txs, time, extension, Array.fill[Byte](3)(0))
++    }
++
+     private def build(parent: Option[ErgoFullBlock], boxes: BoxHolder, seed: Int,
+                       time: Long): (ErgoFullBlock, BoxHolder) = {
+       val (txs, nextBoxes) = validTransactionsFromBoxHolder(boxes, new RandomWrapper(Some(seed)))
+-      val block = validFullBlock(parent, state, txs, Some(time))
++      val block = validBlock(parent, txs, time)
++      block.header.version shouldBe protocolVersion
+       state = state.applyModifier(block, None)(_ => ()).get
++      state.stateContext.blockVersion shouldBe protocolVersion
+       block -> nextBoxes
+     }
+ 
+@@ -57,6 +92,17 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+       IndexedSeq(new ErgoBoxCandidate(input.value, Constants.TrueTree, a2.height, input.additionalTokens))
+     )
+     transaction.statelessValidity().get
++    // Keep a separate pool transaction outside the accepted input prefix. It can
++    // be rejected during the rollback and selected again by the retry collection.
++    private val poolInput = a2Pair._2.boxes.values.find { box =>
++      box.ergoTree == Constants.TrueTree && a2OutputIds.contains(box.id.toSeq) &&
++        !box.id.sameElements(input.id)
++    }.get
++    val poolTransaction: ErgoTransaction = ErgoTransaction(
++      IndexedSeq(Input(poolInput.id, emptyProverResult)), IndexedSeq.empty,
++      IndexedSeq(new ErgoBoxCandidate(poolInput.value, Constants.TrueTree, a2.height, poolInput.additionalTokens))
++    )
++    poolTransaction.statelessValidity().get
+     private val absentInputId = ADKey @@ Array.fill(32)(0: Byte)
+     state.boxById(absentInputId) shouldBe None
+     val invalidTransaction: ErgoTransaction = ErgoTransaction(
+@@ -66,48 +112,48 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+     private val emissionTransaction = CandidateGenerator.collectEmission(
+       state, defaultMinerSecret.publicImage, state.stateContext
+     ).get
+-    val pool: ErgoMemPool = ErgoMemPool.empty(settings).put(
+-      Seq(transaction, invalidTransaction).map(UnconfirmedTransaction(_, None))
++    val pool: ErgoMemPool = ErgoMemPool.empty(fixtureSettings).put(
++      Seq(transaction, poolTransaction, invalidTransaction).map(UnconfirmedTransaction(_, None))
+     )
+     history = applyChain(history, Seq(root, a2))
+ 
+     // Publish the pool transaction in an input block on top of a2, so that the candidate
+     // generator picks it up as a previously collected (ordering block) transaction, and it
+     // lands in the transaction set the candidate's proofs are generated for.
+-    private val inputBlockHeader = genHeaderChain(1, history, diffBitsOpt = None, useRealTs = false).last
++    private val inputBlockHeader = validBlock(Some(a2), Seq(transaction), start + 2).header
++    inputBlockHeader.version shouldBe protocolVersion
+     private val inputBlock = InputBlockAnnouncement(1, inputBlockHeader, InputBlockFields.empty, None)
+     history.applyInputBlock(inputBlock) shouldBe None
+     private val (newBestInputBlocks, _) = history.applyInputBlockTransactions(inputBlock.id, Seq(transaction), state)
+     newBestInputBlocks should contain(inputBlock.id)
+ 
+     private val beforeRace = assemble(state).get.get
++    beforeRace._1.candidateBlock.version shouldBe protocolVersion
+     beforeRace._1.candidateBlock.transactions.map(_.id) should contain(transaction.id)
++    (beforeRace._1.candidateBlock.inputBlockTransactions ++ beforeRace._1.candidateBlock.orderingBlockTransactions)
++      .map(_.id) should contain(poolTransaction.id)
+     beforeRace._2.ids should not contain transaction.id
+     beforeRace._2.ids should contain(invalidTransaction.id)
+     // Use the real candidate so the persistent-tip control certainly spends this input.
+     val a3: ErgoFullBlock = materialize(beforeRace._1)
+     a3.blockTransactions.txs.flatMap(_.inputs).exists(_.boxId.sameElements(input.id)) shouldBe true
+ 
+-    state = state.rollbackTo(idToVersion(root.id)).get
++    rollbackToRoot()
+     private val b2Pair = build(Some(root), rootPair._2, 12, start + 4)
+     private val validB2 = b2Pair._1
+     private val wrongRoot = validB2.header.stateRoot.clone()
+     wrongRoot(0) = (wrongRoot(0) ^ 1).toByte
+     // Re-prove the header, keeping section commitments coherent. Only the declared
+     // resulting state root is wrong; history can select this branch before execution.
+-    val b2: ErgoFullBlock = powScheme.proveBlock(
+-      Some(root.header), validB2.header.version, validB2.header.nBits,
++    val b2: ErgoFullBlock = proveOrdering(
++      Some(root.header),
+       ADDigest @@ wrongRoot, validB2.adProofs.get.proofBytes,
+       validB2.blockTransactions.txs, validB2.header.timestamp,
+       ExtensionCandidate(validB2.extension.fields), validB2.header.votes,
+-      defaultMinerSecretNumber, Long.MinValue, Long.MaxValue, parameters
+-    ) match {
+-      case org.ergoplatform.OrderingBlockFound(fb) => fb
+-      case org.ergoplatform.InputBlockFound(fb)    => fb
+-      case _ => throw new RuntimeException("Unexpected result from proveBlock")
+-    }
++      validB2.header.nBits
++    )
+     private val c3Transactions = validTransactionsFromBoxHolder(b2Pair._2, new RandomWrapper(Some(13)))._1
+-    val c3: ErgoFullBlock = validFullBlock(Some(b2), state, c3Transactions, Some(start + 5))
++    val c3: ErgoFullBlock = validBlock(Some(b2), c3Transactions, start + 5)
+ 
+     restoreOriginalState()
+     history.bestFullBlockOpt.map(_.id) shouldBe Some(a2.id)
+@@ -115,10 +161,23 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+ 
+     var genuineProofFailures = 0
+     var genuineBlockFailures = 0
++    var collectionRollbacks = 0
++    var retryCollectionRollbacks = 0
++    var prefixValidationFailures = 0
++    var prefixValidationVersions = Vector.empty[Header.Version]
++    var lastPrefixFailure: Option[Throwable] = None
++    var proofAttempts = 0
+ 
+-    private def restoreOriginalState(): Unit = {
++    private def rollbackToRoot(): Unit = {
++      state.stateContext.blockVersion shouldBe protocolVersion
+       state = state.rollbackTo(idToVersion(root.id)).get
++      state.stateContext.blockVersion shouldBe protocolVersion
++    }
++
++    private def restoreOriginalState(): Unit = {
++      rollbackToRoot()
+       state = state.applyModifier(a2, None)(_ => ()).get
++      state.stateContext.blockVersion shouldBe protocolVersion
+     }
+ 
+     private def selectFork(): ProgressInfo[BlockSection] = {
+@@ -141,7 +200,7 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+ 
+     def coordinatedState(returnToOriginal: Boolean, rollbackDuringCollection: Boolean = false,
+                          failRetryProof: Boolean = false, rollbackDuringRetryCollection: Boolean = false): UtxoState =
+-      new UtxoState(state.persistentProver, state.version, state.store, settings) {
++      new UtxoState(state.persistentProver, state.version, state.store, fixtureSettings) {
+         private var first = true
+         private var failNextRetry = failRetryProof
+         private var retryCollectionRolledBack = false
+@@ -149,38 +208,45 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+ 
+         private def rollBackFork(): Unit = {
+           progress = Some(selectFork())
+-          state = state.rollbackTo(idToVersion(root.id)).get
++          rollbackToRoot()
+           state.boxById(input.id) shouldBe None
+         }
+ 
+         override def withTransactions(transactions: Seq[OutputsHolder]): UtxoState = {
+-          // The emission transaction has been selected, but the pool transaction
+-          // has not been checked yet. Rollback removes the latter's actual input.
++          // The accepted prefix is always present. Interleave after emission and
++          // before the separate pool transaction, whose real input rollback removes.
+           val txIds = transactions.collect { case tx: ErgoTransaction => tx.id }
+           val afterEmission = txIds.contains(emissionTransaction.id) &&
+-            !txIds.contains(transaction.id)
++            !txIds.contains(poolTransaction.id)
+           if (first && rollbackDuringCollection && progress.isEmpty && afterEmission) {
+             rollBackFork()
++            collectionRollbacks += 1
+           }
+           if (!first && rollbackDuringRetryCollection && !retryCollectionRolledBack && afterEmission) {
+-            state = state.rollbackTo(idToVersion(root.id)).get
++            rollbackToRoot()
+             state.boxById(input.id) shouldBe None
+             retryCollectionRolledBack = true
++            retryCollectionRollbacks += 1
+           }
+           super.withTransactions(transactions)
+         }
+ 
+         override def proofsForTransactions(txs: Seq[ErgoTransaction]): Try[(SerializedAdProof, ADDigest)] = {
++          proofAttempts += 1
+           if (!first && failNextRetry) {
+             failNextRetry = false
+             if (rollbackDuringRetryCollection) {
+               retryCollectionRolledBack shouldBe true
+               txs.map(_.id) should contain(emissionTransaction.id)
++              txs.map(_.id) should not contain poolTransaction.id
+               // Note: on weak-blocks `transaction` stays in the proof set via
+               // previously collected input-block transactions, regardless of the rollback.
+             } else {
+               txs.map(_.id) should contain(transaction.id)
+-              state = state.rollbackTo(idToVersion(root.id)).get
++              if (protocolVersion < Header.Interpreter60Version) {
++                txs.map(_.id) should contain(poolTransaction.id)
++              }
++              rollbackToRoot()
+             }
+             state.boxById(input.id) shouldBe None
+             val retryResult = super.proofsForTransactions(txs)
+@@ -196,6 +262,7 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+               if (progress.isEmpty) rollBackFork()
+               if (rollbackDuringCollection) {
+                 txs.map(_.id) should contain(emissionTransaction.id)
++                txs.map(_.id) should not contain poolTransaction.id
+                 // `transaction` is still in the proof set (collected via an earlier input
+                 // block), but its input was removed by the rollback, so the proof fails.
+                 state.boxById(emissionTransaction.inputs.head.boxId) shouldBe None
+@@ -227,19 +294,63 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+         }
+       }
+ 
+-    def assemble(reader: UtxoState) = CandidateGenerator.generateCandidate(
+-      history, reader, pool, defaultMinerSecret.publicImage, Seq.empty, None, settings
+-    )
++    def collectionFailureState(failures: Int): UtxoState =
++      new UtxoState(state.persistentProver, state.version, state.store, fixtureSettings) {
++        private var remainingFailures = failures
++
++        override def withTransactions(transactions: Seq[OutputsHolder]): UtxoState = {
++          val overlay = super.withTransactions(transactions)
++          val txIds = transactions.collect { case tx: ErgoTransaction => tx.id }
++          if (remainingFailures > 0 && txIds == Seq(transaction.id)) {
++            new UtxoState(state.persistentProver, state.version, state.store, fixtureSettings) {
++              override def validateWithCost(tx: ErgoTransaction, context: ErgoStateContext,
++                                            costLimit: Int, interpreterOpt: Option[ErgoInterpreter],
++                                            softFieldsAllowed: Boolean): Try[Int] = {
++                tx.id shouldBe transaction.id
++                context.sigmaPreHeader.version shouldBe protocolVersion
++                prefixValidationVersions :+= context.sigmaPreHeader.version
++                remainingFailures -= 1
++                rollbackToRoot()
++                state.boxById(input.id) shouldBe None
++                try {
++                  val result = overlay.validateWithCost(tx, context, costLimit, interpreterOpt, softFieldsAllowed)
++                  result.isFailure shouldBe true
++                  prefixValidationFailures += 1
++                  lastPrefixFailure = Some(result.failed.get)
++                  result
++                } finally restoreOriginalState()
++              }
++            }
++          } else overlay
++        }
++
++        override def proofsForTransactions(txs: Seq[ErgoTransaction]): Try[(SerializedAdProof, ADDigest)] = {
++          proofAttempts += 1
++          super.proofsForTransactions(txs)
++        }
++      }
++
++    def assemble(reader: UtxoState) = {
++      reader.stateContext.blockVersion shouldBe protocolVersion
++      CandidateGenerator.generateCandidate(
++        history, reader, pool, defaultMinerSecret.publicImage, Seq.empty, None, fixtureSettings
++      )
++    }
+ 
+     def verifyCandidate(result: (CandidateGenerator.Candidate,
+       org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.EliminateTransactions),
+       emissionOnly: Boolean = false): Unit = {
+       val (candidate, eliminate) = result
+       val block = candidate.candidateBlock
++      block.version shouldBe protocolVersion
+       block.parentOpt.map(_.id) shouldBe Some(a2.id)
+       if (emissionOnly) block.transactions shouldBe Seq(emissionTransaction)
+-      else block.transactions.map(_.id) should contain(transaction.id)
++      else {
++        block.transactions.map(_.id) should contain(transaction.id)
++        (block.inputBlockTransactions ++ block.orderingBlockTransactions).map(_.id) should contain(poolTransaction.id)
++      }
+       eliminate.ids should not contain transaction.id
++      eliminate.ids should not contain poolTransaction.id
+       // These fixtures use distinct transaction IDs and no competing spends.
+       block.transactions.map(_.id).toSet.intersect(eliminate.ids.toSet) shouldBe empty
+       if (emissionOnly) eliminate.ids shouldBe empty
+@@ -247,6 +358,8 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+       val retainedPool = eliminate.ids.foldLeft(pool)((current, id) => current.invalidate(id))
+       retainedPool.getAllPrioritized.map(_.id) should contain(transaction.id)
+       retainedPool.isInvalidated(transaction.id) shouldBe false
++      retainedPool.getAllPrioritized.map(_.id) should contain(poolTransaction.id)
++      retainedPool.isInvalidated(poolTransaction.id) shouldBe false
+       if (emissionOnly) {
+         retainedPool.getAllPrioritized.map(_.id) should contain(invalidTransaction.id)
+         retainedPool.isInvalidated(invalidTransaction.id) shouldBe false
+@@ -259,20 +372,17 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+ 
+     private def materialize(candidate: CandidateGenerator.Candidate): ErgoFullBlock = {
+       val block = candidate.candidateBlock
+-      powScheme.proveBlock(
+-        block.parentOpt, block.version, block.nBits, block.stateRoot,
++      block.version shouldBe protocolVersion
++      proveOrdering(
++        block.parentOpt, block.stateRoot,
+         block.adProofBytes, block.transactions, block.timestamp, block.extension,
+-        block.votes, defaultMinerSecretNumber, Long.MinValue, Long.MaxValue, parameters
+-      ) match {
+-        case org.ergoplatform.OrderingBlockFound(fb) => fb
+-        case org.ergoplatform.InputBlockFound(fb)    => fb
+-        case _ => throw new RuntimeException("Unexpected result from proveBlock")
+-      }
++        block.votes, block.nBits
++      )
+     }
+ 
+     def close(): Unit = {
+-      history.closeStorage()
+-      state.closeStorage()
++      try history.closeStorage()
++      finally state.closeStorage()
+     }
+   }
+ 
+@@ -300,6 +410,7 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+     try {
+       val reader = fixture.coordinatedState(returnToOriginal = true, rollbackDuringCollection = true)
+       val result = fixture.assemble(reader).get.get
++      fixture.collectionRollbacks shouldBe 1
+       fixture.genuineProofFailures shouldBe 1
+       fixture.genuineBlockFailures shouldBe 1
+       fixture.verifyCandidate(result)
+@@ -321,9 +432,11 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+         returnToOriginal = true, rollbackDuringCollection = true, failRetryProof = true
+       )
+       val result = fixture.assemble(reader).get.get
++      fixture.collectionRollbacks shouldBe 1
+       fixture.genuineProofFailures shouldBe 2
+       fixture.genuineBlockFailures shouldBe 1
+       fixture.verifyCandidate(result, emissionOnly = true)
++      fixture.proofAttempts shouldBe 3
+     } finally fixture.close()
+   }
+ 
+@@ -334,9 +447,74 @@ class CandidateRetryReorgSpec extends AnyFlatSpec with Matchers {
+         returnToOriginal = true, failRetryProof = true, rollbackDuringRetryCollection = true
+       )
+       val result = fixture.assemble(reader).get.get
++      fixture.retryCollectionRollbacks shouldBe 1
+       fixture.genuineProofFailures shouldBe 2
+       fixture.genuineBlockFailures shouldBe 1
+       fixture.verifyCandidate(result, emissionOnly = true)
++      fixture.proofAttempts shouldBe 3
++    } finally fixture.close()
++  }
++
++  it should "retry a real accepted-prefix validation failure without eliminating pool transactions" in {
++    val fixture = new Fixture
++    try {
++      val result = fixture.assemble(fixture.collectionFailureState(failures = 1)).get.get
++      fixture.prefixValidationFailures shouldBe 1
++      fixture.prefixValidationVersions shouldBe Vector(Header.InitialVersion)
++      fixture.proofAttempts shouldBe 1
++      fixture.verifyCandidate(result)
++    } finally fixture.close()
++  }
++
++  it should "preserve version 1 emission-only fallback without elimination after both prefix validations fail" in {
++    val fixture = new Fixture
++    try {
++      val result = fixture.assemble(fixture.collectionFailureState(failures = 2)).get.get
++      fixture.prefixValidationFailures shouldBe 2
++      fixture.prefixValidationVersions shouldBe Vector(Header.InitialVersion, Header.InitialVersion)
++      fixture.proofAttempts shouldBe 1
++      fixture.verifyCandidate(result, emissionOnly = true)
++    } finally fixture.close()
++  }
++
++  it should "reject a version 4 candidate after both prefix validations fail without proving emission-only work" in {
++    val fixture = new Fixture(Header.Interpreter60Version)
++    try {
++      val reader = fixture.collectionFailureState(failures = 2)
++      reader.stateContext.blockVersion shouldBe Header.Interpreter60Version
++      val result = fixture.assemble(reader).get
++      fixture.prefixValidationFailures shouldBe 2
++      fixture.prefixValidationVersions shouldBe Vector(Header.Interpreter60Version, Header.Interpreter60Version)
++      result.isFailure shouldBe true
++      result.failed.get shouldBe fixture.lastPrefixFailure.get
++      fixture.proofAttempts shouldBe 0
++    } finally fixture.close()
++  }
++
++  it should "reject version 4 work after two proof failures without proving emission-only work" in {
++    val fixture = new Fixture(Header.Interpreter60Version)
++    try {
++      val reader = fixture.coordinatedState(
++        returnToOriginal = true, rollbackDuringCollection = true, failRetryProof = true
++      )
++      val result = fixture.assemble(reader).get
++      fixture.collectionRollbacks shouldBe 1
++      fixture.genuineProofFailures shouldBe 2
++      fixture.genuineBlockFailures shouldBe 1
++      result.isFailure shouldBe true
++      fixture.proofAttempts shouldBe 2
++    } finally fixture.close()
++  }
++
++  it should "recover version 4 work after a real proof failure on a rejected fork" in {
++    val fixture = new Fixture(Header.Interpreter60Version)
++    try {
++      val result = fixture.assemble(fixture.coordinatedState(returnToOriginal = true)).get.get
++      result._1.candidateBlock.version shouldBe Header.Interpreter60Version
++      fixture.genuineProofFailures shouldBe 1
++      fixture.genuineBlockFailures shouldBe 1
++      fixture.proofAttempts shouldBe 2
++      fixture.verifyCandidate(result)
+     } finally fixture.close()
+   }
+ }
+diff --git a/src/test/scala/org/ergoplatform/mining/ErgoMinerSpec.scala b/src/test/scala/org/ergoplatform/mining/ErgoMinerSpec.scala
+index eefef6ede..a2ac89474 100644
+--- a/src/test/scala/org/ergoplatform/mining/ErgoMinerSpec.scala
++++ b/src/test/scala/org/ergoplatform/mining/ErgoMinerSpec.scala
+@@ -10,17 +10,18 @@ import org.ergoplatform.mining.ErgoMiner.StartMining
+ import org.ergoplatform.modifiers.ErgoFullBlock
+ import org.ergoplatform.modifiers.history.header.Header
+ import org.ergoplatform.modifiers.mempool.{ErgoTransaction, UnconfirmedTransaction, UnsignedErgoTransaction}
+-import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages.FullBlockApplied
++import org.ergoplatform.modifiers.transaction.TooHighCostError
++import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages.{FailedTransaction, FullBlockApplied}
+ import org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.LocallyGeneratedTransaction
+ import org.ergoplatform.nodeView.ErgoReadersHolder.{GetReaders, Readers}
+ import org.ergoplatform.nodeView.history.ErgoHistoryReader
+ import org.ergoplatform.nodeView.state._
+ import org.ergoplatform.nodeView.wallet._
+ import org.ergoplatform.nodeView.{ErgoNodeViewRef, ErgoReadersHolderRef}
+-import org.ergoplatform.settings.{ErgoSettings, ErgoSettingsReader}
++import org.ergoplatform.settings.{ErgoSettings, ErgoSettingsReader, NetworkType}
+ import org.ergoplatform.utils.ErgoTestHelpers
+ import org.ergoplatform.wallet.interpreter.ErgoInterpreter
+-import org.ergoplatform.{ErgoBox, ErgoBoxCandidate, ErgoTreePredef, Input}
++import org.ergoplatform.{ErgoBox, ErgoBoxCandidate, ErgoTreePredef, Input, OrderingBlockFound, OrderingSolutionFound}
+ import org.scalatest.concurrent.Eventually
+ import org.scalatest.flatspec.AnyFlatSpec
+ import sigma.ast.{ErgoTree, SigmaAnd, SigmaPropConstant}
+@@ -44,6 +45,24 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+   private val candidateGenDelay: FiniteDuration    = 3.seconds
+   private val blockValidationDelay: FiniteDuration = 2.seconds
+ 
++  private val actorSystems = scala.collection.mutable.ArrayBuffer.empty[ActorSystem]
++
++  private def newActorSystem(): ActorSystem = {
++    val system = ActorSystem()
++    actorSystems += system
++    system
++  }
++
++  override protected def withFixture(test: NoArgTest): org.scalatest.Outcome = {
++    info(s"Mining fixture network=${defaultSettings.networkType.verboseName}, launchVersion=${defaultSettings.launchParameters.blockVersion}")
++    try super.withFixture(test)
++    finally {
++      val systemsToStop = actorSystems.toVector
++      actorSystems.clear()
++      systemsToStop.foreach(system => TestKit.shutdownActorSystem(system))
++    }
++  }
++
+   private def getWorkMessage(minerRef: ActorRef, mandatoryTransactions: Seq[ErgoTransaction]): WorkMessage =
+     await(minerRef.askWithStatus(GenerateCandidate(mandatoryTransactions, reply = true, forced = false, optPk = None)).mapTo[Candidate].map(_.externalVersion))
+ 
+@@ -57,10 +76,10 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+       offlineGeneration = true,
+       verifyTransactions = true)
+     val chainSettings = empty.chainSettings.copy(blockInterval = 2.seconds)
+-    empty.copy(nodeSettings = nodeSettings, chainSettings = chainSettings)
++    empty.copy(nodeSettings = nodeSettings, chainSettings = chainSettings, networkType = NetworkType.Tests)
+   }
+ 
+-  it should "not include too costly transactions" in new TestKit(ActorSystem()) {
++  it should "not include too costly transactions" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+     system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+     val ergoSettings: ErgoSettings = defaultSettings.copy(directory = createTempDir.getAbsolutePath)
+@@ -95,15 +114,13 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+     val unsignedTx = new UnsignedErgoTransaction(IndexedSeq(input), IndexedSeq(), outputs)
+     val tx = defaultProver.sign(unsignedTx, IndexedSeq(boxToSpend), IndexedSeq(), r.s.stateContext).get
+     nodeViewHolderRef ! LocallyGeneratedTransaction(UnconfirmedTransaction(ErgoTransaction(tx), None))
+-    expectNoMessage(1 seconds)
+-    testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+-    testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+-    testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+-    await((readersHolderRef ? GetReaders).mapTo[Readers]).m.size shouldBe 0
+-
+-    //check that tx is included into UTXO set
+-    val state = await((readersHolderRef ? GetReaders).mapTo[Readers]).s.asInstanceOf[UtxoState]
+-    tx.outputs.foreach(o => state.boxById(o.id).get shouldBe o)
++    val state = eventually(timeout(newBlockDelay), interval(100.millis)) {
++      val readers = await((readersHolderRef ? GetReaders).mapTo[Readers])
++      readers.m.size shouldBe 0
++      val appliedState = readers.s.asInstanceOf[UtxoState]
++      tx.outputs.foreach(o => appliedState.boxById(o.id) shouldBe Some(o))
++      appliedState
++    }
+ 
+     // try to spend all the boxes with complex scripts
+     val costlyInputs = tx.outputs.map(o => Input(o.id, emptyProverResult))
+@@ -121,15 +138,20 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+       ).get
+     txCost shouldBe 439080
+ 
++    val rejectionProbe = new TestProbe(system)
++    system.eventStream.subscribe(rejectionProbe.ref, classOf[FailedTransaction])
++
+     // send costly transaction to the mempool
+     nodeViewHolderRef ! LocallyGeneratedTransaction(UnconfirmedTransaction(ErgoTransaction(costlyTx), None))
+ 
+-    testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+-    testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+-    testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
++    rejectionProbe.expectMsgPF(newBlockDelay) {
++      case FailedTransaction(rejected, error) =>
++        rejected.id shouldBe costlyTx.id
++        error shouldBe a[TooHighCostError]
++        error.asInstanceOf[TooHighCostError].txCost shouldBe Some(439080)
++    }
+ 
+-    // costly tx was removed from mempool
+-    expectNoMessage(1 second)
++    // costly tx was rejected before mempool admission
+     await((readersHolderRef ? GetReaders).mapTo[Readers]).m.size shouldBe 0
+     // costly tx was not included
+     val state2 = await((readersHolderRef ? GetReaders).mapTo[Readers]).s.asInstanceOf[UtxoState]
+@@ -137,7 +159,7 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+     costlyTx.outputs.foreach(o => state2.boxById(o.id) shouldBe None)
+   }
+ 
+-  it should "not freeze while mempool is full" in new TestKit(ActorSystem()) {
++  it should "not freeze while mempool is full" in new TestKit(newActorSystem()) {
+     // generate amount of transactions, twice more than can fit in one block
+     val desiredSize: Int = Math.ceil((parameters.maxBlockCost / ErgoInterpreter.interpreterInitCost) * 1.2).toInt
+     val ergoSettings: ErgoSettings = defaultSettings.copy(directory = createTempDir.getAbsolutePath)
+@@ -214,7 +236,7 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+     }
+   }
+ 
+-  it should "include only one transaction from 2 spending the same box" in new TestKit(ActorSystem()) {
++  it should "include only one transaction from 2 spending the same box through internal solution submission" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+     system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+     val ergoSettings: ErgoSettings = defaultSettings.copy(directory = createTempDir.getAbsolutePath)
+@@ -262,23 +284,28 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+     minerRef.tell(GenerateCandidate(Seq(tx2), reply = true, forced = false, optPk = None), testProbe.ref)
+     testProbe.expectMsgPF(candidateGenDelay) {
+       case StatusReply.Success(candidate: Candidate) =>
+-        val block = extractFullBlockFromProveResult(
+-          defaultSettings.chainSettings.powScheme
+-            .proveCandidate(candidate.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate.parameters)
+-        )
++        // The generator replies directly to the forwarded request. Native mining
++        // threads submit solutions to this same actor.
++        val candidateGenerator = testProbe.lastSender
++        val block = defaultSettings.chainSettings.powScheme
++          .proveCandidate(candidate.candidateBlock, defaultMinerSecret.w, 0, 1000, candidate.parameters) match {
++          case OrderingBlockFound(fullBlock) => fullBlock
++          case other => fail(s"Expected an ordering block solution, got $other")
++        }
+         testProbe.expectNoMessage(200.millis)
+-        minerRef.tell(block.header.powSolution, testProbe.ref)
++        candidateGenerator.tell(OrderingSolutionFound(block.header.powSolution), testProbe.ref)
+ 
+-        // we fish either for ack or SSM as the order is non-deterministic
++        // The reply and application event may arrive in either order. Other
++        // native mining threads may also apply blocks while this solution is handled.
++        var acknowledged = false
++        var applied = false
+         testProbe.fishForMessage(blockValidationDelay) {
+           case StatusReply.Success(()) =>
+-            testProbe.expectMsgPF(candidateGenDelay) {
+-              case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            }
+-            true
+-          case FullBlockApplied(header) if header.id != block.header.parentId =>
+-            testProbe.expectMsg(StatusReply.Success(()))
+-            true
++            acknowledged = true
++            applied
++          case FullBlockApplied(header) =>
++            applied = applied || header.id == block.header.id
++            acknowledged && applied
+         }
+     }
+     testProbe.expectMsgClass(newBlockDelay, newBlockSignal)
+@@ -313,7 +340,7 @@ class ErgoMinerSpec extends AnyFlatSpec with ErgoTestHelpers with Eventually {
+     system.terminate()
+   }
+ 
+-  it should "include mandatory transactions" in new TestKit(ActorSystem()) {
++  it should "include mandatory transactions" in new TestKit(newActorSystem()) {
+     val testProbe = new TestProbe(system)
+     system.eventStream.subscribe(testProbe.ref, newBlockSignal)
+     val ergoSettings: ErgoSettings = defaultSettings.copy(directory = createTempDir.getAbsolutePath)
+diff --git a/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixCandidateCacheSpec.scala b/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixCandidateCacheSpec.scala
+new file mode 100644
+index 000000000..c78b2296e
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixCandidateCacheSpec.scala
+@@ -0,0 +1,105 @@
++package org.ergoplatform.mining
++
++import org.ergoplatform.mining.CandidateGenerator.Candidate
++import org.ergoplatform.modifiers.history.extension.ExtensionCandidate
++import org.ergoplatform.settings.Algos
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants.{defaultMinerPk, emptyStateContext, parameters}
++import org.ergoplatform.utils.ErgoNodeTestConstants.settings
++import org.ergoplatform.utils.generators.ErgoCoreGenerators.proveDlogGen
++import org.ergoplatform.utils.generators.ValidBlocksGenerators.{createUtxoState, validFullBlock}
++import scorex.util.bytesToId
++import scorex.crypto.authds.LeafData
++import scorex.crypto.hash.Digest32
++
++class MatrixCandidateCacheSpec extends ErgoCorePropertyTest {
++  private lazy val candidate: Candidate = {
++    val state = createUtxoState(settings)._1
++    try {
++      val txs = CandidateGenerator.collectEmission(state, defaultMinerPk, emptyStateContext).toSeq
++      val block = validFullBlock(None, state, txs)
++      val header = block.header
++      val candidateBlock = CandidateBlock(None, header.version, header.nBits, header.stateRoot,
++        block.adProofs.get.proofBytes, txs, header.timestamp, ExtensionCandidate(block.extension.fields),
++        header.votes, InputBlockFields.empty, Seq.empty, txs)
++      Candidate(candidateBlock, settings.chainSettings.powScheme.deriveExternalCandidate(candidateBlock, defaultMinerPk),
++        Seq.empty, parameters)
++    } finally state.closeStorage()
++  }
++
++  private def withInputTip(bytes: Array[Byte]): Candidate = {
++    val fields = candidate.candidateBlock.inputBlockFields
++    candidate.copy(candidateBlock = candidate.candidateBlock.copy(inputBlockFields =
++      new InputBlockFields(Some(bytes), fields.transactionsDigest, Algos.emptyMerkleTreeRoot,
++        fields.inputBlockFieldsProof)))
++  }
++
++  property("an absent candidate is never a cache hit") {
++    CandidateGenerator.cachedFor(None, Seq.empty, defaultMinerPk, None) shouldBe false
++  }
++
++  property("a legacy candidate without an input tip remains a cache hit") {
++    CandidateGenerator.cachedFor(Some(candidate), Seq.empty, defaultMinerPk, None) shouldBe true
++  }
++
++  property("the same selected input ID matches independently allocated bytes") {
++    val stored = Array.fill[Byte](32)(1)
++    val selected = stored.clone()
++    (stored eq selected) shouldBe false
++    CandidateGenerator.cachedFor(Some(withInputTip(stored)), Seq.empty, defaultMinerPk,
++      Some(bytesToId(selected))) shouldBe true
++  }
++
++  property("selection of a first remote input tip invalidates a no-input candidate") {
++    CandidateGenerator.cachedFor(Some(candidate), Seq.empty, defaultMinerPk,
++      Some(bytesToId(Array.fill[Byte](32)(1)))) shouldBe false
++  }
++
++  property("selection of a different input fork invalidates the previous candidate") {
++    CandidateGenerator.cachedFor(Some(withInputTip(Array.fill[Byte](32)(1))), Seq.empty, defaultMinerPk,
++      Some(bytesToId(Array.fill[Byte](32)(2)))) shouldBe false
++  }
++
++  property("clearing the selected input tip invalidates an input-linked candidate") {
++    CandidateGenerator.cachedFor(Some(withInputTip(Array.fill[Byte](32)(1))), Seq.empty,
++      defaultMinerPk, None) shouldBe false
++  }
++
++  property("processing new transaction bodies invalidates a candidate with the same input tip") {
++    val tip = Array.fill[Byte](32)(1)
++    val advancedDigest = Algos.merkleTreeRoot(candidate.candidateBlock.transactions.map(tx =>
++      LeafData @@ tx.serializedId))
++    advancedDigest.toSeq should not be Algos.emptyMerkleTreeRoot.toSeq
++    CandidateGenerator.cachedFor(Some(withInputTip(tip)), Seq.empty, defaultMinerPk,
++      Some(bytesToId(tip)), advancedDigest) shouldBe false
++  }
++
++  property("equal processed-prefix digests match independently allocated bytes") {
++    val tip = Array.fill[Byte](32)(1)
++    val cached = withInputTip(tip)
++    val stored = cached.candidateBlock.inputBlockFields.prevTransactionsDigest
++    val selected = Digest32 @@ stored.clone()
++    (stored.asInstanceOf[AnyRef] eq selected.asInstanceOf[AnyRef]) shouldBe false
++    CandidateGenerator.cachedFor(Some(cached), Seq.empty, defaultMinerPk,
++      Some(bytesToId(tip)), selected) shouldBe true
++  }
++
++  property("the selected input key does not bypass the miner public key") {
++    val differentPk = proveDlogGen.sample.get
++    differentPk should not be defaultMinerPk
++    CandidateGenerator.cachedFor(Some(candidate), Seq.empty, differentPk, None) shouldBe false
++  }
++
++  property("matching explicitly requested transactions remain a cache hit") {
++    val requested = candidate.candidateBlock.transactions
++    requested should not be empty
++    val explicitCandidate = candidate.copy(txsToInclude = requested)
++    CandidateGenerator.cachedFor(Some(explicitCandidate), requested, defaultMinerPk, None) shouldBe true
++  }
++
++  property("a new explicit transaction request still invalidates an empty-request cache key") {
++    val requested = candidate.candidateBlock.transactions
++    requested should not be empty
++    CandidateGenerator.cachedFor(Some(candidate), requested, defaultMinerPk, None) shouldBe false
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixFeeSelectionSpec.scala b/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixFeeSelectionSpec.scala
+new file mode 100644
+index 000000000..f33787294
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixFeeSelectionSpec.scala
+@@ -0,0 +1,470 @@
++package org.ergoplatform.mining
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.{ErgoBox, ErgoBoxCandidate, ErgoTreePredef, Input}
++import org.ergoplatform.modifiers.history.BlockTransactions
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.modifiers.mempool.ErgoTransaction
++import org.ergoplatform.nodeView.state.{BoxHolder, UtxoState}
++import org.ergoplatform.settings.Constants.TrueTree
++import org.ergoplatform.utils.{ErgoCompilerHelpers, ErgoCorePropertyTest}
++import org.ergoplatform.utils.ErgoCoreTestConstants.{defaultMinerPk, emptyVSUpdate, parameters}
++import org.ergoplatform.utils.ErgoNodeTestConstants.settings
++import org.scalatest.Outcome
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.interpreter.ProverResult
++
++class MatrixFeeSelectionSpec extends ErgoCorePropertyTest with ErgoCompilerHelpers {
++  private val states = scala.collection.mutable.ArrayBuffer.empty[UtxoState]
++
++  override protected def withFixture(test: NoArgTest): Outcome = {
++    try super.withFixture(test)
++    finally {
++      try states.foreach(_.closeStorage())
++      finally states.clear()
++    }
++  }
++
++  private val fee = 1000000L
++  private val delay = settings.chainSettings.monetary.minerRewardDelay
++  private val feeTree = ErgoTreePredef.feeProposition(delay)
++  private val rewardTree = ErgoTreePredef.rewardOutputScript(delay, defaultMinerPk)
++  private val orderingTree = compileSourceV5("CONTEXT.minerPubKey.size >= 0", 0)
++
++  private def box(index: Byte, tree: ErgoTree = TrueTree): ErgoBox = new ErgoBox(
++    value = 1000000000L, ergoTree = tree, creationHeight = 0,
++    additionalTokens = Colls.emptyColl, additionalRegisters = Map.empty,
++    transactionId = bytesToId(Array.fill(32)(index)), index = 0
++  )
++
++  private def payment(source: ErgoBox): ErgoTransaction = ErgoTransaction(
++    IndexedSeq(Input(source.id, ProverResult.empty)), IndexedSeq.empty,
++    IndexedSeq(
++      new ErgoBoxCandidate(source.value - fee, TrueTree, 1),
++      new ErgoBoxCandidate(fee, feeTree, 1)
++    )
++  )
++
++  private def state(boxes: Seq[ErgoBox], protocolCost: Int = parameters.maxBlockCost): UtxoState = {
++    val created = UtxoState.fromBoxHolder(BoxHolder(boxes), None, createTempDir(), settings,
++      parameters.withBlockCost(protocolCost))
++    states += created
++    created
++  }
++
++  private def select(boxes: Seq[ErgoBox], transactions: Seq[ErgoTransaction], version: Byte,
++                     prefix: Seq[ErgoTransaction] = Seq.empty,
++                     maxCost: Int = parameters.maxBlockCost,
++                     maxSize: Int = parameters.maxBlockSize,
++                     protocolCost: Int = parameters.maxBlockCost) = {
++    val us = state(boxes, protocolCost)
++    val context = us.stateContext.upcoming(defaultMinerPk.value, 1L,
++      settings.chainSettings.initialNBits, Array.emptyByteArray, emptyVSUpdate, version)
++    val result = CandidateGenerator.collectTxs(defaultMinerPk, maxCost,
++      maxSize, us, context, transactions, prefix)
++    Seq(prefix ++ result._1, prefix ++ result._2).filter(_.nonEmpty).foreach { payload =>
++      us.proofsForTransactions(payload).isSuccess shouldBe true
++      payload.foldLeft(Vector.empty[ErgoTransaction]) { (applied, tx) =>
++        us.withTransactions(applied).validateWithCost(tx, context, protocolCost,
++          None, softFieldsAllowed = true).isSuccess shouldBe true
++        applied :+ tx
++      }
++    }
++    result
++  }
++
++  private def payloadCost(boxes: Seq[ErgoBox], txs: Seq[ErgoTransaction], version: Byte): Int = {
++    val us = state(boxes, 10000000)
++    val context = us.stateContext.upcoming(defaultMinerPk.value, 1L,
++      settings.chainSettings.initialNBits, Array.emptyByteArray, emptyVSUpdate, version)
++    val (_, cost) = txs.foldLeft((Vector.empty[ErgoTransaction], 0)) { case ((applied, total), tx) =>
++      val txCost = us.withTransactions(applied).validateWithCost(tx, context, 10000000,
++        None, softFieldsAllowed = true).get
++      (applied :+ tx, total + txCost)
++    }
++    cost
++  }
++
++  private def sectionSize(txs: Seq[ErgoTransaction]): Int =
++    BlockTransactions(bytesToId(Array.fill[Byte](32)(0)), Header.Interpreter60Version, txs).size
++
++  private def transactionCost(boxes: Seq[ErgoBox], tx: ErgoTransaction,
++                              prefix: Seq[ErgoTransaction] = Seq.empty): Int = {
++    val us = state(boxes)
++    val context = us.stateContext.upcoming(defaultMinerPk.value, 1L,
++      settings.chainSettings.initialNBits, Array.emptyByteArray, emptyVSUpdate, Header.Interpreter60Version)
++    us.withTransactions(prefix).validateWithCost(tx, context, parameters.maxBlockCost,
++      None, softFieldsAllowed = true).get
++  }
++
++  private def assertFeeReward(reward: ErgoTransaction, payments: Seq[ErgoTransaction]): Unit = {
++    reward.inputs.map(in => bytesToId(in.boxId)) should contain theSameElementsAs
++      payments.map(tx => bytesToId(tx.outputs.last.id))
++    reward.dataInputs shouldBe empty
++    reward.outputs should have size 1
++    val output = reward.outputs.head
++    output.value shouldBe payments.size.toLong * fee
++    output.value should be > 0L
++    output.propositionBytes.toSeq shouldBe rewardTree.bytes.toSeq
++    output.creationHeight shouldBe 1
++    output.additionalTokens.length shouldBe 0
++  }
++
++  Seq(Header.InitialVersion, Header.HardeningVersion, Header.Interpreter50Version).foreach { version =>
++    property(s"version $version collects the payment fee into the exact delayed miner reward") {
++      val source = box(1)
++      val tx = payment(source)
++      val (input, ordering, invalid) = select(Seq(source), Seq(tx), version)
++      input shouldBe empty
++      invalid shouldBe empty
++      ordering should have size 2
++      ordering.head.id shouldBe tx.id
++      assertFeeReward(ordering.last, Seq(tx))
++    }
++  }
++
++  property("version 4 collects an ordering payment fee in its ordering payload") {
++    val source = box(2, orderingTree)
++    val tx = payment(source)
++    val (input, ordering, invalid) = select(Seq(source), Seq(tx), Header.Interpreter60Version)
++    input shouldBe empty
++    invalid shouldBe empty
++    ordering should have size 2
++    ordering.head.id shouldBe tx.id
++    assertFeeReward(ordering.last, Seq(tx))
++  }
++
++  property("version 4 leaves a new input payment fee out of the alternative ordering payload") {
++    val source = box(3)
++    val tx = payment(source)
++    val (input, ordering, invalid) = select(Seq(source), Seq(tx), Header.Interpreter60Version)
++    input.map(_.id) shouldBe Seq(tx.id)
++    ordering shouldBe empty
++    invalid shouldBe empty
++  }
++
++  property("independent mixed payments collect only the ordering source fee") {
++    val inputSource = box(4)
++    val orderingSource = box(5, orderingTree)
++    val inputTx = payment(inputSource)
++    val orderingTx = payment(orderingSource)
++    val (input, ordering, invalid) = select(Seq(inputSource, orderingSource),
++      Seq(inputTx, orderingTx), Header.Interpreter60Version)
++    input.map(_.id) shouldBe Seq(inputTx.id)
++    invalid shouldBe empty
++    ordering should have size 2
++    ordering.head.id shouldBe orderingTx.id
++    assertFeeReward(ordering.last, Seq(orderingTx))
++  }
++
++  property("an accepted input payment produces its fee reward with an empty new pool") {
++    val source = box(10)
++    val accepted = payment(source)
++    val (input, ordering, invalid) = select(Seq(source), Seq.empty,
++      Header.Interpreter60Version, prefix = Seq(accepted))
++    input shouldBe empty
++    invalid shouldBe empty
++    ordering should have size 1
++    assertFeeReward(ordering.head, Seq(accepted))
++  }
++
++  property("an accepted input payment duplicated in the pool is skipped without invalidation") {
++    val source = box(11)
++    val accepted = payment(source)
++    val (input, ordering, invalid) = select(Seq(source), Seq(accepted),
++      Header.Interpreter60Version, prefix = Seq(accepted))
++    input shouldBe empty
++    invalid shouldBe empty
++    ordering should have size 1
++    ordering.map(_.id) should not contain accepted.id
++    assertFeeReward(ordering.head, Seq(accepted))
++  }
++
++  property("a descendant of an accepted input payment uses the accepted prefix state") {
++    val source = box(12)
++    val accepted = payment(source)
++    val child = payment(accepted.outputs.head)
++    val (input, ordering, invalid) = select(Seq(source), Seq(child),
++      Header.Interpreter60Version, prefix = Seq(accepted))
++    input.map(_.id) shouldBe Seq(child.id)
++    invalid shouldBe empty
++    ordering should have size 1
++    assertFeeReward(ordering.head, Seq(accepted))
++  }
++
++  property("new input fees remain excluded while accepted input fees are collected") {
++    val acceptedSource = box(13)
++    val newSource = box(14)
++    val accepted = payment(acceptedSource)
++    val fresh = payment(newSource)
++    val (input, ordering, invalid) = select(Seq(acceptedSource, newSource), Seq(fresh),
++      Header.Interpreter60Version, prefix = Seq(accepted))
++    input.map(_.id) shouldBe Seq(fresh.id)
++    invalid shouldBe empty
++    ordering should have size 1
++    assertFeeReward(ordering.head, Seq(accepted))
++  }
++
++  property("an ordering payment is not admitted when its fee reward exceeds the size budget") {
++    val source = box(15, orderingTree)
++    val tx = payment(source)
++    val (_, complete, _) = select(Seq(source), Seq(tx), Header.Interpreter60Version)
++    complete should have size 2
++    val budget = sectionSize(Seq(tx))
++    sectionSize(complete) should be > budget
++    val (input, ordering, invalid) = select(Seq(source), Seq(tx), Header.Interpreter60Version,
++      maxSize = budget)
++    input shouldBe empty
++    ordering shouldBe empty
++    invalid shouldBe empty
++  }
++
++  property("an ordering payment is not admitted when its fee reward exceeds the cost budget") {
++    val source = box(16, orderingTree)
++    val tx = payment(source)
++    val (_, complete, _) = select(Seq(source), Seq(tx), Header.Interpreter60Version)
++    complete should have size 2
++    val budget = transactionCost(Seq(source), tx)
++    budget should be > 0
++    transactionCost(Seq(source), complete.last, Seq(tx)) should be > 0
++    val (input, ordering, invalid) = select(Seq(source), Seq(tx), Header.Interpreter60Version,
++      maxCost = budget)
++    input shouldBe empty
++    ordering shouldBe empty
++    invalid shouldBe empty
++  }
++
++  Seq("size", "cost").foreach { limit =>
++    property(s"an accepted prefix remains valid with its fee unspent when the reward exceeds the $limit budget") {
++      val source = box(17)
++      val accepted = payment(source)
++      val (_, complete, _) = select(Seq(source), Seq.empty, Header.Interpreter60Version,
++        prefix = Seq(accepted))
++      complete should have size 1
++      val prefixSize = sectionSize(Seq(accepted))
++      sectionSize(Seq(accepted) ++ complete) should be > prefixSize
++      val prefixCost = transactionCost(Seq(source), accepted)
++      transactionCost(Seq(source), complete.head, Seq(accepted)) should be > 0
++      val (input, ordering, invalid) = select(Seq(source), Seq.empty, Header.Interpreter60Version,
++        prefix = Seq(accepted),
++        maxCost = if (limit == "cost") prefixCost else parameters.maxBlockCost,
++        maxSize = if (limit == "size") prefixSize else parameters.maxBlockSize)
++      input shouldBe empty
++      ordering shouldBe empty
++      invalid shouldBe empty
++      val unspent = org.ergoplatform.nodeView.state.ErgoState.newBoxes(Seq(accepted) ++ ordering)
++      unspent.map(b => bytesToId(b.id)) should contain(bytesToId(accepted.outputs.last.id))
++    }
++  }
++
++  Seq(true, false).foreach { fits =>
++    property(s"new input growth is ${if (fits) "accepted" else "deferred"} according to the cumulative conservative cost allowance") {
++      val sources = Seq(box(18), box(19))
++      val txs = sources.map { source =>
++        ErgoTransaction(IndexedSeq(Input(source.id, ProverResult.empty)), IndexedSeq.empty,
++          IndexedSeq(new ErgoBoxCandidate(source.value, TrueTree, 1)))
++      }
++      val costs = txs.map(tx => transactionCost(sources, tx))
++      costs.foreach(_ should be > 0)
++      val total = costs.sum
++      total should be < parameters.maxBlockCost
++      val allowance = if (fits) total + 100 else costs.max + (total - costs.max) / 2
++      allowance should be > costs.max
++      allowance should be < parameters.maxBlockCost
++      if (fits) total should be <= allowance else total should be > allowance
++      val (input, ordering, invalid) = select(sources, Seq(txs.last),
++        Header.Interpreter60Version, prefix = Seq(txs.head), maxCost = allowance)
++      input.map(_.id) shouldBe (if (fits) Seq(txs.last.id) else Seq.empty)
++      ordering shouldBe empty
++      invalid shouldBe empty
++    }
++  }
++
++  property("a mandatory prefix above the conservative allowance is retained without additional input growth") {
++    val sources = Seq(box(22), box(23), box(24))
++    val txs = sources.map { source =>
++      ErgoTransaction(IndexedSeq(Input(source.id, ProverResult.empty)), IndexedSeq.empty,
++        IndexedSeq(new ErgoBoxCandidate(source.value, TrueTree, 1)))
++    }
++    val costs = txs.map(tx => transactionCost(sources, tx))
++    costs.foreach(_ should be > 0)
++    val prefixCost = costs.take(2).sum
++    val allowance = costs.max + (prefixCost - costs.max) / 2
++    allowance should be > costs.max
++    prefixCost should be > allowance
++    costs.sum should be < parameters.maxBlockCost
++    val (input, ordering, invalid) = select(sources, Seq(txs.last),
++      Header.Interpreter60Version, prefix = txs.take(2), maxCost = allowance)
++    input shouldBe empty
++    ordering shouldBe empty
++    invalid shouldBe empty
++    val retained = org.ergoplatform.nodeView.state.ErgoState.newBoxes(txs.take(2) ++ ordering)
++    retained.map(b => bytesToId(b.id)).toSet shouldBe
++      txs.take(2).flatMap(_.outputs).map(b => bytesToId(b.id)).toSet
++  }
++
++  property("a new input payment is deferred when its accepted prefix fills the ordering size budget") {
++    val acceptedSource = box(20)
++    val newSource = box(21)
++    val accepted = payment(acceptedSource)
++    val fresh = payment(newSource)
++    val budget = math.max(sectionSize(Seq(accepted)), sectionSize(Seq(fresh)))
++    sectionSize(Seq(accepted, fresh)) should be > budget
++    val (input, ordering, invalid) = select(Seq(acceptedSource, newSource), Seq(fresh),
++      Header.Interpreter60Version, prefix = Seq(accepted), maxSize = budget)
++    input shouldBe empty
++    ordering shouldBe empty
++    invalid shouldBe empty
++    val unspent = org.ergoplatform.nodeView.state.ErgoState.newBoxes(Seq(accepted) ++ ordering)
++    unspent.map(b => bytesToId(b.id)) should contain(bytesToId(accepted.outputs.last.id))
++  }
++
++  for {
++    version <- Seq(Header.InitialVersion, Header.Interpreter50Version, Header.Interpreter60Version)
++    count <- Seq(127, 128)
++  } {
++    property(s"version $version matches serialized section capacity for $count transactions") {
++      val sources = (0 until count).map(i => box(i.toByte, orderingTree))
++      val transactions = sources.map { source =>
++        ErgoTransaction(IndexedSeq(Input(source.id, ProverResult.empty)), IndexedSeq.empty,
++          IndexedSeq(new ErgoBoxCandidate(source.value, TrueTree, 1)))
++      }
++      def serializedSize(txs: Seq[ErgoTransaction]): Int =
++        BlockTransactions(bytesToId(Array.fill[Byte](32)(0)), version, txs).size
++      val totalCost = payloadCost(sources, transactions, version)
++      totalCost should be > parameters.maxBlockCost
++      val testProtocolCost = totalCost + 100000
++      testProtocolCost should be > totalCost
++      val exactSize = serializedSize(transactions)
++      val (input, ordering, invalid) = select(sources, transactions, version, maxSize = exactSize,
++        maxCost = testProtocolCost, protocolCost = testProtocolCost)
++      input shouldBe empty
++      invalid shouldBe empty
++      ordering.map(_.id) shouldBe transactions.map(_.id)
++      serializedSize(ordering) shouldBe exactSize
++
++      val (shortInput, shortOrdering, shortInvalid) =
++        select(sources, transactions, version, maxSize = exactSize - 1,
++          maxCost = testProtocolCost, protocolCost = testProtocolCost)
++      shortInput shouldBe empty
++      shortInvalid shouldBe empty
++      shortOrdering.map(_.id) shouldBe transactions.dropRight(1).map(_.id)
++      serializedSize(shortOrdering) should be <= (exactSize - 1)
++    }
++  }
++
++  property("cumulative prefix and new input cost cannot exceed the consensus ordering budget") {
++    val sources = Seq(box(30), box(31))
++    val txs = sources.map { source =>
++      ErgoTransaction(IndexedSeq(Input(source.id, ProverResult.empty)), IndexedSeq.empty,
++        IndexedSeq(new ErgoBoxCandidate(source.value, TrueTree, 1)))
++    }
++    val individualCosts = txs.map(tx => payloadCost(sources, Seq(tx), Header.Interpreter60Version))
++    individualCosts.foreach(_ should be > 0)
++    // Exact measured cost leaves only a rounded JIT allowance after initialization.
++    // Give each script headroom while keeping the combined payload over budget.
++    val consensusBudget = individualCosts.max + (individualCosts.sum - individualCosts.max) / 2
++    consensusBudget should be > individualCosts.max
++    individualCosts.sum should be > consensusBudget
++    val restrictedState = state(sources, consensusBudget)
++    val restrictedContext = restrictedState.stateContext.upcoming(defaultMinerPk.value, 1L,
++      settings.chainSettings.initialNBits, Array.emptyByteArray, emptyVSUpdate, Header.Interpreter60Version)
++    val verifier = org.ergoplatform.wallet.interpreter.ErgoInterpreter(restrictedContext.currentParameters)
++    val prefixState = restrictedState.withTransactions(Seq(txs.head))
++    val restrictedCosts = txs.map { tx =>
++      val validated = prefixState.validateWithCost(tx, restrictedContext, consensusBudget,
++        Some(verifier), softFieldsAllowed = true)
++      withClue("Each transaction must validate individually under the restricted consensus context: ") {
++        validated.isSuccess shouldBe true
++      }
++      validated.get
++    }
++    restrictedCosts.foreach(_ should be <= consensusBudget)
++    restrictedCosts.sum should be > consensusBudget
++    val (input, ordering, invalid) = select(sources, Seq(txs.last), Header.Interpreter60Version,
++      prefix = Seq(txs.head), maxCost = consensusBudget, protocolCost = consensusBudget)
++    input shouldBe empty
++    ordering shouldBe empty
++    invalid shouldBe empty
++  }
++
++  property("an accepted prefix collects only the optional fee chunk that fits") {
++    val sources = (0 to 100).map(i => box(i.toByte))
++    val accepted = sources.map(payment)
++    val testProtocolCost = 10000000
++    val (_, rewards, _) = select(sources, Seq.empty, Header.Interpreter60Version,
++      prefix = accepted, maxCost = testProtocolCost, protocolCost = testProtocolCost)
++    rewards should have size 2
++    val budget = sectionSize(accepted ++ rewards.take(1))
++    sectionSize(accepted ++ rewards) should be > budget
++    val (input, ordering, invalid) = select(sources, Seq.empty, Header.Interpreter60Version,
++      prefix = accepted, maxCost = testProtocolCost, protocolCost = testProtocolCost, maxSize = budget)
++    input shouldBe empty
++    invalid shouldBe empty
++    ordering.map(_.id) shouldBe rewards.take(1).map(_.id)
++    val collectedIds = ordering.flatMap(_.inputs).map(in => bytesToId(in.boxId)).toSet
++    assertFeeReward(ordering.head, accepted.filter(tx => collectedIds.contains(bytesToId(tx.outputs.last.id))))
++    val unspent = org.ergoplatform.nodeView.state.ErgoState.newBoxes(accepted ++ ordering)
++      .filter(b => b.propositionBytes.toSeq == feeTree.bytes.toSeq)
++    unspent.map(b => bytesToId(b.id)).toSet shouldBe
++      accepted.map(tx => bytesToId(tx.outputs.last.id)).toSet.diff(collectedIds)
++    unspent should not be empty
++  }
++
++  property("a new ordering payment retains its required fee chunk ahead of optional prefix fees") {
++    val prefixSources = (0 until 100).map(i => box(i.toByte))
++    val newSource = box((-1).toByte, orderingTree)
++    val sources = prefixSources :+ newSource
++    val accepted = prefixSources.map(payment)
++    val fresh = payment(newSource)
++    val testProtocolCost = 10000000
++    val (_, complete, _) = select(sources, Seq(fresh), Header.Interpreter60Version,
++      prefix = accepted, maxCost = testProtocolCost, protocolCost = testProtocolCost)
++    complete.head.id shouldBe fresh.id
++    val rewards = complete.tail
++    rewards should have size 2
++    val (required, optional) = rewards.partition(_.inputs.exists(in =>
++      bytesToId(in.boxId) == bytesToId(fresh.outputs.last.id)))
++    required should have size 1
++    optional should have size 1
++    val budget = sectionSize(accepted ++ Seq(fresh) ++ required)
++    sectionSize(accepted ++ complete) should be > budget
++    val (input, ordering, invalid) = select(sources, Seq(fresh), Header.Interpreter60Version,
++      prefix = accepted, maxCost = testProtocolCost, protocolCost = testProtocolCost, maxSize = budget)
++    input shouldBe empty
++    invalid shouldBe empty
++    ordering.map(_.id) shouldBe (Seq(fresh) ++ required).map(_.id)
++    val collectedIds = required.head.inputs.map(in => bytesToId(in.boxId)).toSet
++    assertFeeReward(required.head, (accepted :+ fresh).filter(tx => collectedIds.contains(bytesToId(tx.outputs.last.id))))
++    val unspent = org.ergoplatform.nodeView.state.ErgoState.newBoxes(accepted ++ ordering)
++      .filter(b => b.propositionBytes.toSeq == feeTree.bytes.toSeq)
++    unspent.map(b => bytesToId(b.id)).toSet shouldBe
++      accepted.map(tx => bytesToId(tx.outputs.last.id)).toSet.diff(collectedIds)
++    unspent should not be empty
++  }
++
++  property("fee reward batches consume all fee boxes when there are more than one hundred") {
++    val batchSize = 100
++    val sources = (0 to batchSize).map(i => box(i.toByte))
++    val payments = sources.map(payment)
++    val us = state(sources)
++    val context = us.stateContext.upcoming(defaultMinerPk.value, 1L,
++      settings.chainSettings.initialNBits, Array.emptyByteArray, emptyVSUpdate, Header.InitialVersion)
++    val rewards = CandidateGenerator.collectRewards(None, us.stateContext.currentHeight,
++      payments, defaultMinerPk, context)
++    rewards should have size 2
++    val consumed = rewards.flatMap(_.inputs).map(in => bytesToId(in.boxId))
++    consumed should contain theSameElementsAs payments.map(tx => bytesToId(tx.outputs.last.id))
++    consumed.distinct.size shouldBe payments.size
++    rewards.foreach { reward =>
++      reward.inputs should not be empty
++      reward.inputs.size should be <= batchSize
++      val consumedIds = reward.inputs.map(in => bytesToId(in.boxId)).toSet
++      assertFeeReward(reward, payments.filter(tx => consumedIds.contains(bytesToId(tx.outputs.last.id))))
++    }
++    rewards.flatMap(_.outputs).map(_.value).sum shouldBe payments.size.toLong * fee
++    us.proofsForTransactions(payments ++ rewards).isSuccess shouldBe true
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixTransactionSelectionSpec.scala b/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixTransactionSelectionSpec.scala
+new file mode 100644
+index 000000000..0264c87ac
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/llm_generated/MatrixTransactionSelectionSpec.scala
+@@ -0,0 +1,185 @@
++package org.ergoplatform.mining
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.{DataInput, ErgoBox, ErgoBoxCandidate, Input}
++import org.ergoplatform.modifiers.mempool.ErgoTransaction
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.nodeView.state.{BoxHolder, UtxoState}
++import org.ergoplatform.settings.Parameters
++import org.ergoplatform.settings.Constants.{FalseTree, TrueTree}
++import org.ergoplatform.utils.{ErgoCompilerHelpers, ErgoCorePropertyTest}
++import org.ergoplatform.utils.ErgoCoreTestConstants.{defaultMinerPk, emptyVSUpdate, parameters}
++import org.ergoplatform.utils.ErgoNodeTestConstants.settings
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.interpreter.ProverResult
++
++class MatrixTransactionSelectionSpec extends ErgoCorePropertyTest with ErgoCompilerHelpers {
++  private val orderingTree = compileSourceV5("CONTEXT.minerPubKey.size >= 0", 0)
++
++  private def box(index: Byte, tree: ErgoTree = TrueTree): ErgoBox = new ErgoBox(
++    value = 1000000000L, ergoTree = tree, creationHeight = 0,
++    additionalTokens = Colls.emptyColl, additionalRegisters = Map.empty,
++    transactionId = bytesToId(Array.fill(32)(index)), index = 0
++  )
++
++  private def spend(input: ErgoBox, outputTree: ErgoTree = TrueTree,
++                    dataInputs: IndexedSeq[DataInput] = IndexedSeq.empty): ErgoTransaction =
++    ErgoTransaction(IndexedSeq(Input(input.id, ProverResult.empty)), dataInputs,
++      IndexedSeq(new ErgoBoxCandidate(input.value, outputTree, 1)))
++
++  private def select(boxes: Seq[ErgoBox], txs: Seq[ErgoTransaction],
++                     version: Byte = Header.Interpreter60Version,
++                     currentVersion: Byte = Header.InitialVersion,
++                     maxCost: Int = parameters.maxBlockCost,
++                     maxSize: Int = parameters.maxBlockSize) = {
++    val currentParameters = Parameters(parameters.height,
++      parameters.parametersTable.updated(Parameters.BlockVersion, currentVersion.toInt), parameters.proposedUpdate)
++    val state = UtxoState.fromBoxHolder(BoxHolder(boxes), None, createTempDir(), settings, currentParameters)
++    try {
++      val context = state.stateContext.upcoming(defaultMinerPk.value, 1L, settings.chainSettings.initialNBits,
++        Array.emptyByteArray, emptyVSUpdate, version)
++      val result = CandidateGenerator.collectTxs(defaultMinerPk, maxCost,
++        maxSize, state, context, txs)
++      // Both selected payloads must have a UTXO proof independently of the other new payload.
++      Seq(result._1, result._2).filter(_.nonEmpty).foreach { payload =>
++        state.proofsForTransactions(payload).isSuccess shouldBe true
++      }
++      result
++    } finally state.closeStorage()
++  }
++
++  Seq(Header.InitialVersion, Header.HardeningVersion, Header.Interpreter50Version).foreach { version =>
++    property(s"version $version includes ordinary transactions and their descendants in ordering blocks") {
++      val initial = box(11)
++      val parent = spend(initial)
++      val child = spend(parent.outputs.head)
++      val (input, ordering, invalid) = select(Seq(initial), Seq(parent, child), version)
++      input shouldBe empty
++      ordering shouldBe Seq(parent, child)
++      invalid shouldBe empty
++    }
++  }
++
++  property("the first version 4 candidate partitions transactions while current parameters are version 3") {
++    val inputBox = box(12)
++    val orderingBox = box(13, orderingTree)
++    val inputTx = spend(inputBox)
++    val orderingTx = spend(orderingBox)
++    val (input, ordering, invalid) = select(Seq(inputBox, orderingBox), Seq(inputTx, orderingTx),
++      Header.Interpreter60Version, Header.Interpreter50Version)
++    input shouldBe Seq(inputTx)
++    ordering shouldBe Seq(orderingTx)
++    invalid shouldBe empty
++  }
++
++  property("legacy candidates keep dependencies between ordinary and context-dependent transactions") {
++    Seq(false, true).foreach { contextDependentParent =>
++      val initial = box(14, if (contextDependentParent) orderingTree else TrueTree)
++      val parent = spend(initial, if (contextDependentParent) TrueTree else orderingTree)
++      val child = spend(parent.outputs.head)
++      val (input, ordering, invalid) = select(Seq(initial), Seq(parent, child), Header.Interpreter50Version)
++      input shouldBe empty
++      ordering shouldBe Seq(parent, child)
++      invalid shouldBe empty
++    }
++  }
++
++  Seq(Header.Interpreter50Version, Header.Interpreter60Version).foreach { version =>
++    property(s"version $version rejects an unsatisfied script") {
++      val initial = box(15, FalseTree)
++      val tx = spend(initial)
++      val (input, ordering, invalid) = select(Seq(initial), Seq(tx), version)
++      input shouldBe empty
++      ordering shouldBe empty
++      invalid shouldBe Seq(tx.id)
++    }
++
++    property(s"version $version rejects a transaction exceeding the validation cost budget") {
++      val initial = box(16)
++      val tx = spend(initial)
++      val (input, ordering, invalid) = select(Seq(initial), Seq(tx), version, maxCost = 1)
++      input shouldBe empty
++      ordering shouldBe empty
++      invalid shouldBe Seq(tx.id)
++    }
++
++    property(s"version $version leaves a valid transaction unselected when the payload is full") {
++      val initial = box(17)
++      val tx = spend(initial)
++      val (input, ordering, invalid) = select(Seq(initial), Seq(tx), version, maxSize = 1)
++      input shouldBe empty
++      ordering shouldBe empty
++      invalid shouldBe empty
++    }
++  }
++
++  property("ordinary and soft-field transactions enter their respective partitions") {
++    val inputBox = box(1)
++    val orderingBox = box(2, orderingTree)
++    val inputTx = spend(inputBox)
++    val orderingTx = spend(orderingBox)
++    val (input, ordering, invalid) = select(Seq(inputBox, orderingBox), Seq(inputTx, orderingTx))
++    input shouldBe Seq(inputTx)
++    ordering shouldBe Seq(orderingTx)
++    invalid shouldBe empty
++  }
++
++  property("input-only dependency chains remain in the input payload") {
++    val initial = box(3)
++    val parent = spend(initial)
++    val child = spend(parent.outputs.head)
++    val (input, ordering, invalid) = select(Seq(initial), Seq(parent, child))
++    input shouldBe Seq(parent, child)
++    ordering shouldBe empty
++    invalid shouldBe empty
++  }
++
++  property("ordering-only dependency chains remain in the ordering payload") {
++    val initial = box(4, orderingTree)
++    val parent = spend(initial, orderingTree)
++    val child = spend(parent.outputs.head)
++    val (input, ordering, invalid) = select(Seq(initial), Seq(parent, child))
++    input shouldBe empty
++    ordering shouldBe Seq(parent, child)
++    invalid shouldBe empty
++  }
++
++  property("cross-partition spending dependencies and descendants are deferred without elimination") {
++    Seq(false, true).foreach { orderingParent =>
++      val initial = box(5, if (orderingParent) orderingTree else TrueTree)
++      val parent = spend(initial, if (orderingParent) TrueTree else orderingTree)
++      val child = spend(parent.outputs.head)
++      val grandchild = spend(child.outputs.head)
++      val independentBox = box(10)
++      val independent = spend(independentBox)
++      val (input, ordering, invalid) = select(Seq(initial, independentBox), Seq(parent, child, grandchild, independent))
++      (input ++ ordering) should contain theSameElementsAs Seq(parent, independent)
++      invalid shouldBe empty
++    }
++  }
++
++  property("cross-partition data dependencies are deferred in either direction") {
++    Seq(false, true).foreach { orderingParent =>
++      val first = box(6, if (orderingParent) orderingTree else TrueTree)
++      val second = box(7, if (orderingParent) TrueTree else orderingTree)
++      val parent = spend(first)
++      val child = spend(second, dataInputs = IndexedSeq(DataInput(parent.outputs.head.id)))
++      val (input, ordering, invalid) = select(Seq(first, second), Seq(parent, child))
++      (input ++ ordering) shouldBe Seq(parent)
++      invalid shouldBe empty
++    }
++  }
++
++  property("same-partition data dependencies remain selectable") {
++    val first = box(8)
++    val second = box(9)
++    val parent = spend(first)
++    val child = spend(second, dataInputs = IndexedSeq(DataInput(parent.outputs.head.id)))
++    val (input, ordering, invalid) = select(Seq(first, second), Seq(parent, child))
++    input shouldBe Seq(parent, child)
++    ordering shouldBe empty
++    invalid shouldBe empty
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/nodeView/mempool/AppliedTransactionConflictsSpec.scala b/src/test/scala/org/ergoplatform/nodeView/mempool/AppliedTransactionConflictsSpec.scala
+new file mode 100644
+index 000000000..8eaef5cc5
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/mempool/AppliedTransactionConflictsSpec.scala
+@@ -0,0 +1,115 @@
++package org.ergoplatform.nodeView.mempool
++
++import org.ergoplatform.{ErgoBoxCandidate, Input}
++import org.ergoplatform.modifiers.mempool.{ErgoTransaction, UnconfirmedTransaction}
++import org.ergoplatform.utils.ErgoTestHelpers
++import org.scalatest.flatspec.AnyFlatSpec
++import org.scalatest.matchers.should.Matchers
++import scorex.crypto.authds.ADKey
++
++class AppliedTransactionConflictsSpec extends AnyFlatSpec with ErgoTestHelpers with Matchers {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++  import org.ergoplatform.utils.ErgoNodeTestConstants._
++
++  private def transaction(seeds: Byte*)(fee: Long): ErgoTransaction = {
++    ErgoTransaction(
++      seeds.map(seed => new Input(ADKey @@ Array.fill(32)(seed), emptyProverResult)).toIndexedSeq,
++      IndexedSeq(new ErgoBoxCandidate(fee, feeProp, creationHeight = 0))
++    )
++  }
++
++  private def poolWith(txs: ErgoTransaction*): ErgoMemPool = {
++    val pool = ErgoMemPool.empty(settings).put(txs.map(UnconfirmedTransaction(_, None)))
++    val now = System.currentTimeMillis()
++    new ErgoMemPool(pool.pool, MemPoolStatistics(now, 7, now), pool.sortingOption)(settings)
++  }
++
++  it should "remove applied transaction conflicts when the applied transaction is absent" in {
++    val applied = transaction(1)(1000000L)
++    val conflict = transaction(1)(2000000L)
++    val unrelated = transaction(2)(1000000L)
++    val before = poolWith(conflict, unrelated)
++    before.contains(applied.id) shouldBe false
++    before.contains(conflict.id) shouldBe true
++
++    val after = before.removeWithDoubleSpends(Seq(applied))
++
++    after.getAll.map(_.id).toSet shouldBe Set(unrelated.id)
++    after.spentInputs.toSet shouldBe unrelated.inputs.map(_.boxId).toSet
++    after.pool.outputs.keySet shouldBe unrelated.outputs.map(_.id).toSet
++    after.stats.takenTxns shouldBe 8
++    before.contains(conflict.id) shouldBe true
++  }
++
++  it should "preserve statistics when an absent applied transaction has no conflicts" in {
++    val applied = transaction(1)(1000000L)
++    val unrelated = transaction(2)(1000000L)
++    val before = poolWith(unrelated)
++
++    val after = before.removeWithDoubleSpends(Seq(applied))
++
++    after.getAll shouldBe before.getAll
++    after.stats shouldBe before.stats
++    before.removeTxAndDoubleSpends(applied).stats shouldBe before.stats
++  }
++
++  it should "remove conflicts for every input of an absent applied transaction" in {
++    val applied = transaction(1, 2)(1000000L)
++    val first = transaction(1)(2000000L)
++    val second = transaction(2)(2000000L)
++    val unrelated = transaction(3)(1000000L)
++
++    val after = poolWith(first, second, unrelated).removeWithDoubleSpends(Seq(applied))
++
++    after.getAll.map(_.id).toSet shouldBe Set(unrelated.id)
++    after.stats.takenTxns shouldBe 9
++  }
++
++  it should "count a conflict sharing several inputs only once" in {
++    val applied = transaction(1, 2)(1000000L)
++    val conflict = transaction(1, 2)(2000000L)
++
++    val after = poolWith(conflict).removeWithDoubleSpends(Seq(applied, applied))
++
++    after.size shouldBe 0
++    after.stats.takenTxns shouldBe 8
++  }
++
++  it should "remove a present applied transaction once and retain its unconfirmed child" in {
++    val applied = transaction(1)(1000000L)
++    val child = applied.copy(
++      inputs = IndexedSeq(new Input(applied.outputs.head.id, emptyProverResult))
++    )
++    val unrelated = transaction(2)(1000000L)
++    val before = poolWith(applied, child, unrelated)
++
++    val after = before.removeWithDoubleSpends(Seq(applied, applied))
++
++    after.getAll.map(_.id).toSet shouldBe Set(child.id, unrelated.id)
++    after.stats.takenTxns shouldBe 8
++    after.pool.outputs.keySet shouldBe (child.outputs ++ unrelated.outputs).map(_.id).toSet
++  }
++
++  it should "remove an applied transaction retained only in the ordered index" in {
++    val applied = transaction(1)(1000000L)
++    val unrelated = transaction(2)(1000000L)
++    val healthy = poolWith(applied, unrelated)
++    val ordered = healthy.pool
++    val incomplete = new OrderedTxPool(
++      ordered.orderedTransactions,
++      ordered.transactionsRegistry - applied.id,
++      ordered.invalidatedTxIds,
++      ordered.outputs,
++      ordered.inputs -- applied.inputs.map(_.boxId)
++    )(settings)
++    val before = new ErgoMemPool(incomplete, healthy.stats, healthy.sortingOption)(settings)
++    before.contains(applied.id) shouldBe false
++    before.getAll.map(_.id).toSet shouldBe Set(applied.id, unrelated.id)
++
++    val after = before.removeWithDoubleSpends(Seq(applied))
++
++    after.getAll.map(_.id) shouldBe Seq(unrelated.id)
++    after.pool.outputs.keySet shouldBe unrelated.outputs.map(_.id).toSet
++    after.stats shouldBe before.stats
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/utils/generators/ErgoNodeTransactionGenerators.scala b/src/test/scala/org/ergoplatform/utils/generators/ErgoNodeTransactionGenerators.scala
+index 5766cc1ad..855a848f0 100644
+--- a/src/test/scala/org/ergoplatform/utils/generators/ErgoNodeTransactionGenerators.scala
++++ b/src/test/scala/org/ergoplatform/utils/generators/ErgoNodeTransactionGenerators.scala
+@@ -57,7 +57,13 @@ object ErgoNodeTransactionGenerators extends ScorexLogging {
+ 
+   def ergoBoxGenForTokens(tokens: Seq[(TokenId, Long)],
+                           propositionGen: Gen[ErgoTree]): Gen[ErgoBox] = {
+-    ergoBoxGen(propGen = propositionGen, tokensGen = Gen.oneOf(tokens, tokens), heightGen = EmptyHistoryHeight)
++    val minValue = BoxUtils.sufficientAmount(extendedParameters)
++    ergoBoxGen(
++      propGen = propositionGen,
++      tokensGen = Gen.oneOf(tokens, tokens),
++      valueGenOpt = Some(validValueGen.map(value => Math.max(value, minValue))),
++      heightGen = EmptyHistoryHeight
++    )
+   }
+ 
+   def unspendableErgoBoxGen(minValue: Long = parameters.minValuePerByte * 200,
+diff --git a/src/test/scala/org/ergoplatform/utils/generators/FundedBoxHolderGeneratorsSpec.scala b/src/test/scala/org/ergoplatform/utils/generators/FundedBoxHolderGeneratorsSpec.scala
+new file mode 100644
+index 000000000..cf50e1d88
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/utils/generators/FundedBoxHolderGeneratorsSpec.scala
+@@ -0,0 +1,45 @@
++package org.ergoplatform.utils.generators
++
++import org.ergoplatform.utils.BoxUtils
++import org.ergoplatform.utils.generators.ErgoCoreGenerators.trueLeafGen
++import org.ergoplatform.utils.ErgoNodeTestConstants.extendedParameters
++import org.ergoplatform.utils.generators.ErgoNodeTransactionGenerators._
++import org.scalacheck.Gen
++import org.scalacheck.rng.Seed
++import org.scalatest.flatspec.AnyFlatSpec
++import org.scalatest.matchers.should.Matchers
++import sigmastate.eval.Extensions._
++
++class FundedBoxHolderGeneratorsSpec extends AnyFlatSpec with Matchers {
++  "Generated box holders" should "fund small input groups and conserve their value" in {
++    val minimum = BoxUtils.sufficientAmount(extendedParameters)
++    // This seed includes a value below the transaction generator's conservative floor.
++    val holder = boxesHolderGenOfSize(5).pureApply(Gen.Parameters.default, Seed(803L))
++    holder.size shouldBe 5
++    val boxes = holder.boxes.values.toIndexedSeq
++    Seq(1, 2).foreach { inputCount =>
++      boxes.grouped(inputCount).foreach { inputs =>
++        val tx = validUnsignedTransactionFromBoxes(inputs, issueNew = false)
++        tx.inputs.map(_.boxId.toSeq) shouldBe inputs.map(_.id.toSeq)
++        tx.outputCandidates.map(_.value).sum shouldBe inputs.map(_.value).sum
++        tx.outputCandidates.foreach { output =>
++          output.value should be >= minimum
++          output.additionalTokens.length shouldBe 0
++        }
++      }
++    }
++    boxes.foreach(_.value should be >= minimum)
++  }
++
++  it should "preserve supplied tokens when the node generator funds a box" in {
++    val token = Array.fill[Byte](32)(1).toTokenId
++    val box = ergoBoxGenForTokens(Seq(token -> 7L), trueLeafGen)
++      .pureApply(Gen.Parameters.default, Seed(803L))
++    val tx = validUnsignedTransactionFromBoxes(IndexedSeq(box), issueNew = false)
++    val tokens = tx.outputCandidates.flatMap(_.additionalTokens.toArray)
++    box.value should be >= BoxUtils.sufficientAmount(extendedParameters)
++    tx.outputCandidates.map(_.value).sum shouldBe box.value
++    tokens.map(_._1.toArray.toSeq).distinct shouldBe Seq(token.toArray.toSeq)
++    tokens.map(_._2).sum shouldBe 7L
++  }
++}

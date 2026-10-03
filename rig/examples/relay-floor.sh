@@ -1,4 +1,4 @@
-# honest-relay: an honest relay peer with a lower fee floor than its neighbours, under real wallet load, and whether
+# relay-floor: a relay peer with a lower fee floor than its neighbours, under real wallet load, and whether
 # the strict nodes' per-peer transaction budget throttles it. Four nodes, one jar: A mines (fee floor 1,000,000, the
 # shipped default), S is strict and does not mine, R relays with a floor of 100,000, Q pays to A and S directly
 # (strict floor, its own wallet). S has no link to A: everything S learns about unconfirmed transactions comes from R
@@ -10,21 +10,21 @@
 # forwards, A and S decline) and VALID payments above both, interleaved; Q sends QVALID valid payments. A watcher
 # records when each id is first seen in S's and A's pools; a scan of A's blocks records what was mined; S's INFO log
 # gives the declines (its `Processing mempool transaction: <id>` lines for low-fee ids, repeats included) and its inv
-# processing from R, per interval. Env (defaults): HONEST_INTERVALS (6), HONEST_LOW (60), HONEST_VALID (10),
-# HONEST_QVALID (10), HONEST_LOW_FEE (500000), HONEST_VALID_FEE (1100000), HONEST_WAIT_S (120).
+# processing from R, per interval. Env (defaults): RELAY_FLOOR_INTERVALS (6), RELAY_FLOOR_LOW (60), RELAY_FLOOR_VALID (10),
+# RELAY_FLOOR_QVALID (10), RELAY_FLOOR_LOW_FEE (500000), RELAY_FLOOR_VALID_FEE (1100000), RELAY_FLOOR_WAIT_S (120).
 # Records in $RIG_LOG_DIR: payments.jsonl, seen.jsonl, mined.jsonl, blocks.jsonl, s_declines.jsonl, s_invs.jsonl, summary.json.
-# The last line is machine-readable: HONEST-RELAY <key=value ...> verdict=<PASS|FAIL>; under diffrun one RESULT_JSON.
-INTERVALS=${HONEST_INTERVALS:-6}; LOW=${HONEST_LOW:-60}; VALID=${HONEST_VALID:-10}; QVALID=${HONEST_QVALID:-10}
-LOW_FEE=${HONEST_LOW_FEE:-500000}; VALID_FEE=${HONEST_VALID_FEE:-1100000}; WAIT=${HONEST_WAIT_S:-120}
+# The last line is machine-readable: RELAY-FLOOR <key=value ...> verdict=<PASS|FAIL>; under diffrun one RESULT_JSON.
+INTERVALS=${RELAY_FLOOR_INTERVALS:-6}; LOW=${RELAY_FLOOR_LOW:-60}; VALID=${RELAY_FLOOR_VALID:-10}; QVALID=${RELAY_FLOOR_QVALID:-10}
+LOW_FEE=${RELAY_FLOOR_LOW_FEE:-500000}; VALID_FEE=${RELAY_FLOOR_VALID_FEE:-1100000}; WAIT=${RELAY_FLOOR_WAIT_S:-120}
 AMT=100000000; BOX=300000000; BOXQ=310000000   # Q's boxes differ in value so one funding transaction's outputs can be told apart
 PAY_LOG="$RIG_LOG_DIR/payments.jsonl"; SEEN_LOG="$RIG_LOG_DIR/seen.jsonl"; MINED_LOG="$RIG_LOG_DIR/mined.jsonl"
 : > "$PAY_LOG"; : > "$SEEN_LOG"; : > "$MINED_LOG"
 VA=$(rest A /info | jq -r .appVersion); VS=$(rest S /info | jq -r .appVersion); VR=$(rest R /info | jq -r .appVersion)
-echo "[honest-relay] A=$VA S=$VS R=$VR; $INTERVALS intervals x (low $LOW @ $LOW_FEE, valid $VALID @ $VALID_FEE into R; $QVALID valid from Q)"
-echo "[honest-relay] floors: A $(grep -h minimalFeeAmount "$SCRATCH"/conf_A.conf | tr -d ' ') R $(grep -h minimalFeeAmount "$SCRATCH"/conf_R.conf | tr -d ' ') S $(grep -h minimalFeeAmount "$SCRATCH"/conf_S.conf | tr -d ' ')"
+echo "[relay-floor] A=$VA S=$VS R=$VR; $INTERVALS intervals x (low $LOW @ $LOW_FEE, valid $VALID @ $VALID_FEE into R; $QVALID valid from Q)"
+echo "[relay-floor] floors: A $(grep -h minimalFeeAmount "$SCRATCH"/conf_A.conf | tr -d ' ') R $(grep -h minimalFeeAmount "$SCRATCH"/conf_R.conf | tr -d ' ') S $(grep -h minimalFeeAmount "$SCRATCH"/conf_S.conf | tr -d ' ')"
 end=$((SECONDS + 90)); AA=""; AQ=""; while [[ $SECONDS -lt $end && ( -z "$AA" || -z "$AQ" ) ]]; do AA=$(address A); AQ=$(address Q); [[ -n "$AA" && -n "$AQ" ]] || sleep 3; done
-[[ -n "$AA" && -n "$AQ" ]] || { echo "[honest-relay] INCONCLUSIVE: a wallet never reported an address (A '${AA:0:8}' Q '${AQ:0:8}')"; rig_verdict=INCONCLUSIVE; return; }
-[[ "$AA" != "$AQ" ]] || { echo "[honest-relay] INCONCLUSIVE: A and Q share an address (mnemonic override did not apply)"; rig_verdict=INCONCLUSIVE; return; }
+[[ -n "$AA" && -n "$AQ" ]] || { echo "[relay-floor] INCONCLUSIVE: a wallet never reported an address (A '${AA:0:8}' Q '${AQ:0:8}')"; rig_verdict=INCONCLUSIVE; return; }
+[[ "$AA" != "$AQ" ]] || { echo "[relay-floor] INCONCLUSIVE: A and Q share an address (mnemonic override did not apply)"; rig_verdict=INCONCLUSIVE; return; }
 # gen_via_r <nanoerg> <box id> <fee>: A's wallet signs one payment to S's address spending exactly that box, without
 # broadcasting; the signed transaction is posted to R's /transactions. Prints the id R accepted, or R's error text.
 gen_via_r(){ local to raw tx; to="$(address S)"
@@ -49,18 +49,18 @@ fund_both(){ local reqs; reqs="$(jq -n -c --arg a "$(address A)" --arg q "$(addr
   wallet A /wallet/payment/send "$reqs" | jq -r 'if type == "string" then . else (.detail // .reason // tojson) end'; }
 NP=$((INTERVALS * (LOW + VALID) + 20)); NQ=$((INTERVALS * QVALID + 10))
 need=$((BOX * NP + BOXQ * NQ + 2000000000))
-wait_balance A "$need" 600 >/dev/null || { echo "[honest-relay] INCONCLUSIVE: A never had $need nanoERG spendable"; rig_verdict=INCONCLUSIVE; return; }
+wait_balance A "$need" 600 >/dev/null || { echo "[relay-floor] INCONCLUSIVE: A never had $need nanoERG spendable"; rig_verdict=INCONCLUSIVE; return; }
 HF=$(full_height A); fp=$(fund_both "$NP" "$BOX" "$NQ" "$BOXQ")
-echo "[honest-relay] funding A's payer boxes ($NP) and Q's ($NQ) in one transaction: ${fp:0:64}"
-[[ "$fp" =~ ^[0-9a-f]{64}$ ]] || { echo "[honest-relay] INCONCLUSIVE: funding rejected: ${fp:0:120}"; rig_verdict=INCONCLUSIVE; return; }
+echo "[relay-floor] funding A's payer boxes ($NP) and Q's ($NQ) in one transaction: ${fp:0:64}"
+[[ "$fp" =~ ^[0-9a-f]{64}$ ]] || { echo "[relay-floor] INCONCLUSIVE: funding rejected: ${fp:0:120}"; rig_verdict=INCONCLUSIVE; return; }
 mapfile -t PB < <(tx_outputs A "$fp" "$BOX" "$HF"); mapfile -t QB < <(tx_outputs A "$fp" "$BOXQ" "$HF")
-[[ ${#PB[@]} -gt 0 && ${#QB[@]} -gt 0 ]] || { echo "[honest-relay] INCONCLUSIVE: the funding transactions were not mined within 300 s (payer ${#PB[@]}, Q ${#QB[@]} outputs found)"; rig_verdict=INCONCLUSIVE; return; }
-wait_balance Q $((BOXQ * NQ)) 300 >/dev/null || { echo "[honest-relay] INCONCLUSIVE: Q's wallet did not see its funding"; rig_verdict=INCONCLUSIVE; return; }
+[[ ${#PB[@]} -gt 0 && ${#QB[@]} -gt 0 ]] || { echo "[relay-floor] INCONCLUSIVE: the funding transactions were not mined within 300 s (payer ${#PB[@]}, Q ${#QB[@]} outputs found)"; rig_verdict=INCONCLUSIVE; return; }
+wait_balance Q $((BOXQ * NQ)) 300 >/dev/null || { echo "[relay-floor] INCONCLUSIVE: Q's wallet did not see its funding"; rig_verdict=INCONCLUSIVE; return; }
 end=$((SECONDS + 180)); while [[ $SECONDS -lt $end ]]; do ha=$(full_height A); [[ -n "$ha" && "$ha" == "$(full_height S)" && "$ha" == "$(full_height R)" && "$ha" == "$(full_height Q)" ]] && break; sleep 2; done
 # every payment spends one distinct confirmed box (the funding transactions' outputs), so no payment depends on
 # another's unconfirmed change
-echo "[honest-relay] funded; heights A=$(full_height A) S=$(full_height S) R=$(full_height R) Q=$(full_height Q); confirmed payer boxes A ${#PB[@]} Q ${#QB[@]}"
-[[ ${#PB[@]} -ge $((INTERVALS * (LOW + VALID))) && ${#QB[@]} -ge $((INTERVALS * QVALID)) ]] || { echo "[honest-relay] INCONCLUSIVE: too few confirmed boxes (A ${#PB[@]}, Q ${#QB[@]})"; rig_verdict=INCONCLUSIVE; return; }
+echo "[relay-floor] funded; heights A=$(full_height A) S=$(full_height S) R=$(full_height R) Q=$(full_height Q); confirmed payer boxes A ${#PB[@]} Q ${#QB[@]}"
+[[ ${#PB[@]} -ge $((INTERVALS * (LOW + VALID))) && ${#QB[@]} -ge $((INTERVALS * QVALID)) ]] || { echo "[relay-floor] INCONCLUSIVE: too few confirmed boxes (A ${#PB[@]}, Q ${#QB[@]})"; rig_verdict=INCONCLUSIVE; return; }
 pb=0; qb=0
 # the watcher: every second, the pools of S and A; first sight of each id is recorded with the node and the time
 watch(){ local id now; declare -A seenS=() seenA=()
@@ -70,12 +70,12 @@ watch(){ local id now; declare -A seenS=() seenA=()
     sleep 1; done; }
 rm -f "$RIG_LOG_DIR/watch.stop"; watch & WATCH_PID=$!
 H0=$(full_height A); T0=$(date +%s%3N); mark load
-echo "[honest-relay] load from height $H0"
+echo "[relay-floor] load from height $H0"
 rejected=0; lowsent=0; pvsent=0; qvsent=0; hprev=$H0; rlag_total=0; rlag_max=0
 for ivl in $(seq 1 "$INTERVALS"); do
   # a new block from A, then R and S holding it (a synced relay and a synced strict node), then the burst
   end=$((SECONDS + 120)); while [[ $SECONDS -lt $end ]]; do hnow=$(full_height A); [[ "${hnow:-0}" -gt "$hprev" ]] && break; sleep 1; done
-  [[ "${hnow:-0}" -gt "$hprev" ]] || { echo "[honest-relay] INCONCLUSIVE: no new block within 120 s at interval $ivl"; rig_verdict=INCONCLUSIVE; touch "$RIG_LOG_DIR/watch.stop"; return; }
+  [[ "${hnow:-0}" -gt "$hprev" ]] || { echo "[relay-floor] INCONCLUSIVE: no new block within 120 s at interval $ivl"; rig_verdict=INCONCLUSIVE; touch "$RIG_LOG_DIR/watch.stop"; return; }
   hprev=$hnow; t_sync=$SECONDS; end=$((SECONDS + 60)); while [[ $SECONDS -lt $end ]] && { [[ "$(full_height R)" != "$hnow" ]] || [[ "$(full_height S)" != "$hnow" ]]; }; do sleep 1; done
   lag=$((SECONDS - t_sync)); rlag_total=$((rlag_total + lag)); (( lag > rlag_max )) && rlag_max=$lag
   t_ivl=$SECONDS; k=0
@@ -93,10 +93,10 @@ for ivl in $(seq 1 "$INTERVALS"); do
       else rejected=$((rejected + 1)); echo "  Q valid $ivl rejected: ${id:0:100}"; fi
     fi
   done
-  spent=$((SECONDS - t_ivl)); echo "[honest-relay] interval $ivl (block $hnow, R and S synced after ${lag}s): sent in ${spent}s; low $lowsent valid-via-R $pvsent Q-valid $qvsent; height A=$(full_height A) R=$(full_height R) S=$(full_height S); pools S $(mempool_size S) R $(mempool_size R) A $(mempool_size A)"
+  spent=$((SECONDS - t_ivl)); echo "[relay-floor] interval $ivl (block $hnow, R and S synced after ${lag}s): sent in ${spent}s; low $lowsent valid-via-R $pvsent Q-valid $qvsent; height A=$(full_height A) R=$(full_height R) S=$(full_height S); pools S $(mempool_size S) R $(mempool_size R) A $(mempool_size A)"
 done
 mark load-done; H1=$(full_height A)
-echo "[honest-relay] load done at height $H1 (${rejected} rejected; sync lag per interval max ${rlag_max}s, total ${rlag_total}s); waiting ${WAIT}s"
+echo "[relay-floor] load done at height $H1 (${rejected} rejected; sync lag per interval max ${rlag_max}s, total ${rlag_total}s); waiting ${WAIT}s"
 sleep "$WAIT"; touch "$RIG_LOG_DIR/watch.stop"; wait "$WATCH_PID" 2>/dev/null
 H2=$(full_height A)
 : > "$RIG_LOG_DIR/blocks.jsonl"
@@ -108,7 +108,7 @@ done
 SL="$RIG_LOG_DIR/node_S.log"
 R_ADDR=$(rest S /peers/connected | jq -r '.[] | select(.name == "R") | .address' | head -1)
 [[ -n "$R_ADDR" ]] || R_ADDR="$(rest S /peers/connected | jq -r '.[0].address')"
-echo "[honest-relay] R as S sees it: ${R_ADDR:-unknown}; S peers: $(rest S /peers/connected | jq -c '[.[] | .name]')"
+echo "[relay-floor] R as S sees it: ${R_ADDR:-unknown}; S peers: $(rest S /peers/connected | jq -c '[.[] | .name]')"
 python3 - "$RIG_LOG_DIR" "$SL" "${R_ADDR:-none}" "$T0" "$rlag_max" "$H0" > "$RIG_LOG_DIR/summary.json" <<'PY'
 import sys, json, re, datetime, statistics
 d, slog, raddr, t0, rlag_max, h0 = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
@@ -188,20 +188,20 @@ out.update({"p_" + k: v for k, v in sp.items()}); out.update({"q_" + k: v for k,
 print(json.dumps(out))
 PY
 S=$(cat "$RIG_LOG_DIR/summary.json")
-echo "[honest-relay] per interval (A block: sent low+valid / declines at S / inv batches from R (of them requesting nothing)): $(jq -c '.per_interval | with_entries(.value |= "\(.sent_low)+\(.sent_valid)/\(.declines)/\(.invs)(\(.invs_empty))")' <<< "$S")"
-echo "[honest-relay] valid via R: sent $(jq .p_valid_sent <<< "$S") mined $(jq .p_valid_mined <<< "$S") delayed-past-block $(jq .p_delayed_past_block <<< "$S") missing $(jq .p_missing <<< "$S") delay-to-S p50 $(jq .p_delay_s_p50 <<< "$S")s max $(jq .p_delay_s_max <<< "$S")s unseen-at-S $(jq .p_unseen_at_s <<< "$S")"
-echo "[honest-relay] Q valid: sent $(jq .q_valid_sent <<< "$S") mined $(jq .q_valid_mined <<< "$S") delayed-past-block $(jq .q_delayed_past_block <<< "$S") missing $(jq .q_missing <<< "$S") delay-to-S p50 $(jq .q_delay_s_p50 <<< "$S")s max $(jq .q_delay_s_max <<< "$S")s unseen-at-S $(jq .q_unseen_at_s <<< "$S")"
-echo "[honest-relay] low: sent $(jq .low_sent <<< "$S") declined at S $(jq .low_declined_at_s <<< "$S") (max per interval $(jq .declines_interval_max <<< "$S")); R inv batches at S $(jq .r_invs_total <<< "$S"), load intervals with none $(jq .r_invs_intervals_zero <<< "$S")/$(jq .load_intervals <<< "$S"); sync lag max $(jq .r_sync_lag_s_max <<< "$S")s"
-echo "[honest-relay] same_chain(A,S): $(same_chain A S); pools at end R $(mempool_size R) S $(mempool_size S) A $(mempool_size A)"
+echo "[relay-floor] per interval (A block: sent low+valid / declines at S / inv batches from R (of them requesting nothing)): $(jq -c '.per_interval | with_entries(.value |= "\(.sent_low)+\(.sent_valid)/\(.declines)/\(.invs)(\(.invs_empty))")' <<< "$S")"
+echo "[relay-floor] valid via R: sent $(jq .p_valid_sent <<< "$S") mined $(jq .p_valid_mined <<< "$S") delayed-past-block $(jq .p_delayed_past_block <<< "$S") missing $(jq .p_missing <<< "$S") delay-to-S p50 $(jq .p_delay_s_p50 <<< "$S")s max $(jq .p_delay_s_max <<< "$S")s unseen-at-S $(jq .p_unseen_at_s <<< "$S")"
+echo "[relay-floor] Q valid: sent $(jq .q_valid_sent <<< "$S") mined $(jq .q_valid_mined <<< "$S") delayed-past-block $(jq .q_delayed_past_block <<< "$S") missing $(jq .q_missing <<< "$S") delay-to-S p50 $(jq .q_delay_s_p50 <<< "$S")s max $(jq .q_delay_s_max <<< "$S")s unseen-at-S $(jq .q_unseen_at_s <<< "$S")"
+echo "[relay-floor] low: sent $(jq .low_sent <<< "$S") declined at S $(jq .low_declined_at_s <<< "$S") (max per interval $(jq .declines_interval_max <<< "$S")); R inv batches at S $(jq .r_invs_total <<< "$S"), load intervals with none $(jq .r_invs_intervals_zero <<< "$S")/$(jq .load_intervals <<< "$S"); sync lag max $(jq .r_sync_lag_s_max <<< "$S")s"
+echo "[relay-floor] same_chain(A,S): $(same_chain A S); pools at end R $(mempool_size R) S $(mempool_size S) A $(mempool_size A)"
 # activity floor: at least 50 declines at S in at least 4 load intervals, and the sends happened
 floor_ok=$(jq '[.per_interval[] | select(.declines >= 50)] | length >= 4' <<< "$S")
 sends_ok=$(jq '.p_valid_sent >= 40 and .q_valid_sent >= 40' <<< "$S")
 res=FAIL
 if [[ "$floor_ok" == true && "$sends_ok" == true ]]; then [[ "$(jq '.p_missing == 0 and .q_missing == 0' <<< "$S")" == true ]] && res=PASS; fi
 rig_verdict=$res
-echo "HONEST-RELAY $(jq -r 'del(.per_interval) | to_entries | map("\(.key)=\(.value)") | join(" ")' <<< "$S") verdict=$res"
+echo "RELAY-FLOOR $(jq -r 'del(.per_interval) | to_entries | map("\(.key)=\(.value)") | join(" ")' <<< "$S") verdict=$res"
 if [[ -n "${DIFFRUN_ROLE:-}" ]]; then
-  if [[ "$floor_ok" != true || "$sends_ok" != true ]]; then echo "[honest-relay] INCONCLUSIVE: activity floor missed (declines>=50 in 4 intervals: $floor_ok; sends: $sends_ok)"; rig_verdict=INCONCLUSIVE; return; fi
+  if [[ "$floor_ok" != true || "$sends_ok" != true ]]; then echo "[relay-floor] INCONCLUSIVE: activity floor missed (declines>=50 in 4 intervals: $floor_ok; sends: $sends_ok)"; rig_verdict=INCONCLUSIVE; return; fi
   echo "RESULT_JSON $(jq -cn --arg A "$VA" --arg S "$VS" --arg R "$VR" --argjson m "$(jq 'del(.per_interval)' <<< "$S")" \
-    '{schema_version: 1, scenario: "honest-relay", versions: {A: $A, S: $S, R: $R}, metrics: ($m | with_entries(select(.value | type == "number")))}')"
+    '{schema_version: 1, scenario: "relay-floor", versions: {A: $A, S: $S, R: $R}, metrics: ($m | with_entries(select(.value | type == "number")))}')"
 fi

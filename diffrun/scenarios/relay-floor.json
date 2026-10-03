@@ -11,7 +11,7 @@
                "q_delay_s_p50": "number", "q_delay_s_max": "number", "q_unseen_at_s": "number",
                "r_invs_total": "number", "r_invs_intervals_zero": "number", "load_intervals": "number", "blocks_in_load": "number", "r_sync_lag_s_max": "number" },
   "n": 5,
-  "timeout_seconds": 1500,
+  "timeout_seconds": 1800,
   "expect": {
     "base":      { "all": { "key": "p_delayed_past_block", "op": "==", "value": 0 } },
     "candidate": { "count": { "key": "p_delayed_past_block", "op": ">", "value": 0 }, "cmp": ">=", "k": 3 }

@@ -10,11 +10,11 @@
 # forwards, A and S decline) and VALID payments above both, interleaved; Q sends QVALID valid payments. A watcher
 # records when each id is first seen in S's and A's pools; a scan of A's blocks records what was mined; S's INFO log
 # gives the declines (its `Processing mempool transaction: <id>` lines for low-fee ids, repeats included) and its inv
-# processing from R, per interval. Env (defaults): RELAY_FLOOR_INTERVALS (6), RELAY_FLOOR_LOW (60), RELAY_FLOOR_VALID (10),
+# processing from R, per interval. Env (defaults): RELAY_FLOOR_INTERVALS (8), RELAY_FLOOR_LOW (60), RELAY_FLOOR_VALID (10),
 # RELAY_FLOOR_QVALID (10), RELAY_FLOOR_LOW_FEE (500000), RELAY_FLOOR_VALID_FEE (1100000), RELAY_FLOOR_WAIT_S (120).
 # Records in $RIG_LOG_DIR: payments.jsonl, seen.jsonl, mined.jsonl, blocks.jsonl, s_declines.jsonl, s_invs.jsonl, summary.json.
 # The last line is machine-readable: RELAY-FLOOR <key=value ...> verdict=<PASS|FAIL>; under diffrun one RESULT_JSON.
-INTERVALS=${RELAY_FLOOR_INTERVALS:-6}; LOW=${RELAY_FLOOR_LOW:-60}; VALID=${RELAY_FLOOR_VALID:-10}; QVALID=${RELAY_FLOOR_QVALID:-10}
+INTERVALS=${RELAY_FLOOR_INTERVALS:-8}; LOW=${RELAY_FLOOR_LOW:-60}; VALID=${RELAY_FLOOR_VALID:-10}; QVALID=${RELAY_FLOOR_QVALID:-10}
 LOW_FEE=${RELAY_FLOOR_LOW_FEE:-500000}; VALID_FEE=${RELAY_FLOOR_VALID_FEE:-1100000}; WAIT=${RELAY_FLOOR_WAIT_S:-120}
 AMT=100000000; BOX=300000000; BOXQ=310000000   # Q's boxes differ in value so one funding transaction's outputs can be told apart
 PAY_LOG="$RIG_LOG_DIR/payments.jsonl"; SEEN_LOG="$RIG_LOG_DIR/seen.jsonl"; MINED_LOG="$RIG_LOG_DIR/mined.jsonl"
@@ -76,7 +76,7 @@ for ivl in $(seq 1 "$INTERVALS"); do
   # a new block from A, then R and S holding it (a synced relay and a synced strict node), then the burst
   end=$((SECONDS + 120)); while [[ $SECONDS -lt $end ]]; do hnow=$(full_height A); [[ "${hnow:-0}" -gt "$hprev" ]] && break; sleep 1; done
   [[ "${hnow:-0}" -gt "$hprev" ]] || { echo "[relay-floor] INCONCLUSIVE: no new block within 120 s at interval $ivl"; rig_verdict=INCONCLUSIVE; touch "$RIG_LOG_DIR/watch.stop"; return; }
-  hprev=$hnow; t_sync=$SECONDS; end=$((SECONDS + 60)); while [[ $SECONDS -lt $end ]] && { [[ "$(full_height R)" != "$hnow" ]] || [[ "$(full_height S)" != "$hnow" ]]; }; do sleep 1; done
+  hprev=$hnow; t_sync=$SECONDS; end=$((SECONDS + 120)); while [[ $SECONDS -lt $end ]] && { [[ "$(full_height R)" != "$hnow" ]] || [[ "$(full_height S)" != "$hnow" ]]; }; do sleep 1; done
   lag=$((SECONDS - t_sync)); rlag_total=$((rlag_total + lag)); (( lag > rlag_max )) && rlag_max=$lag
   t_ivl=$SECONDS; k=0
   for i in $(seq 1 "$LOW"); do

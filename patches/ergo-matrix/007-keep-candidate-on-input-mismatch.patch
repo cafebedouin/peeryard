@@ -1,0 +1,16 @@
+diff --git a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+index 4c4ed0441..5fb183951 100644
+--- a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
++++ b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+@@ -284,8 +284,9 @@ class CandidateGenerator(
+               context.become(initialized(state.copy(cachedCandidate = None))) // todo: cache input block ?
+               StatusReply.success(())
+             } else {
+-              log.warn(s"Removing candidate due to invalid input block")
+-              context.become(initialized(state.copy(cachedCandidate = None)))
++              // the solution does not fit the current candidate (e.g. it was found for one replaced since): reject
++              // the solution only, and keep the candidate the miner thread will be served next
++              log.warn(s"Rejecting an input-block solution that does not fit the current candidate")
+               StatusReply.error(
+                 new Exception(s"Invalid input block! PoW valid: $powValid")
+               )

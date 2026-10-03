@@ -558,7 +558,7 @@ API_KEY=hello
 wallet(){ # wallet <node> <path> [json body]: the wallet API with the key; GET without a body, POST with one
   local n="$1" p="$2" body="${3:-}"
   if [[ -n "$body" ]]; then
-    ip netns exec "${NS[$n]}" curl -s --max-time 10 -X POST -H "api_key: $API_KEY" -H 'Content-Type: application/json' \
+    ip netns exec "${NS[$n]}" curl -s --max-time 120 -X POST -H "api_key: $API_KEY" -H 'Content-Type: application/json' \
       --data "$body" "http://127.0.0.1:${REST[$n]}$p"
   else ip netns exec "${NS[$n]}" curl -s --max-time 10 -H "api_key: $API_KEY" "http://127.0.0.1:${REST[$n]}$p"; fi; }
 address(){ wallet "$1" /wallet/addresses | jq -r '.[0] // empty'; }

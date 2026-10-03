@@ -111,6 +111,13 @@
       ],
       "witness": "ErgoMiningThreadSpec (fixed-hit fake PoW at nonces 5 and 900): red on 8769baace ('5 was equal to 5'), green with the patch (5 then 900); patch sha256 1edffd8a...; 2026-10-02",
       "responses": []
+    },
+    {
+      "id": "007",
+      "file": "007-keep-candidate-on-input-mismatch.patch",
+      "title": "Candidate generator: reject an input-block solution that does not fit the current candidate without clearing the candidate (#2638 option 2)",
+      "upstream_pr": null,
+      "upstream_head": null
     }
   ]
 }

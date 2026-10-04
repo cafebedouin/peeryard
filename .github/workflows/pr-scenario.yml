@@ -20,7 +20,8 @@ on:
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
-run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}"
+      extra_patch: { description: 'optional: a patch file under patches/ applied on top of the PR head before the candidate is built (the candidate is then base + PR diff + this patch; a proposed change to the PR, measured against the PR itself when line is the PR base and the base role is replaced by the plain PR, see README)', default: '' }
+run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }}${{ inputs.extra_patch && format(' + {0}', inputs.extra_patch) || '' }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}"
 permissions:
   contents: read
 env:
@@ -32,6 +33,7 @@ env:
   PAIRS: ${{ inputs.pairs }}
   AA: ${{ inputs.aa }}
   PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
+  EXTRA_PATCH: ${{ inputs.extra_patch }}
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -58,6 +60,7 @@ jobs:
           else
             [[ "$PR" =~ ^[0-9]+$ ]] || fail "pr: a number"
             [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "head: 40 lowercase hex"
+            if [ -n "$EXTRA_PATCH" ]; then [[ "$EXTRA_PATCH" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$EXTRA_PATCH" ]] || fail "extra_patch: a patch file under patches/"; fi
             if [ "$LINE" = matrix-stack ]; then   # a stack member's diff would be applied twice (stack.sh's default set: no only_for)
               in_stack="$(jq -r --argjson pr "$PR" '.stack_statuses as $s | [.patches[] | select(.upstream_pr == $pr and (.status as $x | $s | index($x)) and (.only_for // null) == null) | .id] | join(" ")' patches/ergo-matrix/patches.json)"
               [ -z "$in_stack" ] || fail "line=matrix-stack: #$PR is already in the Matrix stack (patch $in_stack); the candidate is the stack plus a PR outside it"
@@ -99,7 +102,16 @@ jobs:
             # a PR branched from a newer commit than the build base can still apply cleanly, and "build base + PR diff"
             # would then be a false label
             git -C "$C" merge-base --is-ancestor "$MB" "$BSHA" || { cat summary.txt >> "$GITHUB_STEP_SUMMARY"; fail "merge-base $MB is not an ancestor of the build base $BSHA"; }
-            echo "RANGE=origin/$B...pr-$PR" >> "$GITHUB_ENV"
+            if [ -n "$EXTRA_PATCH" ]; then
+              # the candidate is the PR head plus the extra patch, committed in the clone so the range below covers both
+              git -C "$C" checkout -q -b "pr-$PR-extra" "pr-$PR"
+              git -C "$C" apply --index "$GITHUB_WORKSPACE/$EXTRA_PATCH" || fail "extra_patch does not apply on the PR head"
+              git -C "$C" -c user.name=peeryard -c user.email=peeryard@localhost commit -q -m "extra patch $EXTRA_PATCH on #$PR"
+              echo "extra patch: $EXTRA_PATCH (sha256 $(sha256sum "$EXTRA_PATCH" | cut -d' ' -f1)), applied on the PR head" >> summary.txt
+              echo "RANGE=origin/$B...pr-$PR-extra" >> "$GITHUB_ENV"
+            else
+              echo "RANGE=origin/$B...pr-$PR" >> "$GITHUB_ENV"
+            fi
           fi
       - name: Cache the sigma-state snapshot the weak-blocks line depends on
         if: env.LINE == 'matrix' || env.LINE == 'matrix-stack'

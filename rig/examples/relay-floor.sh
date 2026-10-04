@@ -84,10 +84,12 @@ for ivl in $(seq 1 "$INTERVALS"); do
     if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then lowsent=$((lowsent + 1)); printf '{"t_ms":%s,"id":"%s","kind":"low","from":"P","ivl":%s}\n' "$(date +%s%3N)" "$id" "$hnow" >> "$PAY_LOG"
     else rejected=$((rejected + 1)); [[ $rejected -le 5 ]] && echo "  low $ivl/$i rejected by R: ${id:0:100}"; fi
     k=$((k + 1))
-    if (( k % (LOW / VALID) == 0 )) && (( pvsent < ivl * VALID )); then
+    if (( VALID > 0 )) && (( k % (LOW / VALID) == 0 )) && (( pvsent < ivl * VALID )); then
       id=$(gen_via_r "$AMT" "${PB[pb]}" "$VALID_FEE"); pb=$((pb + 1))
       if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then pvsent=$((pvsent + 1)); printf '{"t_ms":%s,"id":"%s","kind":"valid","from":"P","ivl":%s}\n' "$(date +%s%3N)" "$id" "$hnow" >> "$PAY_LOG"
       else rejected=$((rejected + 1)); echo "  valid $ivl rejected by R: ${id:0:100}"; fi
+    fi
+    if (( k % (LOW / QVALID) == 0 )) && (( qvsent < ivl * QVALID )); then
       id=$(pay_from Q S "$AMT" "${QB[qb]}" "$VALID_FEE"); qb=$((qb + 1))
       if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then qvsent=$((qvsent + 1)); printf '{"t_ms":%s,"id":"%s","kind":"valid","from":"Q","ivl":%s}\n' "$(date +%s%3N)" "$id" "$hnow" >> "$PAY_LOG"
       else rejected=$((rejected + 1)); echo "  Q valid $ivl rejected: ${id:0:100}"; fi
@@ -195,7 +197,7 @@ echo "[relay-floor] low: sent $(jq .low_sent <<< "$S") declined at S $(jq .low_d
 echo "[relay-floor] same_chain(A,S): $(same_chain A S); pools at end R $(mempool_size R) S $(mempool_size S) A $(mempool_size A)"
 # activity floor: at least 50 declines at S in at least 4 load intervals, and the sends happened
 floor_ok=$(jq '[.per_interval[] | select(.declines >= 50)] | length >= 4' <<< "$S")
-sends_ok=$(jq '.p_valid_sent >= 40 and .q_valid_sent >= 40' <<< "$S")
+sends_ok=$(jq --argjson v "$VALID" '(($v == 0) or .p_valid_sent >= 40) and .q_valid_sent >= 40' <<< "$S")
 res=FAIL
 if [[ "$floor_ok" == true && "$sends_ok" == true ]]; then [[ "$(jq '.p_missing == 0 and .q_missing == 0' <<< "$S")" == true ]] && res=PASS; fi
 rig_verdict=$res

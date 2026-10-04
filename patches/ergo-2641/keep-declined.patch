@@ -1,0 +1,54 @@
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 606c6c615..b24289114 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -124,7 +124,8 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     * few blocks just, as a declined transaction could become acceptable with time. The table is bounded, see
+     * `MaxDeclined` and `addDeclined`
+     */
+-  private val declined = mutable.HashSet[ModifierId]()
++  private val declined = mutable.HashMap[ModifierId, Long]()   // id -> the block count when it was declined
++  private var blocksApplied: Long = 0
+ 
+   /**
+     * Counter which contains total cost of transactions entered mempool or rejected by it since last block processed.
+@@ -1381,18 +1382,22 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+   // add transaction id to the table of declined transactions, keeping the table size bounded
+   private def addDeclined(id: ModifierId): Unit = {
+     while (declined.size >= MaxDeclined) {
+-      declined -= declined.head
++      declined -= declined.head._1
+     }
+-    declined += id
++    declined.put(id, blocksApplied)
+   }
+ 
+   // clear declined transactions when new block is applied, so the node may ask peers for them again;
+   // a declined transaction is worth re-evaluating once a block arrives, as its double-spend winner may be
+   // mined by now, mempool may have free capacity, etc.
+   private def clearDeclined(): Unit = {
+-    if (declined.nonEmpty) {
+-      log.debug(s"Clearing ${declined.size} declined transactions on block applied")
+-      declined.clear()
++    // declined ids are kept for `DeclinedKeepBlocks` blocks rather than cleared at once: a declined id that a peer
++    // re-announces after the next block is then neither re-requested nor re-charged against that peer
++    blocksApplied += 1
++    val old = declined.collect { case (id, at) if blocksApplied - at >= DeclinedKeepBlocks => id }
++    if (old.nonEmpty) {
++      log.debug(s"Clearing ${old.size} of ${declined.size} declined transactions, older than $DeclinedKeepBlocks blocks")
++      old.foreach(declined.remove)
+     }
+   }
+ 
+@@ -1707,6 +1712,11 @@ object ErgoNodeViewSynchronizer {
+     */
+   private[network] val MinDeclinedTxCost = 200000
+ 
++  /**
++    * Blocks a declined transaction id stays in the table before it may be requested again
++    */
++  private[network] val DeclinedKeepBlocks = 10
++
+   private def props(networkControllerRef: ActorRef,
+             viewHolderRef: ActorRef,
+             syncInfoSpec: ErgoSyncInfoMessageSpec.type,

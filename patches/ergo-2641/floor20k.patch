@@ -1,0 +1,13 @@
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 606c6c615..bdd82750e 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -1705,7 +1705,7 @@ object ErgoNodeViewSynchronizer {
+     * The floor is applied to the per-peer counter only (never to the global one), so that the global transaction
+     * intake protection stays proportional to the real work done by the node.
+     */
+-  private[network] val MinDeclinedTxCost = 200000
++  private[network] val MinDeclinedTxCost = 20000
+ 
+   private def props(networkControllerRef: ActorRef,
+             viewHolderRef: ActorRef,

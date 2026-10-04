@@ -165,21 +165,6 @@
       "responses": [
         "2026-09-26: filed as issue #2590 + PR #2593 (v6.0.7)"
       ]
-    },
-    {
-      "id": "010",
-      "file": "010-pr2599-serve-mined-block.patch",
-      "title": "Serve a newly mined block's header and sections from memory until it is applied",
-      "origin": "ergoplatform/ergo#2599 (ours), diff at head 1bd4cab7a6",
-      "upstream_pr": 2599,
-      "upstream_head": "1bd4cab7a6",
-      "status": "proposed",
-      "only_for": null,
-      "added": "2026-10-04",
-      "fixes": "a mined block is announced before it is applied; peers' first requests go unanswered and wait the 10 s delivery timeout",
-      "needed_by": [
-        "matrix-compat share measurements"
-      ]
     }
   ],
   "clone_env": "DIFFRUN_ERGO_CLONE",

@@ -1,0 +1,491 @@
+diff --git a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+index 3f4af1348..7b00faae6 100644
+--- a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
++++ b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+@@ -684,6 +684,9 @@ object CandidateGenerator extends ScorexLogging {
+       val parentInputBlockIdOpt = bestInputBlock.map(bestInput => idToBytes(bestInput.id))
+       val previousOrderingBlockTransactions = history.getBestOrderingCollectedInputBlocksTransactions()
+       val previousOrderingBlockTransactionIds = previousOrderingBlockTransactions.map(_.id)
++      // cost and size of the collected input-block transactions, which the block includes before new transactions
++      val previousOrderingBlockTransactionsCost = history.getBestOrderingCollectedInputBlocksCost()
++      val previousOrderingBlockTransactionsSize = previousOrderingBlockTransactions.map(_.size.toLong).sum
+ 
+       /*
+       * Forming transactions to get included
+@@ -711,7 +714,8 @@ object CandidateGenerator extends ScorexLogging {
+ 
+       // new transactions coming from API (prioritizedTransactions), mempool, and also emission transaction
+       // to spread to next input and ordering blocks
+-      // within collectTxs(), transactions from previous input blocks will be accounted in addition to the new txs
++      // within collectTxs(), cost and size of transactions from previous input blocks are accounted in addition to
++      // the new txs, so the ordering block (previous input-block transactions and new ones) stays within the limits
+       val newTransactionCandidates = emissionTxOpt.toSeq ++ prioritizedTransactions ++ poolTxs.map(_.transaction)
+ 
+       val (preInputBlockTransactions, orderingTxs, toEliminate) = collectTxs(
+@@ -720,7 +724,9 @@ object CandidateGenerator extends ScorexLogging {
+         state.stateContext.currentParameters.maxBlockSize,
+         state,
+         upcomingContext,
+-        newTransactionCandidates
++        newTransactionCandidates,
++        previousOrderingBlockTransactionsCost,
++        previousOrderingBlockTransactionsSize
+       )
+ 
+       // filter out transactions included in previous input-blocks
+@@ -814,7 +820,9 @@ object CandidateGenerator extends ScorexLogging {
+             state.stateContext.currentParameters.maxBlockSize,
+             state,
+             upcomingContext,
+-            newTransactionCandidates
++            newTransactionCandidates,
++            previousOrderingBlockTransactionsCost,
++            previousOrderingBlockTransactionsSize
+           )
+           val retryTxs = previousOrderingBlockTransactions ++ retryOrderingTxs
+           // The first pass may have rejected transactions against a transient state.
+@@ -1015,14 +1023,18 @@ object CandidateGenerator extends ScorexLogging {
+   }
+ 
+   /**
+-    * Helper function which decides whether transactions can fit into a block with given cost and size limits
++    * Helper function which decides whether transactions can fit into a block with given cost and size limits,
++    * when `usedCost` and `usedSize` of the block are already taken by other transactions
+     */
+   private def correctLimits(
+     blockTxs: Seq[CostedTransaction],
+     maxBlockCost: Long,
+-    maxBlockSize: Long
++    maxBlockSize: Long,
++    usedCost: Long,
++    usedSize: Long
+   ): Boolean = {
+-    blockTxs.map(_._2).sum < maxBlockCost && blockTxs.map(_._1.size).sum < maxBlockSize
++    usedCost + blockTxs.map(_._2.toLong).sum < maxBlockCost &&
++      usedSize + blockTxs.map(_._1.size.toLong).sum < maxBlockSize
+   }
+ 
+   /**
+@@ -1030,7 +1042,10 @@ object CandidateGenerator extends ScorexLogging {
+     * collecting fees from them to `minerPk`.
+     *
+     * Resulting transactions total cost does not exceed `maxBlockCost`, total size does not exceed `maxBlockSize`,
+-    * and the miner's transaction is correct.
++    * and the miner's transaction is correct. `usedCost` and `usedSize` are taken by transactions already in the block
++    * (those of the input blocks it collects) and count against the limits; a single transaction is still validated
++    * against the whole `maxBlockCost`, so a transaction which does not fit only into the remaining budget is not
++    * reported as invalid.
+     *
+     * @return - input block transactions to include, ordering blocks transactions to include, transaction ids turned out to be invalid.
+     */
+@@ -1040,7 +1055,9 @@ object CandidateGenerator extends ScorexLogging {
+                   maxBlockSize: Int,
+                   us: UtxoStateReader,
+                   upcomingContext: ErgoStateContext,
+-                  transactions: Seq[ErgoTransaction]
++                  transactions: Seq[ErgoTransaction],
++                  usedCost: Long = 0L,
++                  usedSize: Long = 0L
+                 ): (Seq[ErgoTransaction], Seq[ErgoTransaction], Seq[ModifierId]) = {
+ 
+     val currentHeight = us.stateContext.currentHeight
+@@ -1100,7 +1117,7 @@ object CandidateGenerator extends ScorexLogging {
+                   feeTx.statefulValidity(boxesToSpend, IndexedSeq(), upcomingContext)(verifier) match {
+                     case Success(cost) =>
+                       val blockTxs: Seq[CostedTransaction] = (feeTx -> cost) +: newTxs
+-                      if (correctLimits(blockTxs, maxBlockCost, maxBlockSize)) {
++                      if (correctLimits(blockTxs, maxBlockCost, maxBlockSize, usedCost, usedSize)) {
+                         if (inputTx) {
+                           accInput += ((tx, costConsumed))
+                           lastFeeTx = Some(feeTx -> cost)
+@@ -1128,7 +1145,7 @@ object CandidateGenerator extends ScorexLogging {
+                 case None =>
+                   log.info(s"No fee proposition found in txs ${newTxs.map(_._1.id)} ")
+                   val blockTxs: Seq[CostedTransaction] = newTxs ++ lastFeeTx.toSeq
+-                  if (correctLimits(blockTxs, maxBlockCost, maxBlockSize)) {
++                  if (correctLimits(blockTxs, maxBlockCost, maxBlockSize, usedCost, usedSize)) {
+                     if (inputTx) {
+                       accInput += ((tx, costConsumed))
+                     } else {
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+index 9eaaa17ef..715bdc16e 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+@@ -15,6 +15,7 @@ import spire.syntax.all.cfor
+ 
+ import java.util.concurrent.TimeUnit
+ import scala.annotation.tailrec
++import scala.collection.concurrent.TrieMap
+ import scala.collection.mutable
+ import scala.util.{Failure, Success, Try}
+ 
+@@ -205,12 +206,21 @@ trait InputBlocksProcessor extends ScorexLogging {
+       }
+     }
+ 
++    /**
++      * Total validation cost of the processed blocks of the chain
++      */
++    def processedCost: Long = processedBlocks.sum
++
+     /**
+       * Applies transactions from an input block to the current state and registers completion.
+       *
+       * This method validates the transactions against the current Ergo state and, if successful,
+       * updates the chain's processing state to include this block.
+       *
++      * The transactions of the processed chain are all included into the next ordering block, so the chain
++      * must fit into one block: the input block is rejected if, together with the processed blocks before it,
++      * it exceeds the block cost or size limit.
++      *
+       * @param ib The input block information to process
+       * @param txs The transactions contained in the input block
+       * @param state The current Ergo state to validate transactions against
+@@ -223,7 +233,20 @@ trait InputBlocksProcessor extends ScorexLogging {
+       state: ErgoState[_]
+     ): Try[(InputBlocksChain)] = {
+       val prevTransactions = this.collectedTransactions
+-      val txsValid         = state.applyInputBlock(txs, prevTransactions, ib.header)
++      val txsValid         = state.applyInputBlock(txs, prevTransactions, ib.header).flatMap { cost =>
++        val parameters = state.stateContext.currentParameters
++        val totalCost = processedCost + cost
++        val totalSize = prevTransactions.map(_.size.toLong).sum + txs.map(_.size.toLong).sum
++        if (totalCost > parameters.maxBlockCost) {
++          Failure[Long](new Exception(s"Input block ${ib.id} brings cost of its input-blocks chain to $totalCost, " +
++            s"over the block cost limit ${parameters.maxBlockCost}"))
++        } else if (totalSize > parameters.maxBlockSize) {
++          Failure[Long](new Exception(s"Input block ${ib.id} brings size of its input-blocks chain to $totalSize, " +
++            s"over the block size limit ${parameters.maxBlockSize}"))
++        } else {
++          Success(cost)
++        }
++      }
+       txsValid match {
+         case Success(cost) =>
+           log.debug(s"Successfully applied transactions for input block ${ib.id}, cost: $cost")
+@@ -338,6 +361,17 @@ trait InputBlocksProcessor extends ScorexLogging {
+       } else Seq.empty
+     }
+ 
++    /**
++      * Gets total validation cost of the processed portion of the best fork.
++      *
++      * @return total cost of processed blocks in the best fork, 0 if no forks exist
++      */
++    def bestChainCost: Long = {
++      if (bestIndex != -1) {
++        forks(bestIndex).processedCost
++      } else 0L
++    }
++
+     /**
+       * Gets all transactions from the processed portion of the best fork.
+       *
+@@ -678,13 +712,17 @@ trait InputBlocksProcessor extends ScorexLogging {
+     def empty: InputBlocksTree = InputBlocksTree(Seq.empty)
+   }
+ 
++  // The maps below are written by the node view holder and read from other actors' threads (e.g. the synchronizer's
++  // getInputBlock), so they are concurrent maps: a read finds every entry stored and not yet removed, whatever else is
++  // written meanwhile. Consistency across maps (a record visible before its tree update) is not implied.
++
+   // dictionary which is storing ordering block -> best input block correspondence
+-  private val inputBlockTrees = mutable.Map[ModifierId, InputBlocksTree]()
++  private val inputBlockTrees = TrieMap[ModifierId, InputBlocksTree]()
+ 
+   /**
+     * Input block id -> input block index
+     */
+-  private val inputBlockRecords = mutable.Map[ModifierId, InputBlockAnnouncement]()
++  private val inputBlockRecords = TrieMap[ModifierId, InputBlockAnnouncement]()
+ 
+   /**
+     * input block id -> input block transaction ids index
+@@ -692,7 +730,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+   // todo: transactions can be put here without input block received, ie PoW and difficulty checked
+   // todo: and they wont be cleared on pruning and the so structure can be DoSed. Fix by putting such transactions
+   // todo: into a special queue
+-  private val inputBlockTransactions = mutable.Map[ModifierId, Seq[ModifierId]]()
++  private val inputBlockTransactions = TrieMap[ModifierId, Seq[ModifierId]]()
+ 
+   /**
+     * txid -> transaction index
+@@ -713,7 +751,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+     * Transactions commited in an ordering block
+     * Ordering (full) block -> transactions committed by it
+     */
+-  private val orderingBlockTransactions = mutable.Map[ModifierId, Seq[ErgoTransaction]]()
++  private val orderingBlockTransactions = TrieMap[ModifierId, Seq[ErgoTransaction]]()
+ 
+   /**
+     * Temporary cache of children which do not have parents downloaded yet
+@@ -1097,7 +1135,8 @@ trait InputBlocksProcessor extends ScorexLogging {
+     }
+   }
+ 
+-  private val orderingBlockAnnouncements = mutable.Map[ModifierId, OrderingBlockAnnouncement]()
++  // written by the synchronizer (storeOrderingBlockAnnouncement), pruned by the node view holder: concurrent, as above
++  private val orderingBlockAnnouncements = TrieMap[ModifierId, OrderingBlockAnnouncement]()
+ 
+   /**
+     * Stores an ordering block announcement for later retrieval.
+@@ -1221,6 +1260,19 @@ trait InputBlocksProcessor extends ScorexLogging {
+       .map(_.bestChainTransactions)
+   }
+ 
++  /**
++    * Gets the total validation cost of the best input block chain since the current best ordering block,
++    * i.e. the cost the transactions returned by getBestOrderingCollectedInputBlocksTransactions() consume.
++    *
++    * @return total cost of the processed blocks of the best input block chain, 0 if there are none
++    */
++  def getBestOrderingCollectedInputBlocksCost(): Long = {
++    bestOrderingBlock()
++      .flatMap(h => inputBlockTrees.get(h.id))
++      .map(_.bestChainCost)
++      .getOrElse(0L)
++  }
++
+   /**
+     * Gets all transactions from the best input block chain since the current best ordering block.
+     *
+diff --git a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala
+index 2558d9fd8..fc52b6b09 100644
+--- a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala
++++ b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorPropSpec.scala
+@@ -432,6 +432,55 @@ class CandidateGeneratorPropSpec extends ErgoCorePropertyTest {
+     (inputCollected ++ orderingCollected) should contain theSameElementsAs zeroFeeTxs
+   }
+ 
++  property("collectTxs counts cost and size already used in the block against the limits") {
++    val bh       = boxesHolderGen.sample.get
++    val rnd      = new RandomWrapper
++    val us       = createUtxoState(bh, parameters)
++    val minValue = BoxUtils.sufficientAmount(parameters)
++    val inputs   = bh.boxes.values.toIndexedSeq.filter(_.value >= minValue * 2).takeRight(5)
++    val txs      = inputs.map(i => validTransactionFromBoxes(IndexedSeq(i), rnd, issueNew = false))
++    txs should not be empty
++
++    val h = validFullBlock(None, us, bh, rnd).header
++    val upcomingContext = us.stateContext.upcoming(
++      h.minerPk,
++      h.timestamp,
++      h.nBits,
++      h.votes,
++      emptyVSUpdate,
++      h.version
++    )
++
++    def collect(usedCost: Long, usedSize: Long) = CandidateGenerator.collectTxs(
++      defaultMinerPk,
++      parameters.maxBlockCost,
++      parameters.maxBlockSize,
++      us,
++      upcomingContext,
++      txs,
++      usedCost,
++      usedSize
++    )
++
++    // nothing used: everything fits
++    val (inputCollected, orderingCollected, invalid) = collect(0L, 0L)
++    invalid shouldBe empty
++    (inputCollected ++ orderingCollected) should contain theSameElementsAs txs
++
++    // cost limit already taken (e.g. by collected input-block transactions): nothing is added, and the transactions
++    // are not reported as invalid, as each of them is valid
++    val (inputNoCost, orderingNoCost, invalidNoCost) = collect(parameters.maxBlockCost.toLong, 0L)
++    inputNoCost shouldBe empty
++    orderingNoCost shouldBe empty
++    invalidNoCost shouldBe empty
++
++    // the same for the size limit
++    val (inputNoSize, orderingNoSize, invalidNoSize) = collect(0L, parameters.maxBlockSize.toLong)
++    inputNoSize shouldBe empty
++    orderingNoSize shouldBe empty
++    invalidNoSize shouldBe empty
++  }
++
+   property("excludeAppliedTxs filters transactions of the applied best block only") {
+     val now = System.currentTimeMillis()
+     def utx(t: ErgoTransaction): UnconfirmedTransaction =
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+new file mode 100644
+index 000000000..62a197ea6
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+@@ -0,0 +1,94 @@
++package org.ergoplatform.nodeView.history.modifierprocessors
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.ErgoBox
++import org.ergoplatform.mining.InputBlockFields
++import org.ergoplatform.nodeView.state.{BoxHolder, StateType, UtxoState}
++import org.ergoplatform.settings.Algos
++import org.ergoplatform.subblocks.InputBlockAnnouncement
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants.parameters
++import org.ergoplatform.utils.HistoryTestHelpers.generateHistory
++import org.ergoplatform.utils.generators.ChainGenerator.{applyChain, genChain}
++import scorex.crypto.authds.merkle.BatchMerkleProof
++import scorex.crypto.hash.Digest32
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.data.TrivialProp.TrueProp
++
++import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
++
++/**
++  * The node view holder applies input blocks to the history while the synchronizer reads the same history from its
++  * own thread (e.g. `getInputBlock` on `NewBestInputBlock`). An input block already stored must stay visible to a
++  * reader while other input blocks are being applied.
++  */
++class InputBlockProcessorConcurrencySpecification extends ErgoCorePropertyTest {
++
++  import org.ergoplatform.utils.ErgoNodeTestConstants._
++
++  private val box = new ErgoBox(
++    value = 1000000000L,
++    ergoTree = ErgoTree.fromProposition(TrueProp),
++    creationHeight = 0,
++    additionalTokens = Colls.emptyColl,
++    additionalRegisters = Map.empty,
++    transactionId = bytesToId(Algos.hash("concurrencyTx")),
++    index = 0
++  )
++
++  // a previous input block this history does not know: the announcement goes to the disconnected waitlist
++  private def unknownPrev(i: Int): InputBlockFields = {
++    new InputBlockFields(
++      Some(Algos.hash(s"unknown-prev-$i")),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      BatchMerkleProof(Seq.empty, Seq.empty)(Algos.hash))
++  }
++
++  property("a stored input block stays visible to a reader while other input blocks are applied") {
++    val us = UtxoState.fromBoxHolder(BoxHolder(Seq(box)), None, createTempDir, settings, parameters)
++    val h = generateHistory(verifyTransactions = true, StateType.Utxo, PoPoWBootstrap = false, blocksToKeep = -1,
++      epochLength = 10000, useLastEpochs = 3, initialDiffOpt = None, None)
++    applyChain(h, genChain(2, h, stateOpt = Some(us)))
++    val template = genChain(2, h, stateOpt = Some(us)).tail.head.header
++
++    val target = InputBlockAnnouncement(1, template, InputBlockFields.empty, None)
++    h.applyInputBlock(target)
++    h.getInputBlock(target.id) shouldBe Some(target)
++
++    val others = (1 to 20000).map { i =>
++      InputBlockAnnouncement(1, template.copy(timestamp = template.timestamp + i), unknownPrev(i), None)
++    }
++
++    val writing = new AtomicBoolean(true)
++    val misses = new AtomicLong(0)
++    val reads = new AtomicLong(0)
++    val readerError = new AtomicReference[Throwable](null)
++    val reader = new Thread(() => {
++      try {
++        while (writing.get()) {
++          reads.incrementAndGet()
++          if (h.getInputBlock(target.id).isEmpty) misses.incrementAndGet()
++        }
++      } catch {
++        case t: Throwable => readerError.set(t)
++      }
++    })
++    reader.start()
++    try {
++      others.foreach(h.applyInputBlock)
++    } finally {
++      writing.set(false)
++      reader.join()
++    }
++
++    Option(readerError.get()) shouldBe None
++    h.getInputBlock(target.id) shouldBe Some(target)
++    reads.get() should be > 0L
++    withClue(s"${misses.get()} of ${reads.get()} concurrent reads missed the stored input block: ") {
++      misses.get() shouldBe 0L
++    }
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
+index 94a0bcc3d..221fc387d 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
+@@ -1652,7 +1652,7 @@ class InputBlockProcessorSpecification extends ErgoCorePropertyTest with ErgoCom
+     h.bestInputBlocksChain() shouldBe Seq(ib.id)
+   }
+ 
+-  property("transactions with cumulative cost over block limit spread across 2 input blocks should be accepted") {
++  property("input block bringing the cost of its input-blocks chain over the block limit should be rejected") {
+     // Create multiple boxes to avoid double spending
+     val boxes = (1 to 50).map { i =>
+       new ErgoBox(
+@@ -1667,15 +1667,16 @@ class InputBlockProcessorSpecification extends ErgoCorePropertyTest with ErgoCom
+     }
+     
+     val bh = BoxHolder(boxes)
+-    val us = UtxoState.fromBoxHolder(bh, None, createTempDir, settings, parameters)
++    // state with default parameters, used to measure the cost of the transactions below
++    val defaultUs = UtxoState.fromBoxHolder(bh, None, createTempDir, settings, parameters)
+ 
+     val h = generateHistory(verifyTransactions = true, StateType.Utxo, PoPoWBootstrap = false, blocksToKeep = -1,
+       epochLength = 10000, useLastEpochs = 3, initialDiffOpt = None, None)
+-    val c1 = genChain(2, h, stateOpt = Some(us))
++    val c1 = genChain(2, h, stateOpt = Some(defaultUs))
+     applyChain(h, c1)
+ 
+-    // Create transactions that individually are within block limit but together exceed it
+-    // We'll split them across 2 input blocks, each transaction spends a different box
++    // Create two batches of transactions, each spending different boxes
++    // We'll split them across 2 input blocks
+     val expensiveTransactions1 = (0 to 24).map { i =>
+       val input: ErgoBox = boxes(i)
+       val outputCandidate = new ErgoBoxCandidate(
+@@ -1731,13 +1732,20 @@ class InputBlockProcessorSpecification extends ErgoCorePropertyTest with ErgoCom
+     }
+ 
+     // Create first input block
+-    val c2 = genChain(2, h, stateOpt = Some(us)).tail
++    val c2 = genChain(2, h, stateOpt = Some(defaultUs)).tail
+     val ib1 = InputBlockAnnouncement(1, c2(0).header, InputBlockFields.empty, None)
+     val r1 = h.applyInputBlock(ib1)
+     r1 shouldBe None
+ 
++    // Block cost limit such that each batch fits into a block alone, but both batches together do not
++    val cost1 = defaultUs.applyInputBlock(expensiveTransactions1, Seq.empty, c2(0).header).get
++    val cost2 = defaultUs.applyInputBlock(expensiveTransactions2, Seq.empty, c2(0).header).get
++    val maxBlockCost = cost1 + cost2 / 2
++    maxBlockCost should be < parameters.maxBlockCost.toLong
++    val us = UtxoState.fromBoxHolder(bh, None, createTempDir, settings, parameters.withBlockCost(maxBlockCost.toInt))
++
+     // Create second input block (child of first)
+-    val c3 = genChain(2, h, stateOpt = Some(us)).tail
++    val c3 = genChain(2, h, stateOpt = Some(defaultUs)).tail
+     val ib2 = InputBlockAnnouncement(1, c3(0).header, parentOnly(idToBytes(ib1.id)), None)
+     val r2 = h.applyInputBlock(ib2)
+     r2 shouldBe None
+@@ -1748,13 +1756,18 @@ class InputBlockProcessorSpecification extends ErgoCorePropertyTest with ErgoCom
+     h.applyInputBlockTransactions(ib1.id, expensiveTransactions1, us) shouldBe (Seq(ib1.id) -> Seq.empty)
+     h.bestInputBlocksChain() shouldBe Seq(ib1.id)
+ 
+-    // Apply transactions to second input block - should succeed
+-    // Even though cumulative cost across both blocks exceeds limit, each individual block is within limit
+-    h.applyInputBlockTransactions(ib2.id, expensiveTransactions2, us) shouldBe (Seq(ib2.id) -> Seq.empty)
++    // Apply transactions to second input block - should be rejected
++    // The block is within the limit alone, but the next ordering block includes the transactions of both input
++    // blocks, and their cumulative cost exceeds the limit
++    h.applyInputBlockTransactions(ib2.id, expensiveTransactions2, us) shouldBe (Seq.empty -> Seq.empty)
++    h.bestInputBlocksChain() shouldBe Seq(ib1.id)
++
++    // the same input block is accepted when the limit (here the default one) holds both blocks
++    h.applyInputBlockTransactions(ib2.id, expensiveTransactions2, defaultUs) shouldBe (Seq(ib2.id) -> Seq.empty)
+     h.bestInputBlocksChain() shouldBe Seq(ib2.id, ib1.id)
+ 
+     // Apply ordering block after the two input blocks - should succeed
+-    val c4 = genChain(2, h, stateOpt = Some(us)).tail
++    val c4 = genChain(2, h, stateOpt = Some(defaultUs)).tail
+     applyChain(h, c4)
+     
+     // Verify that the ordering block was applied successfully

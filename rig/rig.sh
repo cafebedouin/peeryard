@@ -62,7 +62,10 @@
 #                                   heal, link_netem, crash, revive, relaunch, launch), each with a sample taken then
 #   and the variables NODES, RIG_LOG_DIR, SCRATCH, CONF_OVR (per-node extra HOCON for a deferred launch).
 #   A hook sets rig_verdict=PASS|FAIL|INCONCLUSIVE; rig.sh exits 1 on FAIL, 3 on INCONCLUSIVE.
-# Env overrides: PEERYARD_CHAIN (preset), PEERYARD_MINE_POLL, PEERYARD_DURATION (hooks read it), PEERYARD_KEEP_DATA=1.
+# Env overrides: PEERYARD_CHAIN (preset), PEERYARD_MINE_POLL, PEERYARD_DURATION (hooks read it), PEERYARD_KEEP_DATA=1,
+# PEERYARD_EXTMINE_POLL / PEERYARD_EXTMINE_RATE (external miners through /mining/*, lib/extminer.py).
+#   txload_fund / txload_start / txload_stop / txwatch_start / txwatch_stop / txload_pools / txload_chain
+#                                   a benign payment load and its observer (lib/txload.sh; diag/txload_report.py)
 # The run's effective configuration (jars, chain, links, polls, duration, a host card) is written to $RIG_LOG_DIR/effective.json.
 # Per-node "cpus" (taskset list) and "java_opts" (jvm nodes) are optional topology fields; see rig/README.md.
 # Wire observer (opt-in: topology "wire": true or PEERYARD_WIRE=1): a passive capture per link (diag/wire.py, on the
@@ -146,6 +149,14 @@ RUST_DEVNET_MAGIC='[7,7,7,7]'
 # for a while read it), PEERYARD_KEEP_DATA=1 (do not wipe data dirs on first launch: a devnet that persists).
 CHAIN_PRESET="${PEERYARD_CHAIN:-$(jq -r 'if (.chain | type) == "string" then .chain else (.chain.preset // "current") end' "$CFG")}"
 DEFAULT_POLL="${PEERYARD_MINE_POLL:-500ms}"
+# PEERYARD_EXTMINE_POLL (e.g. 1s or 4s; default empty = off): every JVM node that mines runs with no internal CPU miner
+# (ergo.node.useExternalMiner = true) and is mined instead by rig/lib/extminer.py, which reads GET /mining/candidate
+# at that interval and posts solutions to /mining/solution (on a Matrix node, input-block solutions to
+# /mining/weakSolution), the way a pool or mining proxy gets work. PEERYARD_EXTMINE_RATE caps its nonces per second
+# (default 0: one core's worth of the Python hash). Log per node: $RIG_LOG_DIR/extminer_<node>.log.
+EXTMINE_POLL="${PEERYARD_EXTMINE_POLL:-}"; EXTMINE_RATE="${PEERYARD_EXTMINE_RATE:-0}"
+[[ -z "$EXTMINE_POLL" || "$EXTMINE_POLL" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "FAIL: PEERYARD_EXTMINE_POLL '$EXTMINE_POLL' (e.g. 500ms or 4s)"; exit 2; }
+[[ "$EXTMINE_RATE" =~ ^[0-9]{1,6}$ ]] || { echo "FAIL: PEERYARD_EXTMINE_RATE '$EXTMINE_RATE' (nonces per second, 0 = unlimited)"; exit 2; }
 RUST_DEVNET=0
 case "$CHAIN_PRESET" in
   current) DEF_INTERVAL="2s"; DEF_DELAY=10 ;;
@@ -331,6 +342,7 @@ for n in "${NODES[@]}"; do IP[$n]="${ID_IP[$n]}"; done   # declared and dialled;
 # PID: live pid per node. MINING_OVR / POLL_OVR: runtime overrides set by the mining helpers (empty = the topology's
 # value). FRESH_DONE: the data dir is wiped on a node's first launch only, so a relaunch keeps its chain.
 declare -A PID MINING_OVR POLL_OVR FRESH_DONE CONF_OVR
+BG_PIDS=()   # background loops a hook starts through the rig (txload, txwatch); stop_all kills them
 # The chain parameters of the rust-devnet preset, for a JVM node: the values of arkadianet's
 # scripts/devnet-mixed/genesis.conf (its Rust counterpart is ChainSpec::devnet()), which ergo-node-rust's devnet
 # network mirrors. networkType devnet60 selects the protocol-v4 launch parameters (Devnet60LaunchParameters).
@@ -387,6 +399,7 @@ launch() {
       ip netns exec "${NS[$n]}" "${pin[@]}" bash -c "cd '${RT_CWD[$n]}' && exec '${NODE_JAR[$n]}' '$conf'" >> "$RIG_LOG_DIR/node_$n.log" 2>&1 & ;;
   esac
   PID[$n]=$!
+  extmine_start "$n"
   echo "[rig] launched $n (ns=${NS[$n]} ip=${IP[$n]} p2p=${P2P[$n]} rest=${REST[$n]} kind=${KIND[$n]} jar=$(basename "${NODE_JAR[$n]}") pid=${PID[$n]})"
   launch_event "$n"
 }
@@ -526,6 +539,7 @@ rss_mb(){ local p="${PID[$1]:-}"; [[ -n "$p" ]] && ps -o rss= -p "$p" 2>/dev/nul
 data_mb(){ du -sm "$SCRATCH/data_$1" 2>/dev/null | cut -f1; }
 # crash NODE: SIGKILL it (not a graceful stop) and leave it down. revive NODE brings it back with its chain.
 crash(){ local n="$1"; local p="${PID[$n]:-}"
+  extmine_stop "$n"
   [[ -n "$p" ]] && { kill -9 "$p" 2>/dev/null; }
   pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true
   [[ -n "$p" ]] && wait "$p" 2>/dev/null || true
@@ -649,8 +663,25 @@ solve_stop(){ local n="$1" p="${SOLVER_PID[$1]:-}"
   [[ -n "$p" ]] && { kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; }
   SOLVER_PID[$n]=""; echo "[solver] stopped for $n"; }
 
+# ---- external miner (PEERYARD_EXTMINE_POLL) ----
+# node_mines <node>: the mining setting the node's next (or current) launch uses (runtime override, else topology)
+node_mines(){ [[ "${MINING_OVR[$1]:-$(jq -r --arg n "$1" 'first(.nodes[]|select(.name==$n).mining) // false' "$CFG")}" == true ]]; }
+extmine_on(){ [[ -n "$EXTMINE_POLL" && "${KIND[$1]:-jvm}" == jvm ]] && node_mines "$1"; }
+declare -A EXTMINER_PID
+# extmine_start <node>: called by launch; a node launched with mining on (and the external miner enabled) gets one
+# miner process in its namespace, which waits for the REST API itself. extmine_stop TERMs it (it prints its summary).
+extmine_start(){ local n="$1"; extmine_on "$n" || return 0; extmine_stop "$n"
+  ip netns exec "${NS[$n]}" python3 "$(dirname "${BASH_SOURCE[0]}")/lib/extminer.py" --url "http://127.0.0.1:${REST[$n]}" \
+    --poll "$EXTMINE_POLL" --rate "$EXTMINE_RATE" --api-key "$API_KEY" >> "$RIG_LOG_DIR/extminer_$n.log" 2>&1 &
+  EXTMINER_PID[$n]=$!; echo "[extminer] started for $n (pid ${EXTMINER_PID[$n]}, poll $EXTMINE_POLL, rate $EXTMINE_RATE)"; }
+extmine_stop(){ local n="$1" p="${EXTMINER_PID[$1]:-}"; [[ -n "$p" ]] || return 0
+  kill "$p" 2>/dev/null; for _ in $(seq 1 30); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+  kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; EXTMINER_PID[$n]=""; echo "[extminer] stopped for $n"; }
+
 # shellcheck source=rig/lib/faults.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/faults.sh"
+# shellcheck source=rig/lib/txload.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/txload.sh"
 
 # ---- mining control ----
 # The node has no runtime mining switch (/mining/* serves candidates and solutions only). Two controls exist: the
@@ -663,6 +694,7 @@ relaunch(){ # $1=node: stop, wait for a full exit (RocksDB lock and ports releas
   local n="$1"; local p="${PID[$n]:-}" h0 end
   h0=$(full_height "$n" 2>/dev/null); [[ "$h0" =~ ^[0-9]+$ ]] || h0=0
   rig_event relaunch "" "" "$n" "mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg}"
+  extmine_stop "$n"
   if [[ -n "$p" ]]; then
     kill "$p" 2>/dev/null
     for _ in $(seq 1 40); do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done
@@ -702,6 +734,8 @@ mine(){
 # TERM loses the last blocks, seen as a 12-block rollback on restart), then KILL whatever is left.
 stop_all(){ local n p end
   for n in "${NODES[@]}"; do [[ -n "${SOLVER_PID[$n]:-}" ]] && kill "${SOLVER_PID[$n]}" 2>/dev/null; done
+  for n in "${NODES[@]}"; do extmine_stop "$n" >/dev/null; done
+  for p in "${BG_PIDS[@]}"; do kill "$p" 2>/dev/null; done
   for n in "${NODES[@]}"; do [[ -n "${PID[$n]:-}" ]] && kill "${PID[$n]}" 2>/dev/null; done
   end=$((SECONDS + ${RIG_STOP_GRACE_S:-30}))
   while [[ $SECONDS -lt $end ]]; do
@@ -720,8 +754,8 @@ deferred(){ [[ "$(jq -r --arg n "$1" 'first(.nodes[]|select(.name==$n).defer) //
 
 # The effective configuration: what network this run actually ran, as data, for the record a result should carry.
 echo "$$" > "$SCRATCH/rig.pid"
-jars_json="$(for n in "${NODES[@]}"; do printf '%s\t%s\t%s\t%s\n' "$n" "$(basename "${NODE_JAR[$n]}")" "$(sha256sum "${NODE_JAR[$n]}" | cut -c1-16)" "${KIND[$n]}"; done \
-  | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {(.[0]): {kind: .[3], jar: .[1], jar_sha256_16: .[2]}}) | add // {}')"
+jars_json="$(for n in "${NODES[@]}"; do sha="$(sha256sum "${NODE_JAR[$n]}" | cut -d' ' -f1)"; printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$(basename "${NODE_JAR[$n]}")" "${sha:0:16}" "${KIND[$n]}" "$sha"; done \
+  | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {(.[0]): {kind: .[3], jar: .[1], jar_sha256_16: .[2], jar_sha256: .[4]}}) | add // {}')"
 JAVA_VERSION="$("$JAVA_BIN" -version 2>&1 | head -1)"
 echo "[rig] java: $JAVA_VERSION ($JAVA_BIN, opts: $JAVA_OPTS)"
 # The host card: what machine the run had, so a number measured here can be read as a fact about this host. affinity
@@ -747,7 +781,7 @@ wire_json="$(jq -n --argjson on "$([[ $WIRE_ON == 1 ]] && echo true || echo fals
   else {enabled: false} end')"
 jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --argjson ips "$ips_json" --argjson lips "$lips_json" --argjson wire "$wire_json" --arg preset "$CHAIN_PRESET" --arg bi "$BLOCK_INTERVAL" --arg rd "$REWARD_DELAY" \
       --arg gd "$GENESIS_DIGEST" --arg v4 "$V4" --argjson magic "$MAGIC" --arg poll "$DEFAULT_POLL" --arg dur "${PEERYARD_DURATION:-}" --arg keep "${PEERYARD_KEEP_DATA:-0}" \
-      --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" '
+      --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" --arg xpoll "$EXTMINE_POLL" --arg xrate "$EXTMINE_RATE" '
   $cfg[0] as $c
   | { effective_schema_version: 1, host: $host,
       chain: { preset: $preset, blockInterval: (if $bi == "" then "jar default" else $bi end),
@@ -763,6 +797,7 @@ jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --argjson ips "$ips_jso
                               ab: { delay_ms: (.delay_ms_ab // .delay_ms // 0), loss_pct: (.loss_pct_ab // .loss_pct // 0), jitter_ms: (.jitter_ms_ab // .jitter_ms // 0), rate_kbit: (.rate_kbit_ab // .rate_kbit // 0) },
                               ba: { delay_ms: (.delay_ms_ba // .delay_ms // 0), loss_pct: (.loss_pct_ba // .loss_pct // 0), jitter_ms: (.jitter_ms_ba // .jitter_ms // 0), rate_kbit: (.rate_kbit_ba // .rate_kbit // 0) } } ],
       wire: $wire,
+      external_miner: (if $xpoll == "" then null else {poll: $xpoll, rate: ($xrate | tonumber)} end),
       duration_s: (if $dur == "" then null else ($dur | tonumber) end), keep_data: ($keep == "1") }' > "$RIG_LOG_DIR/effective.json"
 echo "[rig] effective configuration: $RIG_LOG_DIR/effective.json ($(jq -c '{chain: .chain.preset, nodes: [.nodes[] | .name + ":" + .jar], links: (.links | length)}' "$RIG_LOG_DIR/effective.json"))"
 # ---- prefix fixtures ("snapshot starts") ----

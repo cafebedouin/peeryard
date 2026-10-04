@@ -27,7 +27,9 @@ jq --arg pd "$(realpath "$PD/$d")" '.patches |= map(. + {path: ($pd + "/" + .fil
 if [[ -n "${PEERYARD_PATCHES_EXTRA:-}" && -f "$PEERYARD_PATCHES_EXTRA/$d/patches.json" ]]; then
   jq -s --arg xd "$(realpath "$PEERYARD_PATCHES_EXTRA/$d")" '.[0] as $b | .[1] as $x | $b | .patches += ($x.patches | map(. + {path: ($xd + "/" + .file)}))' "$MJ" "$PEERYARD_PATCHES_EXTRA/$d/patches.json" > "$MJ.2" && mv "$MJ.2" "$MJ"
 fi
-SEL='.stack_statuses as $s | .patches | sort_by(.id)[] | select(.status as $x | $s | index($x)) | select((.only_for // null) == null or ((.only_for | index($for)) != null))'
+# A "rig-only" patch (a change carried for a rig measurement, never proposed from this tree, e.g. a closed upstream PR)
+# is in no default stack: it enters only the set of a scenario its only_for names (--for <that name>).
+SEL='.stack_statuses as $s | .patches | sort_by(.id)[] | select((.status as $x | $s | index($x)) or (.status == "rig-only" and $for != "")) | select((.only_for // null) == null or ((.only_for | index($for)) != null))'
 mapfile -t files < <(jq -r --arg for "$for_sc" "$SEL | .path" "$MJ")
 mapfile -t names < <(jq -r --arg for "$for_sc" "$SEL | .file" "$MJ")
 if ((${#files[@]} == 0)); then echo "stack: empty" >&2; if [[ -n "$build" ]]; then DIFFRUN_ERGO_CLONE="$clone" bash diffrun/build.sh "$base"; fi; exit 0; fi

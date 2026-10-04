@@ -126,7 +126,22 @@ Listed at the top of `rig.sh`. The main ones:
   `revive <node>` (bring back, chain restored from disk), `launch`/`wait_up` for a deferred node; on a stopped
   node, `corrupt <node> <injury>` (honest damage to its data directory) and `wipe <node>` (delete it)
 - mining: `mine <node> <n>`, `stop_mining` / `start_mining`; `solve_start <node>` / `solve_stop <node>` drive a
-  node that only serves candidates (see *Other implementations*)
+  node that only serves candidates (see *Other implementations*). With `PEERYARD_EXTMINE_POLL=<1s|4s|...>` every JVM
+  node that mines runs without its internal CPU miner (`useExternalMiner = true`) and is mined by `lib/extminer.py`,
+  which reads `GET /mining/candidate` at that interval, as a pool or mining proxy does, searches Autolykos v2 nonces
+  on the last candidate it read (the node verifier's hit; `PEERYARD_EXTMINE_RATE` caps nonces per second, default
+  0 = one core) and posts a hit below the target `b` to `/mining/solution`; on a Matrix node (`/info` parameters carry
+  `subblocksPerBlock` = k) a hit below `b * k` goes to `/mining/weakSolution` as an input block. After a submission
+  it reads the candidate again at once. Log per node: `out/extminer_<node>.log` (candidates read, each submission
+  and the node's reply, a summary on stop)
+- payment load (`lib/txload.sh`): `txload_fund <from> <nanoerg> <to>...`, `txload_start <per 10 s> <node>...` /
+  `txload_stop` (honest wallets paying each other at random; `TXLOAD_CHAIN_PCT` (30) of ticks send
+  `TXLOAD_CHAIN_LEN` (3) payments back to back from one wallet, so later ones may spend unconfirmed change),
+  `txwatch_start <node>...` / `txwatch_stop` (each node's best full block and, on the Matrix line, every input block
+  new in its best input chain with its transaction ids), `txload_pools <node>...`, `txload_chain <node> <h0>`;
+  `diag/txload_report.py <out>` joins them into one record per payment (`txrecords.jsonl`: submit time, node, id,
+  dependent, first input block seen, holding ordering block, confirmed / pending / lost). `matrix-compat` runs it
+  with `MATRIX_COMPAT_TXLOAD=<per 10 s>`
 - wallet and transactions: `address <node>`, `balance <node>`, `pay <from> <to> <nanoerg>` (a real payment from
   a miner's rewards; prints the tx id or the node's rejection text), `pay_from <from> <to> <nanoerg> <box id> [fee]` (the same, spending exactly that confirmed box),
   `send_fee <from> <to> <nanoerg> <fee>` (the
@@ -368,7 +383,8 @@ preset; only `wipe` deletes it.
 ## Configured from the caller, recorded in the run
 
 Every run writes `out/effective.json`: the chain preset and its resolved parameters, the Java runtime (`java
--version`, the binary, the options), every node's jar and its sha256 prefix, mining and polling, every link's
+-version`, the binary, the options), every node's jar and its sha256 (`jar_sha256`, and the prefix `jar_sha256_16`), mining and polling, the external
+miner (`external_miner`: poll and rate, or null), every link's
 shaping, the duration and keep-data flags, and a `host` card: `kernel`, `cpus_online`, `affinity` (the rig's own
 CPU mask; a run under `taskset` shows it), `mem_mb`, `cpu_model`, `virt` (`wsl2` when `/proc/version` names
 Microsoft, else `systemd-detect-virt`), `scratch_fs` (`stat -f` type of `SCRATCH`; ext4 reads `ext2/ext3`),
@@ -377,7 +393,8 @@ node's namespace). It also holds each node's identity address (`nodes[].id_ip`),
 (`links[].a_ip`, `b_ip`), and `wire`: `enabled`, and with the wire on, the capture's `cpus`, whether they are
 `pinned`, and whether they `overlaps_node_cpus`. Environment
 overrides shape a run without editing the topology: `PEERYARD_CHAIN` (preset), `PEERYARD_MINE_POLL` (default
-polling for miners that set none), `PEERYARD_DURATION` (hooks that run for a while read it),
+polling for miners that set none), `PEERYARD_EXTMINE_POLL` / `PEERYARD_EXTMINE_RATE` (external miners instead of
+the internal CPU miner, see *Hook helpers*), `PEERYARD_DURATION` (hooks that run for a while read it),
 `PEERYARD_KEEP_DATA=1` (do not wipe data directories on first launch), `PEERYARD_WIRE=1` (the wire capture),
 `PEERYARD_JAVA` (the `java` binary for
 JVM nodes; the node is built and tested on JDK 8, so pin one to compare with upstream's numbers),

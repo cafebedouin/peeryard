@@ -27,6 +27,7 @@ build on an earlier one).
 | `merged-unreleased` | upstream merged it; no release carries it yet | yes |
 | `merged-in-<tag>` | upstream shipped it in `<tag>`; kept in the list for the record | no |
 | `withdrawn` | a maintainer's response showed it wrong or unnecessary | no |
+| `rig-only` | carried for a rig measurement only, never proposed from this tree (e.g. a closed upstream PR); always has `only_for` | only in `stack.sh --for <name>` for a name its `only_for` lists |
 
 Each entry records the upstream PR, the scenarios that need it, the witness, and a `responses` log. A PR is
 opened against the branch the upstream maintainers name (for ergoplatform/ergo, the current release branch rather
@@ -113,6 +114,8 @@ design); a patch of ours is the upstream commit as exported, with its author and
 | ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | proposed | none (a fix the stack carries) |
 | ergo | 008 | Drop a requested copy of a modifier already in history instead of penalizing the sender | ours | ergoplatform/ergo#2592 | proposed | none (a fix the stack carries) |
 | ergo | 009 | Log a cached copy of a stored modifier as a duplicate, not as permanently invalid | ours | ergoplatform/ergo#2593 | proposed | none (a fix the stack carries) |
+| ergo | 010 | Serve a newly mined block's header and sections from memory until it is applied | ours | ergoplatform/ergo#2599 | proposed | `matrix-compat share measurements` |
+| ergo | 011 | Reject invalid mining solutions without restart (CandidateGenerator only) | A. Shannon (production diff only) | ergoplatform/ergo#2429 (closed unmerged) | rig-only, `only_for` rig-2429 | patch-compare `ref_2429` |
 | ergo-node-rust | 001 | feat(config): add a private devnet network ([proxy] network = "devnet") | ours | mwaddip/ergo-node-rust#28 | proposed | `rig ergo-node-rust-follow`, `rig ergo-node-rust-follow-magic` |
 | ergo-node-rust | 002 | feat(p2p): [proxy] magic overrides the devnet's wire magic | ours (on 001) | mwaddip/ergo-node-rust#29 | proposed | `rig ergo-node-rust-follow-magic` |
 | arkadianet | 001 | [chain] devnet_magic overrides the devnet's wire magic | ours | arkadianet/ergo#362 | merged-in-v0.9.0 | `rig arkadianet-mine-magic` |

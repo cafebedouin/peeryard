@@ -4,6 +4,10 @@
 # block version 3 and at version 4 (early soft-fork activation, rig PEERYARD_V4), `repeats` times. Each run keeps its
 # rig log (the example's verdict and analysis lines), the ERROR lines and the gzipped node logs; diag/compare_pool.py pools
 # them per build and version. Runs by hand.
+# Opt-in inputs, each off by default so earlier runs stay reproducible: txload (a benign payment load on matrix-compat,
+# rig/lib/txload.sh), extmine_poll (every miner an external miner polling /mining/candidate, rig/lib/extminer.py) and
+# ref_2429 (the reference jar also carries patches/ergo/011, ergoplatform/ergo#2429's CandidateGenerator change, a
+# rig-only patch). builds.txt, copied into every run, names each jar with its sha256.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})"
 on:
@@ -14,6 +18,9 @@ on:
       repeats: { description: 'runs per build and block version (1-10)', default: '5' }
       compat_s: { description: 'matrix-compat mining window in seconds (MATRIX_COMPAT_S; other examples ignore it)', default: '480' }
       compat_poll: { description: 'miners candidate poll interval, e.g. 500ms or 4s (PEERYARD_MINE_POLL and MATRIX_COMPAT_POLL)', default: '500ms' }
+      txload: { description: 'matrix-compat payment load, payments per 10 s (0 = off; MATRIX_COMPAT_TXLOAD)', default: '0' }
+      extmine_poll: { description: 'external miners polling /mining/candidate at this interval, e.g. 1s or 4s, instead of the internal CPU miner (empty = internal; PEERYARD_EXTMINE_POLL)', default: '' }
+      ref_2429: { description: 'reference jar also carries patches/ergo/011 (#2429, rig-only)', type: boolean, default: false }
 permissions:
   contents: read
 jobs:
@@ -29,8 +36,10 @@ jobs:
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
       - name: Check the inputs
-        env: { PATCHES: '${{ inputs.patches }}', EXAMPLE: '${{ inputs.example }}', REPEATS: '${{ inputs.repeats }}', COMPAT_S: '${{ inputs.compat_s }}' }
+        env: { PATCHES: '${{ inputs.patches }}', EXAMPLE: '${{ inputs.example }}', REPEATS: '${{ inputs.repeats }}', COMPAT_S: '${{ inputs.compat_s }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}' }
         run: |
+          [[ "$TXLOAD" =~ ^([0-9]|[1-4][0-9]|50)$ ]] || { echo "txload: 0-50 payments per 10 s"; exit 1; }
+          [[ -z "$EXTMINE" || "$EXTMINE" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "extmine_poll: empty, or e.g. 1s or 4s"; exit 1; }
           [[ "$REPEATS" =~ ^([1-9]|10)$ ]] || { echo "repeats: 1-10"; exit 1; }
           [[ "$EXAMPLE" =~ ^[a-z0-9-]+$ && -f "rig/examples/$EXAMPLE.json" && -f "rig/examples/$EXAMPLE.sh" ]] || { echo "example: not under rig/examples/"; exit 1; }
           for p in $PATCHES; do [[ "$p" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$p" ]] || { echo "patch: $p not a patch file under patches/"; exit 1; }; done
@@ -56,18 +65,23 @@ jobs:
           bash patches/sigma-snapshot.sh "$(jq -r .base patches/ergo-matrix/patches.json)"
       - name: Build the base and the base + each patch
         id: b
-        env: { PATCHES: '${{ inputs.patches }}', REPEATS: '${{ inputs.repeats }}' }
+        env: { PATCHES: '${{ inputs.patches }}', REPEATS: '${{ inputs.repeats }}', REF_2429: '${{ inputs.ref_2429 }}' }
         run: |
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME" DIFFRUN_NO_LOCK=1
           base="$(jq -r .base patches/ergo-matrix/patches.json)"; out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
           build(){ local j; for attempt in 1 2; do j="$(bash diffrun/build.sh "$@" | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "build failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
           cp "$(build "$base")" "$out/base.jar"; names=(base); echo "base: weak-blocks $base" > "$out/builds.txt"
           # the reference nodes of mixed examples (PEERYARD_JAR): the release-line stack, as the sweep builds it
-          ref=""; for attempt in 1 2; do ref="$(bash patches/stack.sh --build ergo | tail -1)" && [ -f "$ref" ] && break; ref=""; sleep 20; done
+          # ref_2429: the stack plus the rig-only patch 011 (stack.sh --for rig-2429); off, the default stack as before
+          forsc=(); [ "$REF_2429" = true ] && forsc=(--for rig-2429)
+          ref=""; for attempt in 1 2; do ref="$(bash patches/stack.sh --build "${forsc[@]}" ergo | tail -1)" && [ -f "$ref" ] && break; ref=""; sleep 20; done
           [ -n "$ref" ] || { echo "reference stack did not build"; exit 1; }
-          cp "$ref" "$out/reference.jar"; echo "reference: $(jq -r .base patches/ergo/patches.json) + the ergo stack (patches/ergo/patches.json)" >> "$out/builds.txt"
+          cp "$ref" "$out/reference.jar"
+          echo "reference: $(jq -r .base patches/ergo/patches.json) + ergo stack patches $(jq -r '[.patches[].id] | join(",")' "$ref.stack.json")$([ "$REF_2429" = true ] && echo ' (ref_2429: 011 = #2429, rig-only)') (patches/ergo/patches.json)" >> "$out/builds.txt"
           i=0; for p in $PATCHES; do i=$((i+1)); cp "$(build "$base" "$p")" "$out/p$i.jar"; names+=("p$i")
             echo "p$i: weak-blocks $base + $p (sha256 $(sha256sum "$p" | cut -c1-16))" >> "$out/builds.txt"; done
+          # every jar by sha256, in the file every run carries: a result names the jars it ran
+          (cd "$out" && sha256sum ./*.jar | sed 's#\./##; s/^/jar sha256 /') >> "$out/builds.txt"
           echo "builds=$(printf '%s\n' "${names[@]}" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"
           { echo '```'; cat "$out/builds.txt"; sha256sum "$out"/*.jar; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -98,17 +112,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: compare-jars, path: jars }
       - name: Run the example
-        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}' }
+        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}' }
         run: |
           [[ "$COMPAT_POLL" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "compat_poll: e.g. 500ms or 4s"; exit 1; }
           run="$PWD/runs/${{ matrix.build }}-${{ matrix.version }}-${{ matrix.repeat }}"; mkdir -p "$run"
           v4=0; [ "${{ matrix.version }}" = v4 ] && v4=1
           PEERYARD_V4=$v4 PEERYARD_MATRIX_JAR="$PWD/jars/${{ matrix.build }}.jar" PEERYARD_JAR="$PWD/jars/reference.jar" \
             MATRIX_COMPAT_S="$COMPAT_S" PEERYARD_MINE_POLL="$COMPAT_POLL" MATRIX_COMPAT_POLL="$COMPAT_POLL" SCRATCH="$run/scratch" \
+            MATRIX_COMPAT_TXLOAD="$TXLOAD" PEERYARD_EXTMINE_POLL="$EXTMINE" \
             bash rig/rig.sh "rig/examples/$EXAMPLE.json" "rig/examples/$EXAMPLE.sh" > "$run/rig.log" 2>&1 || echo "rig exit $?"
           for f in "$run"/scratch/out/node_*.log; do [ -f "$f" ] || continue
             n=$(basename "$f" .log); grep -h ' ERROR ' "$f" | sed -E 's/^[0-9:.]+ ERROR +\[[^]]*\] //' | cut -c1-160 | sort | uniq -c > "$run/errors-$n.txt" || true; done
           cp host.txt jars/builds.txt "$run/"; grep -E '^(MATRIX-[A-Z]+|\[matrix-compat\] relay)' "$run/rig.log" | tee -a "$GITHUB_STEP_SUMMARY"
+          # the payment records and the external miners' logs, when those inputs were on (gzipped)
+          mkdir -p "$run/load"; for f in "$run"/scratch/out/{txload.jsonl,txwatch.jsonl,txload_pools.json,txload_chain.jsonl,txrecords.jsonl,txload.err} "$run"/scratch/out/extminer_*.log; do
+            [ -s "$f" ] && gzip -c "$f" > "$run/load/$(basename "$f").gz"; done; rmdir "$run/load" 2>/dev/null || true
           # the node logs (gzipped, about 1 MB a run) and the rig's topology, so a result can be traced per block
           mkdir -p "$run/nodes"; for f in "$run"/scratch/out/node_*.log "$run"/scratch/out/effective.json; do [ -f "$f" ] && gzip -c "$f" > "$run/nodes/$(basename "$f").gz"; done
           rm -rf "$run/scratch"
@@ -126,7 +144,7 @@ jobs:
         with: { path: art, pattern: 'run-*', merge-multiple: true }
       - name: Pooled per build and block version
         run: |
-          { echo '```'; python3 diag/compare_pool.py art/; echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; f=$(ls art/*/builds.txt 2>/dev/null | head -1); [ -n "$f" ] && cat "$f"; python3 diag/compare_pool.py art/; echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
           cat pooled.txt
       - uses: actions/upload-artifact@v4
         with: { name: patch-compare-pooled, path: pooled.txt, retention-days: 90 }

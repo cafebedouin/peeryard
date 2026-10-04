@@ -80,6 +80,9 @@ else bad "matrix_tx.py: transaction paths and pairing" "see $T/matrix_tx.txt"; f
 # diag/matrix_paychain.py: dependent / lost payments of matrix-paychain (tests/matrix_paychain_test.py)
 if python3 tests/matrix_paychain_test.py > "$T/matrix_paychain.txt" 2>&1; then ok "matrix_paychain.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_paychain.txt")"
 else bad "matrix_paychain.py: dependent and lost payments" "see $T/matrix_paychain.txt"; fi
+# diag/txload_report.py (payment records of rig/lib/txload.sh) and rig/lib/extminer.py's PoW hit (tests/txload_test.py)
+if python3 tests/txload_test.py > "$T/txload.txt" 2>&1; then ok "txload_report.py + extminer.py: $(grep -oE 'Ran [0-9]+ tests' "$T/txload.txt")"
+else bad "txload_report.py + extminer.py: records and PoW vector" "see $T/txload.txt"; fi
 
 # rig/examples/matrix-paychain.sh under diffrun: the activity floor (default 3/4 of N = 30 of 40). The hook's
 # DIFFRUN_ROLE block runs on stub payment logs: 29 accepted -> INCONCLUSIVE and no RESULT_JSON; 30 -> RESULT_JSON with floor 30

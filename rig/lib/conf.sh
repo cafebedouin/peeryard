@@ -64,8 +64,9 @@ gen_conf() {  # $1 = node name -> prints the conf path (SCRATCH_DATA_OVERRIDE: a
     echo "ergo.directory=\"$dir\""
     echo "ergo.node.mining=$mining"
     echo "ergo.node.offlineGeneration=$mining"
-    echo "ergo.node.useExternalMiner=false"
-    [[ "$mining" == "true" ]] && echo "ergo.node.internalMinerPollingInterval=$poll"
+    # PEERYARD_EXTMINE_POLL: no internal CPU miner; rig/lib/extminer.py mines through /mining/* (rig.sh extmine_start)
+    if [[ "$mining" == "true" && -n "${EXTMINE_POLL:-}" ]]; then echo "ergo.node.useExternalMiner=true"
+    else echo "ergo.node.useExternalMiner=false"; [[ "$mining" == "true" ]] && echo "ergo.node.internalMinerPollingInterval=$poll"; fi
     echo "ergo.wallet.testMnemonic=\"$MNEMONIC\""
     echo "ergo.wallet.testKeysQty=5"
     echo "scorex.network.bindAddress=\"0.0.0.0:${P2P[$n]}\""

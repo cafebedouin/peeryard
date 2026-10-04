@@ -180,6 +180,27 @@
       "needed_by": [
         "matrix-compat share measurements"
       ]
+    },
+    {
+      "id": "011",
+      "file": "011-pr2429-reject-invalid-solution.patch",
+      "title": "Reject invalid mining solutions without restart (CandidateGenerator only)",
+      "origin": "upstream PR by A. Shannon (not ours); production diff only (CandidateGenerator.scala), unchanged from `gh pr diff 2429` at head b6209fd3a",
+      "upstream_pr": 2429,
+      "upstream_head": "b6209fd3a8",
+      "status": "rig-only",
+      "only_for": [
+        "rig-2429"
+      ],
+      "added": "2026-10-04",
+      "fixes": "a solution that fits neither the current candidate nor a previous one (none kept) restarts the candidate generator (`cachedPreviousCandidate.get` on None, logged as \"Using previous candidate as a solution: None\"), so the reference node's internal miner loses the find",
+      "needed_by": [
+        "matrix-compat share measurements on mixed topologies (reference miner), opt-in through patch-compare's ref_2429 input"
+      ],
+      "witness": "applies on the stack v6.0.6 + 001..010 with a one-line offset (checked 2026-10-04); network effect to be read from the first patch-compare run with ref_2429",
+      "responses": [
+        "2026-09-29: #2429 closed unmerged upstream (v6.0.7 base); carried here for the rig only, never proposed from this tree"
+      ]
     }
   ],
   "clone_env": "DIFFRUN_ERGO_CLONE",

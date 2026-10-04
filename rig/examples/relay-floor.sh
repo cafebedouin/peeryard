@@ -202,6 +202,6 @@ rig_verdict=$res
 echo "RELAY-FLOOR $(jq -r 'del(.per_interval) | to_entries | map("\(.key)=\(.value)") | join(" ")' <<< "$S") verdict=$res"
 if [[ -n "${DIFFRUN_ROLE:-}" ]]; then
   if [[ "$floor_ok" != true || "$sends_ok" != true ]]; then echo "[relay-floor] INCONCLUSIVE: activity floor missed (declines>=50 in 4 intervals: $floor_ok; sends: $sends_ok)"; rig_verdict=INCONCLUSIVE; return; fi
-  echo "RESULT_JSON $(jq -cn --arg A "$VA" --arg S "$VS" --arg R "$VR" --argjson m "$(jq 'del(.per_interval)' <<< "$S")" \
-    '{schema_version: 1, scenario: "relay-floor", versions: {A: $A, S: $S, R: $R}, metrics: ($m | with_entries(select(.value | type == "number")))}')"
+  echo "RESULT_JSON $(jq -cn --arg name "${RELAY_FLOOR_NAME:-relay-floor}" --arg A "$VA" --arg S "$VS" --arg R "$VR" --argjson m "$(jq 'del(.per_interval)' <<< "$S")" \
+    '{schema_version: 1, scenario: $name, versions: {A: $A, S: $S, R: $R}, metrics: ($m | with_entries(select(.value | type == "number")))}')"
 fi

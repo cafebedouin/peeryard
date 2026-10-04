@@ -4,7 +4,8 @@
   "script": "relay-floor.sh",
   "tier": "public",
   "env": {
-    "RELAY_FLOOR_INTERVALS": "12"
+    "RELAY_FLOOR_INTERVALS": "12",
+    "RELAY_FLOOR_NAME": "relay-floor-12"
   },
   "metrics": {
     "low_sent": "number",

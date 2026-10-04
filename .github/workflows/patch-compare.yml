@@ -7,7 +7,8 @@
 # Opt-in inputs, each off by default so earlier runs stay reproducible: txload (a benign payment load on matrix-compat,
 # rig/lib/txload.sh), extmine_poll (every miner an external miner polling /mining/candidate, rig/lib/extminer.py) and
 # ref_2429 (the reference jar also carries patches/ergo/011, ergoplatform/ergo#2429's CandidateGenerator change, a
-# rig-only patch). builds.txt, copied into every run, names each jar with its sha256.
+# rig-only patch). builds.txt, copied into every run and printed at the head of the pooled output, names each jar
+# with its sha256.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})"
 on:
@@ -144,7 +145,7 @@ jobs:
         with: { path: art, pattern: 'run-*', merge-multiple: true }
       - name: Pooled per build and block version
         run: |
-          { echo '```'; f=$(ls art/*/builds.txt 2>/dev/null | head -1); [ -n "$f" ] && cat "$f"; python3 diag/compare_pool.py art/; echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; python3 diag/compare_pool.py art/; echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
           cat pooled.txt
       - uses: actions/upload-artifact@v4
         with: { name: patch-compare-pooled, path: pooled.txt, retention-days: 90 }

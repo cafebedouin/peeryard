@@ -12,7 +12,9 @@ input blocks. Nothing tells an external miner when the node's candidate changed,
 reads may belong to a candidate the node has already replaced; the node judges it. After any submission the miner
 reads the candidate again at once (its own block changed the work), then keeps the --poll schedule.
 
-The node must run with ergo.node.mining = true and ergo.node.useExternalMiner = true (no internal CPU miner). The
+The node must run with ergo.node.mining = true and ergo.node.useExternalMiner = true (no internal CPU miner).
+A version-1 candidate (no "h": the first block of a fresh devnet chain, an Autolykos v1 header that needs the node's
+own secret key) is skipped and logged as a poll-error. The
 hit is computed as the node's verifier computes it (AutolykosPowScheme.hitForVersion2ForMessage). --rate caps the
 nonces per second (0: as fast as one core runs the Python hash, about 2,000-3,000 a second).
 
@@ -145,6 +147,11 @@ def main(argv):
                 print(f"{now_ms()} poll-error candidate {s} {body[:160]}", flush=True)
                 return
             c = json.loads(body)
+            if "h" not in c:
+                # an Autolykos v1 candidate (block version 1: the first block of a fresh chain) is solved only with
+                # the node's own secret key; the rig mines that block with the internal miner (rig.sh extmine_release)
+                print(f"{now_ms()} poll-error candidate has no h (Autolykos v1 header): not minable externally", flush=True)
+                return
             msg = bytes.fromhex(c["msg"])
             h = int(c["h"])
             b = int(c["b"])

@@ -16,7 +16,8 @@
 # TXLOAD_CHAIN_LEN (3) payments from one wallet back to back, 0.3 s apart, so later ones may spend the earlier ones'
 # unconfirmed change (dependent transactions); TXLOAD_SEED (1) seeds the payer / payee / chain choices.
 # Files in $RIG_LOG_DIR (one JSON object per line):
-#   txload.jsonl   per payment attempt {t_ms, kind: fund|pay, node, to, seq, chain_pos, chain_len, id|null, error|null,
+#   txload.jsonl   per payment attempt {t_ms, kind: fund|pay, node, to, seq, chain_pos, chain_len, id|null, error|null
+#                  (the node's text; a long one keeps its first 100 and last 300 characters),
 #                  inputs, outputs} (inputs/outputs: box ids, from the payer's pool right after the send)
 #   txwatch.jsonl  {t_ms, node, ev: "full", h, id} on each new best full block; {t_ms, node, ev: "input", ord, id, txs}
 #                  on each input block first seen in a node's best input chain
@@ -40,7 +41,7 @@ _txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$
     else id=""; err="$(jq -r '.detail // .reason // tojson' <<< "$out" 2>/dev/null)"; err="${err:-${out:0:200}}"; fi
   fi
   jq -cn --argjson t "$t" --arg k "$kind" --arg n "$from" --arg to "$to" --argjson seq "$seq" --argjson pos "$pos" --argjson len "$len" \
-     --arg id "$id" --arg err "${err:0:200}" --argjson ins "${ins:-null}" --argjson outs "${outs:-null}" \
+     --arg id "$id" --arg err "$([[ ${#err} -gt 400 ]] && echo "${err:0:100} ... ${err: -300}" || echo "$err")" --argjson ins "${ins:-null}" --argjson outs "${outs:-null}" \
     '{t_ms: $t, kind: $k, node: $n, to: $to, seq: $seq, chain_pos: $pos, chain_len: $len,
       id: (if $id == "" then null else $id end), error: (if $err == "" then null else $err end), inputs: $ins, outputs: $outs}' \
     >> "$RIG_LOG_DIR/txload.jsonl"

@@ -49,6 +49,9 @@ class Report(unittest.TestCase):
         self.assertEqual(c["attempts"], 5)
         self.assertEqual((c["accepted"], c["rejected"], c["skipped_ticks"], c["fund"]), (4, 1, 1, 1))
         self.assertEqual((c["dependent"], c["confirmed"], c["pending"], c["lost"], c["dependent_lost"]), (2, 2, 1, 1, 1))
+        # p2's parent p1 was first shown in a best block at 8000, after p2 was sent (2300); p3's parent p2 never
+        self.assertEqual((c["unconfirmed_parent"], c["unconfirmed_parent_lost"]), (2, 1))
+        self.assertFalse(by["p1"]["unconfirmed_parent"])
         self.assertEqual(by["p1"]["input"], {"t_ms": 2500, "node": "A", "id": "ib0"})
         self.assertEqual(by["p1"]["input_by_node"], {"A": 2500, "B": 2900})
         self.assertEqual(by["p1"]["ordering"], {"h": 5, "id": "H5", "ts": 7500, "seen_ms": 8000, "seen_node": "A"})

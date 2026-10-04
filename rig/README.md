@@ -132,8 +132,10 @@ Listed at the top of `rig.sh`. The main ones:
   on the last candidate it read (the node verifier's hit; `PEERYARD_EXTMINE_RATE` caps nonces per second, default
   0 = one core) and posts a hit below the target `b` to `/mining/solution`; on a Matrix node (`/info` parameters carry
   `subblocksPerBlock` = k) a hit below `b * k` goes to `/mining/weakSolution` as an input block. After a submission
-  it reads the candidate again at once. Log per node: `out/extminer_<node>.log` (candidates read, each submission
-  and the node's reply, a summary on stop)
+  it reads the candidate again at once. The first block of a fresh chain is an Autolykos v1 header (block version
+  1), which only the node's own key solves: a miner on an empty data dir mines it with its internal miner, then the
+  rig relaunches it with the external miner before the hook runs. Log per node: `out/extminer_<node>.log` (candidates
+  read, each submission and the node's reply, a summary on stop)
 - payment load (`lib/txload.sh`): `txload_fund <from> <nanoerg> <to>...`, `txload_start <per 10 s> <node>...` /
   `txload_stop` (honest wallets paying each other at random; `TXLOAD_CHAIN_PCT` (30) of ticks send
   `TXLOAD_CHAIN_LEN` (3) payments back to back from one wallet, so later ones may spend unconfirmed change),

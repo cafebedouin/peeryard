@@ -381,7 +381,8 @@ launch() {
     echo "[rig] refusing to launch $n: genesisId pin '${BASH_REMATCH[1]}' is not a 64-hex block id"; return 1; fi
   # Wipe the data dir on the node's first launch only. This must run in this shell, not in the $(gen_conf)
   # subshell, or FRESH_DONE would never be recorded and every relaunch would wipe the chain.
-  if [[ -z "${FRESH_DONE[$n]:-}" ]]; then [[ "${PEERYARD_KEEP_DATA:-0}" == 1 ]] || rm -rf "$SCRATCH/data_$n"; FRESH_DONE[$n]=1; fi
+  if [[ -z "${FRESH_DONE[$n]:-}" ]]; then [[ "${PEERYARD_KEEP_DATA:-0}" == 1 ]] || rm -rf "$SCRATCH/data_$n"; FRESH_DONE[$n]=1
+    [[ -n "$EXTMINE_POLL" && "${KIND[$n]}" == jvm && "${PEERYARD_KEEP_DATA:-0}" != 1 ]] && node_mines "$n" && EXTMINE_HOLD[$n]=1; fi
   conf="$(gen_conf "$n")"
   echo "==== [rig] (re)launch $n $(date -Iseconds) kind=${KIND[$n]} jar=$(basename "${NODE_JAR[$n]}") mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg} cpus=${NODE_CPUS[$n]:-rig} ====" >> "$RIG_LOG_DIR/node_$n.log"
   # "cpus": taskset between `ip netns exec` and the node; every step execs, so the pid below is the node's own
@@ -666,8 +667,20 @@ solve_stop(){ local n="$1" p="${SOLVER_PID[$1]:-}"
 # ---- external miner (PEERYARD_EXTMINE_POLL) ----
 # node_mines <node>: the mining setting the node's next (or current) launch uses (runtime override, else topology)
 node_mines(){ [[ "${MINING_OVR[$1]:-$(jq -r --arg n "$1" 'first(.nodes[]|select(.name==$n).mining) // false' "$CFG")}" == true ]]; }
-extmine_on(){ [[ -n "$EXTMINE_POLL" && "${KIND[$1]:-jvm}" == jvm ]] && node_mines "$1"; }
-declare -A EXTMINER_PID
+extmine_on(){ [[ -n "$EXTMINE_POLL" && "${KIND[$1]:-jvm}" == jvm && -z "${EXTMINE_HOLD[$1]:-}" ]] && node_mines "$1"; }
+declare -A EXTMINER_PID EXTMINE_HOLD
+# The first block on a fresh chain is an Autolykos v1 header (CandidateGenerator: no best header -> Header.InitialVersion;
+# its candidate carries no "h"), which only the node's own secret key solves, so an external miner cannot mine it. A
+# miner on its first launch on an empty data dir is therefore held on its internal CPU miner (EXTMINE_HOLD) until it has
+# a block, then relaunched with the external miner (extmine_release, run by the rig before the hook).
+extmine_release(){ local n end h
+  for n in "${!EXTMINE_HOLD[@]}"; do
+    end=$((SECONDS + 180)); h=0
+    while [[ $SECONDS -lt $end ]]; do h=$(full_height "$n" 2>/dev/null); [[ "$h" =~ ^[0-9]+$ && $h -ge 1 ]] && break; sleep 2; done
+    unset "EXTMINE_HOLD[$n]"
+    echo "[extminer] $n: first block(s) by its internal miner (full height ${h:-0}); relaunching with the external miner"
+    relaunch "$n" || harness_fail "extmine_release $n: no REST after relaunch"
+  done; }
 # extmine_start <node>: called by launch; a node launched with mining on (and the external miner enabled) gets one
 # miner process in its namespace, which waits for the REST API itself. extmine_stop TERMs it (it prints its summary).
 extmine_start(){ local n="$1"; extmine_on "$n" || return 0; extmine_stop "$n"
@@ -897,6 +910,7 @@ if fixture_restored; then
   done
 fi
 
+[[ -n "$EXTMINE_POLL" && ${#EXTMINE_HOLD[@]} -gt 0 ]] && extmine_release
 # bring-up gate (see the header): links between launched nodes, re-dialled once from a JVM end if missing
 bringup_links(){ local end=$((SECONDS + ${PEERYARD_BRINGUP_S:-90})) grace=$((SECONDS + ${PEERYARD_BRINGUP_GRACE_S:-30})) redialed=" " i a b from to missing
   while :; do

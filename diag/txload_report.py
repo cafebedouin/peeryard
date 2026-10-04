@@ -6,15 +6,17 @@ blocks as the observer saw them), txload_pools.json (each node's pool when the l
 txload_chain.jsonl (the blocks of one node's final chain, with their transaction ids). Writes txrecords.jsonl beside
 them, one object per accepted payment:
   id, kind (fund | pay), node (the payer), to, t_submit_ms, chain_pos, chain_len,
-  dependent      an input is an output of an earlier payment of this run (it spent unconfirmed change)
+  dependent      an input is an output of an earlier payment of this run (as diag/matrix_paychain.py counts it)
+  unconfirmed_parent  such a parent was not yet in a block when this payment was sent (no node had shown the parent's
+                 holding block as its best full block, by the observer's polls): it spent unconfirmed change
   input          {t_ms, node, id}: the first observation of the payment in an input block (any node), or null
   input_by_node  {node: t_ms} first observation per node
   ordering       {h, id, ts, seen_ms, seen_node}: the block of the final chain that holds it (ts: the header's own
                  timestamp; seen_ms: the first poll at which a node had that block as its best full block, or null)
   status         confirmed | pending (in a pool when the window ended) | lost (neither)
 and prints one line:
-  MATRIX-TXLOAD attempts= accepted= rejected= skipped_ticks= fund= dependent= in_input= confirmed= pending= lost=
-    dependent_lost= input_ms_p50= input_ms_p90= ordering_ms_p50= ordering_ms_p90= ordering_ts_ms_p50=
+  MATRIX-TXLOAD attempts= accepted= rejected= skipped_ticks= fund= dependent= unconfirmed_parent= in_input= confirmed=
+    pending= lost= dependent_lost= unconfirmed_parent_lost= input_ms_p50= input_ms_p90= ordering_ms_p50= ordering_ms_p90= ordering_ts_ms_p50=
 (input_ms: submit -> first input-block observation; ordering_ms: submit -> first poll showing the holding block as
 best; ordering_ts_ms: submit -> the holding header's timestamp; percentiles over the payments that have one.)
 --json prints the counts as one JSON object instead. Standard library only."""
@@ -79,10 +81,15 @@ def build(run):
     for n, ids in pools.items():
         for t in ids:
             pooled.setdefault(t, []).append(n)
-    made = set()
+    made = {}       # box id -> the payment id that created it
+    conf_seen = {}  # payment id -> when a node first showed its holding block as best (None: never seen / not held)
+    for s in sends:
+        if s.get("id") and s["id"] in in_block:
+            seen = full_seen.get(in_block[s["id"]]["id"])
+            conf_seen[s["id"]] = seen[0] if seen else None
     recs = []
-    c = dict(attempts=0, accepted=0, rejected=0, skipped_ticks=0, fund=0, dependent=0, in_input=0, confirmed=0,
-             pending=0, lost=0, dependent_lost=0)
+    c = dict(attempts=0, accepted=0, rejected=0, skipped_ticks=0, fund=0, dependent=0, unconfirmed_parent=0,
+             in_input=0, confirmed=0, pending=0, lost=0, dependent_lost=0, unconfirmed_parent_lost=0)
     lat_in, lat_ord, lat_ts = [], [], []
     for s in sends:
         if s.get("kind") == "skip":
@@ -95,8 +102,11 @@ def build(run):
         c["accepted"] += 1
         c["fund"] += s["kind"] == "fund"
         tid = s["id"]
-        dep = any(i in made for i in (s.get("inputs") or []))
-        made.update(s.get("outputs") or [])
+        parents = {made[i] for i in (s.get("inputs") or []) if i in made}
+        dep = bool(parents)
+        unconf = any(conf_seen.get(p) is None or conf_seen[p] > s["t_ms"] for p in parents)
+        for o in s.get("outputs") or []:
+            made[o] = tid
         by = in_input.get(tid, {})
         first = min(by.items(), key=lambda kv: kv[1][0]) if by else None
         b = in_block.get(tid)
@@ -107,7 +117,7 @@ def build(run):
                             seen_node=seen[1] if seen else None)
         status = "confirmed" if b else ("pending" if tid in pooled else "lost")
         r = dict(id=tid, kind=s["kind"], node=s["node"], to=s.get("to"), t_submit_ms=s["t_ms"],
-                 chain_pos=s.get("chain_pos"), chain_len=s.get("chain_len"), dependent=dep,
+                 chain_pos=s.get("chain_pos"), chain_len=s.get("chain_len"), dependent=dep, unconfirmed_parent=unconf,
                  input=dict(t_ms=first[1][0], node=first[0], id=first[1][1]) if first else None,
                  input_by_node={n: v[0] for n, v in by.items()}, ordering=ordering, status=status,
                  pending_in=pooled.get(tid, []))
@@ -116,6 +126,8 @@ def build(run):
         c["in_input"] += first is not None
         c[status] += 1
         c["dependent_lost"] += dep and status == "lost"
+        c["unconfirmed_parent"] += unconf
+        c["unconfirmed_parent_lost"] += unconf and status == "lost"
         if first:
             lat_in.append(first[1][0] - s["t_ms"])
         if ordering and ordering["seen_ms"] is not None:

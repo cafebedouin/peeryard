@@ -18,7 +18,9 @@ for _ in $(seq 1 120); do
   [[ -n "$ha" && "$ha" -ge 20 && $ok == 1 ]] && break; sleep 5
 done
 H0=$(full_height A); echo "[matrix-compat] joined at A.h=$H0"
-for x in $MINERS; do [[ "$x" == A ]] || start_mining "$x" 500ms; done
+# MATRIX_COMPAT_POLL: the miners' candidate poll interval (default 500ms); a slow poll without candidate push stands in for
+# external miners and pools, which poll /mining/candidate every few seconds. A follows PEERYARD_MINE_POLL (set both).
+for x in $MINERS; do [[ "$x" == A ]] || start_mining "$x" "${MATRIX_COMPAT_POLL:-500ms}"; done
 MARK=$(date +%H:%M:%S); echo "[matrix-compat] all miners mining from $MARK"
 for i in $(seq 1 $((DUR / 20))); do sleep 20
   line="t=$((i * 20))s"; for x in "${NODES[@]}"; do line+=" $x.h=$(full_height "$x") $x.tip=$(rest "$x" /blocks/lastHeaders/1 | jq -r '.[0].id[:8]')"; done

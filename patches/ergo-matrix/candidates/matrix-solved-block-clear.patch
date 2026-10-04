@@ -22,10 +22,10 @@ index 3f4af1348..8ac83d8b9 100644
        } else {
          context.become(initialized(stateWithAppliedTxs))
 diff --git a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala
-index a85328684..0edfbe367 100644
+index a85328684..df86222f9 100644
 --- a/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala
 +++ b/src/test/scala/org/ergoplatform/mining/CandidateGeneratorSpec.scala
-@@ -1599,4 +1599,56 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
+@@ -1599,4 +1599,59 @@ class CandidateGeneratorSpec extends AnyFlatSpec with Matchers with ErgoTestHelp
      system.terminate()
    }
  
@@ -35,10 +35,13 @@ index a85328684..0edfbe367 100644
 +      val testProbe = new TestProbe(system)
 +      system.eventStream.subscribe(testProbe.ref, newBlockSignal)
 +
-+      val viewHolderRef: ActorRef    = ErgoNodeViewRef(defaultSettings)
++      // a fresh chain of its own
++      val settings: ErgoSettings =
++        defaultSettings.copy(directory = s"${defaultSettings.directory}-solved-clear-${System.currentTimeMillis()}")
++      val viewHolderRef: ActorRef    = ErgoNodeViewRef(settings)
 +      val readersHolderRef: ActorRef = ErgoReadersHolderRef(viewHolderRef)
 +      val candidateGenerator: ActorRef =
-+        CandidateGenerator(defaultMinerSecret.publicImage, readersHolderRef, viewHolderRef, defaultSettings)
++        CandidateGenerator(defaultMinerSecret.publicImage, readersHolderRef, viewHolderRef, settings)
 +
 +      def candidate(optPk: Option[ProveDlog]): Candidate = {
 +        candidateGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = optPk), testProbe.ref)
@@ -47,7 +50,7 @@ index a85328684..0edfbe367 100644
 +        }
 +      }
 +      def solve(c: Candidate): ErgoFullBlock =
-+        defaultSettings.chainSettings.powScheme
++        settings.chainSettings.powScheme
 +          .proveCandidate(c.candidateBlock, defaultMinerSecret.w, 0, 1000, c.parameters) match {
 +          case org.ergoplatform.OrderingBlockFound(b) => b
 +          case org.ergoplatform.InputBlockFound(b)    => b

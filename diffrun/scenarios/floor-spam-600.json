@@ -1,0 +1,54 @@
+{
+  "name": "floor-spam-600",
+  "description": "The spam shape the per-peer quota is for: the low-floor peer R forwards 600 sub-floor payments per block and nothing valid (a peer relaying for nobody), eight bursts; measured are the declines the strict node S processes from R per block (bounded by R's budget) and the unrelated peer Q's valid payments at S (delayed past the next block, unmined after the wait). Below the activity floor (fewer than 4 intervals with 50 declines at S, or fewer than 40 valid sends from Q) a run is INCONCLUSIVE. Expectations: on either jar Q's payments are not lost; the per-interval decline count is the measurement.",
+  "script": "relay-floor.sh",
+  "tier": "public",
+  "env": {
+    "RELAY_FLOOR_NAME": "floor-spam-600",
+    "RELAY_FLOOR_VALID": "0",
+    "RELAY_FLOOR_LOW": "600",
+    "RELAY_FLOOR_INTERVALS": "8"
+  },
+  "metrics": {
+    "low_sent": "number",
+    "low_declined_at_s": "number",
+    "declines_interval_max": "number",
+    "p_valid_sent": "number",
+    "p_valid_mined": "number",
+    "p_delayed_past_block": "number",
+    "p_missing": "number",
+    "p_delay_s_p50": "number",
+    "p_delay_s_max": "number",
+    "p_unseen_at_s": "number",
+    "q_valid_sent": "number",
+    "q_valid_mined": "number",
+    "q_delayed_past_block": "number",
+    "q_missing": "number",
+    "q_delay_s_p50": "number",
+    "q_delay_s_max": "number",
+    "q_unseen_at_s": "number",
+    "r_invs_total": "number",
+    "r_invs_intervals_zero": "number",
+    "load_intervals": "number",
+    "blocks_in_load": "number",
+    "r_sync_lag_s_max": "number"
+  },
+  "n": 5,
+  "timeout_seconds": 2700,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "q_missing",
+        "op": "==",
+        "value": 0
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "q_missing",
+        "op": "==",
+        "value": 0
+      }
+    }
+  }
+}

@@ -1,10 +1,10 @@
 {
-  "name": "floor-attack",
-  "description": "The spam shape the per-peer quota defends against: the low-floor peer R forwards 120 sub-floor payments per block and nothing valid (a peer relaying for nobody), eight bursts; measured are the declines the strict node S processes from R per block (bounded by R's budget) and the unrelated peer Q's valid payments at S (delayed past the next block, unmined after the wait). Below the activity floor (fewer than 4 intervals with 50 declines at S, or fewer than 40 valid sends from Q) a run is INCONCLUSIVE. Expectations: on either jar Q's payments are not lost; the per-interval decline count is the measurement.",
+  "name": "floor-spam",
+  "description": "The spam shape the per-peer quota is for: the low-floor peer R forwards 120 sub-floor payments per block and nothing valid (a peer relaying for nobody), eight bursts; measured are the declines the strict node S processes from R per block (bounded by R's budget) and the unrelated peer Q's valid payments at S (delayed past the next block, unmined after the wait). Below the activity floor (fewer than 4 intervals with 50 declines at S, or fewer than 40 valid sends from Q) a run is INCONCLUSIVE. Expectations: on either jar Q's payments are not lost; the per-interval decline count is the measurement.",
   "script": "relay-floor.sh",
   "tier": "public",
   "env": {
-    "RELAY_FLOOR_NAME": "floor-attack",
+    "RELAY_FLOOR_NAME": "floor-spam",
     "RELAY_FLOOR_VALID": "0",
     "RELAY_FLOOR_LOW": "120",
     "RELAY_FLOOR_INTERVALS": "8"

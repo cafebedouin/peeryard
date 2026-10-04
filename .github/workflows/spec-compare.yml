@@ -1,7 +1,7 @@
 # Run ergo test specs on the weak-blocks line with each of several patches applied, on GitHub-hosted runners (a
 # development machine discovers; the runs a claim rests on are made where anyone can re-run them). Each patch is
 # applied alone to the base commit peeryard carries (patches/ergo-matrix/patches.json); each spec runs in its own job,
-# `repeats` times, so a flaky test shows as a rate rather than a single red. Each job keeps its sbt log and the
+# `repeats` times, so a flaky test shows as a rate rather than a single red. Each job keeps its sbt log (gzipped; over 20 MB, its first and last 10 MB) and the
 # scalatest XML report. Runs by hand.
 name: peeryard spec compare
 run-name: "spec compare: ${{ inputs.specs }} x${{ inputs.repeats }} (${{ inputs.patches }})"
@@ -77,6 +77,13 @@ jobs:
           sbt -Denv=test ++2.12.20 "testOnly $SPEC" > "$out/sbt.log" 2>&1 && echo "rc 0" > "$out/rc.txt" || echo "rc $?" > "$out/rc.txt"
           cp target/test-reports/*.xml "$out/" 2>/dev/null || true
           sed 's/\x1b\[[0-9;]*m//g' "$out/sbt.log" | grep -E '^\[info\] - |Tests: ' | tee -a "$GITHUB_STEP_SUMMARY"
+          # keep the artifact small: a runaway test can write gigabytes of log. Over 20 MB, keep the first and last
+          # 10 MB (the cut is marked); then gzip it (sbt.log.gz)
+          sz=$(stat -c %s "$out/sbt.log")
+          if [ "$sz" -gt 20971520 ]; then
+            { head -c 10485760 "$out/sbt.log"; printf '\n[... %s bytes cut by the workflow: first and last 10 MB kept ...]\n' "$((sz - 20971520))"; tail -c 10485760 "$out/sbt.log"; } > "$out/sbt.log.cut"
+            mv "$out/sbt.log.cut" "$out/sbt.log"; fi
+          gzip -9 "$out/sbt.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

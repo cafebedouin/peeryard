@@ -45,15 +45,23 @@ tx_outputs(){ local n="$1" t="$2" v="$3" k="$4" end=$((SECONDS + 300)) h hid tx
 # fund_both <count A> <nanoerg each> <count Q> <nanoerg each>: ONE payment from A with <count A> outputs to A's own
 # address and <count Q> to Q's (two payments back to back would make the second spend the first's unconfirmed outputs)
 fund_both(){ local reqs; reqs="$(jq -n -c --arg a "$(address A)" --arg q "$(address Q)" --argjson va "$2" --argjson ka "$1" --argjson vq "$4" --argjson kq "$3" \
-    '[range($ka) | {address: $a, value: $va}] + [range($kq) | {address: $q, value: $vq}]')"
+    '[range($ka) | {address: $a, value: $va}] + (if $kq > 0 then [range($kq) | {address: $q, value: $vq}] else [] end)')"
   wallet A /wallet/payment/send "$reqs" | jq -r 'if type == "string" then . else (.detail // .reason // tojson) end'; }
 NP=$((INTERVALS * (LOW + VALID) + 20)); NQ=$((INTERVALS * QVALID + 10))
 need=$((BOX * NP + BOXQ * NQ + 2000000000))
 wait_balance A "$need" 600 >/dev/null || { echo "[relay-floor] INCONCLUSIVE: A never had $need nanoERG spendable"; rig_verdict=INCONCLUSIVE; return; }
-HF=$(full_height A); fp=$(fund_both "$NP" "$BOX" "$NQ" "$BOXQ")
-echo "[relay-floor] funding A's payer boxes ($NP) and Q's ($NQ) in one transaction: ${fp:0:64}"
-[[ "$fp" =~ ^[0-9a-f]{64}$ ]] || { echo "[relay-floor] INCONCLUSIVE: funding rejected: ${fp:0:120}"; rig_verdict=INCONCLUSIVE; return; }
-mapfile -t PB < <(tx_outputs A "$fp" "$BOX" "$HF"); mapfile -t QB < <(tx_outputs A "$fp" "$BOXQ" "$HF")
+# the payer's boxes are funded in transactions of at most 900 outputs (a transaction must stay under the node's
+# 98,304-byte relay cap), each confirmed before the next so no funding spends another's unconfirmed outputs
+PB=(); QB=(); left=$NP; first=1
+while (( left > 0 )); do
+  chunk=$(( left > 900 ? 900 : left )); HF=$(full_height A)
+  if (( first )); then fp=$(fund_both "$chunk" "$BOX" "$NQ" "$BOXQ"); else fp=$(fund_both "$chunk" "$BOX" 0 "$BOXQ"); fi
+  echo "[relay-floor] funding $chunk payer boxes$( (( first )) && echo " and Q's $NQ") : ${fp:0:64}"
+  [[ "$fp" =~ ^[0-9a-f]{64}$ ]] || { echo "[relay-floor] INCONCLUSIVE: funding rejected: ${fp:0:120}"; rig_verdict=INCONCLUSIVE; return; }
+  mapfile -t -O "${#PB[@]}" PB < <(tx_outputs A "$fp" "$BOX" "$HF")
+  if (( first )); then mapfile -t QB < <(tx_outputs A "$fp" "$BOXQ" "$HF"); first=0; fi
+  left=$(( left - chunk ))
+done
 [[ ${#PB[@]} -gt 0 && ${#QB[@]} -gt 0 ]] || { echo "[relay-floor] INCONCLUSIVE: the funding transactions were not mined within 300 s (payer ${#PB[@]}, Q ${#QB[@]} outputs found)"; rig_verdict=INCONCLUSIVE; return; }
 wait_balance Q $((BOXQ * NQ)) 300 >/dev/null || { echo "[relay-floor] INCONCLUSIVE: Q's wallet did not see its funding"; rig_verdict=INCONCLUSIVE; return; }
 end=$((SECONDS + 180)); while [[ $SECONDS -lt $end ]]; do ha=$(full_height A); [[ -n "$ha" && "$ha" == "$(full_height S)" && "$ha" == "$(full_height R)" && "$ha" == "$(full_height Q)" ]] && break; sleep 2; done

@@ -3,7 +3,7 @@
 Each file is `git diff <PR head> <variant> -- src/main` against head `2201236403cf4de322f770865099a71bc622c207`, for the
 `pr-scenario` workflow's `extra_patch` input (candidate only: the candidate becomes base + PR diff + this patch, the base
 arm stays the plain line; each variant is read against a run of the PR alone on the same line and scenario). Measured with
-`diffrun/scenarios/relay-floor*.json` (a relay with a lower fee floor) and `floor-attack.json` (a peer forwarding only
+`diffrun/scenarios/relay-floor*.json` (a relay with a lower fee floor) and `floor-spam.json` (a peer forwarding only
 sub-floor transactions).
 
 | file | change | what it is for |

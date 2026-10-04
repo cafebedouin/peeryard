@@ -1,0 +1,85 @@
+# Run ergo test specs on the weak-blocks line with each of several patches applied, on GitHub-hosted runners (a
+# development machine discovers; the runs a claim rests on are made where anyone can re-run them). Each patch is
+# applied alone to the base commit peeryard carries (patches/ergo-matrix/patches.json); each spec runs in its own job,
+# `repeats` times, so a flaky test shows as a rate rather than a single red. Each job keeps its sbt log and the
+# scalatest XML report. Runs by hand.
+name: peeryard spec compare
+run-name: "spec compare: ${{ inputs.specs }} x${{ inputs.repeats }} (${{ inputs.patches }})"
+on:
+  workflow_dispatch:
+    inputs:
+      patches: { description: 'space-separated patch files (repo paths), each applied alone to the weak-blocks base' }
+      specs: { description: 'space-separated test classes (org.ergoplatform.mining.CandidateGeneratorSpec ...)' }
+      repeats: { description: 'runs per patch and spec (1-5)', default: '2' }
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      arms: ${{ steps.p.outputs.arms }}
+      specs: ${{ steps.p.outputs.specs }}
+      repeats: ${{ steps.p.outputs.repeats }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        env: { PATCHES: '${{ inputs.patches }}', SPECS: '${{ inputs.specs }}', REPEATS: '${{ inputs.repeats }}' }
+        run: |
+          [[ "$REPEATS" =~ ^[1-5]$ ]] || { echo "repeats: 1-5"; exit 1; }
+          for p in $PATCHES; do [[ "$p" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$p" ]] || { echo "patch: $p"; exit 1; }; done
+          for s in $SPECS; do [[ "$s" =~ ^org\.ergoplatform\.[A-Za-z0-9.]+Spec[A-Za-z]*$ ]] || { echo "spec: $s"; exit 1; }; done
+          echo "arms=$(printf '%s\n' $PATCHES | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "specs=$(printf '%s\n' $SPECS | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  spec:
+    needs: plan
+    name: ${{ matrix.spec }} / ${{ matrix.patch }} / ${{ matrix.repeat }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        patch: ${{ fromJSON(needs.plan.outputs.arms) }}
+        spec: ${{ fromJSON(needs.plan.outputs.specs) }}
+        repeat: ${{ fromJSON(needs.plan.outputs.repeats) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
+      - name: Cache the sigma-state snapshot the weak-blocks line depends on
+        uses: actions/cache@v4
+        with:
+          path: ~/.ivy2/local/org.scorexfoundation
+          key: sigma-snapshot-${{ hashFiles('patches/ergo-matrix/patches.json', 'patches/sigma-snapshot.sh') }}
+      - name: Cache coursier
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/coursier
+          key: coursier-weak-blocks-${{ hashFiles('patches/ergo-matrix/patches.json') }}
+      - name: ergo at the weak-blocks base, the patch applied
+        env: { PATCH: '${{ matrix.patch }}' }
+        run: |
+          base="$(jq -r .base patches/ergo-matrix/patches.json)"
+          git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
+          git -C "$HOME/ergo-clone" fetch -q origin weak-blocks
+          export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
+          bash patches/sigma-snapshot.sh "$base"
+          git -C "$HOME/ergo-clone" checkout -q --detach "$base"
+          git -C "$HOME/ergo-clone" apply --index "$GITHUB_WORKSPACE/$PATCH"
+          { echo "base $base"; echo "patch $PATCH sha256 $(sha256sum "$PATCH" | cut -c1-16)"; } | tee tree.txt
+      - name: Run the spec
+        env: { SPEC: '${{ matrix.spec }}' }
+        run: |
+          out="$GITHUB_WORKSPACE/out"; mkdir -p "$out"; cp tree.txt "$out/"
+          cd "$HOME/ergo-clone"
+          sbt -Denv=test ++2.12.20 "testOnly $SPEC" > "$out/sbt.log" 2>&1 && echo "rc 0" > "$out/rc.txt" || echo "rc $?" > "$out/rc.txt"
+          cp target/test-reports/*.xml "$out/" 2>/dev/null || true
+          sed 's/\x1b\[[0-9;]*m//g' "$out/sbt.log" | grep -E '^\[info\] - |Tests: ' | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spec-${{ strategy.job-index }}
+          path: out/
+          retention-days: 30

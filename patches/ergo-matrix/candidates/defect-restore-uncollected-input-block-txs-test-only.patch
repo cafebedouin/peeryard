@@ -1,0 +1,236 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+index 9eaaa17ef..cb412e32d 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+@@ -15,6 +15,7 @@ import spire.syntax.all.cfor
+ 
+ import java.util.concurrent.TimeUnit
+ import scala.annotation.tailrec
++import scala.collection.concurrent.TrieMap
+ import scala.collection.mutable
+ import scala.util.{Failure, Success, Try}
+ 
+@@ -678,13 +679,17 @@ trait InputBlocksProcessor extends ScorexLogging {
+     def empty: InputBlocksTree = InputBlocksTree(Seq.empty)
+   }
+ 
++  // The maps below are written by the node view holder and read from other actors' threads (e.g. the synchronizer's
++  // getInputBlock), so they are concurrent maps: a read finds every entry stored and not yet removed, whatever else is
++  // written meanwhile. Consistency across maps (a record visible before its tree update) is not implied.
++
+   // dictionary which is storing ordering block -> best input block correspondence
+-  private val inputBlockTrees = mutable.Map[ModifierId, InputBlocksTree]()
++  private val inputBlockTrees = TrieMap[ModifierId, InputBlocksTree]()
+ 
+   /**
+     * Input block id -> input block index
+     */
+-  private val inputBlockRecords = mutable.Map[ModifierId, InputBlockAnnouncement]()
++  private val inputBlockRecords = TrieMap[ModifierId, InputBlockAnnouncement]()
+ 
+   /**
+     * input block id -> input block transaction ids index
+@@ -692,7 +697,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+   // todo: transactions can be put here without input block received, ie PoW and difficulty checked
+   // todo: and they wont be cleared on pruning and the so structure can be DoSed. Fix by putting such transactions
+   // todo: into a special queue
+-  private val inputBlockTransactions = mutable.Map[ModifierId, Seq[ModifierId]]()
++  private val inputBlockTransactions = TrieMap[ModifierId, Seq[ModifierId]]()
+ 
+   /**
+     * txid -> transaction index
+@@ -713,7 +718,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+     * Transactions commited in an ordering block
+     * Ordering (full) block -> transactions committed by it
+     */
+-  private val orderingBlockTransactions = mutable.Map[ModifierId, Seq[ErgoTransaction]]()
++  private val orderingBlockTransactions = TrieMap[ModifierId, Seq[ErgoTransaction]]()
+ 
+   /**
+     * Temporary cache of children which do not have parents downloaded yet
+@@ -1097,7 +1102,8 @@ trait InputBlocksProcessor extends ScorexLogging {
+     }
+   }
+ 
+-  private val orderingBlockAnnouncements = mutable.Map[ModifierId, OrderingBlockAnnouncement]()
++  // written by the synchronizer (storeOrderingBlockAnnouncement), pruned by the node view holder: concurrent, as above
++  private val orderingBlockAnnouncements = TrieMap[ModifierId, OrderingBlockAnnouncement]()
+ 
+   /**
+     * Stores an ordering block announcement for later retrieval.
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+new file mode 100644
+index 000000000..62a197ea6
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+@@ -0,0 +1,94 @@
++package org.ergoplatform.nodeView.history.modifierprocessors
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.ErgoBox
++import org.ergoplatform.mining.InputBlockFields
++import org.ergoplatform.nodeView.state.{BoxHolder, StateType, UtxoState}
++import org.ergoplatform.settings.Algos
++import org.ergoplatform.subblocks.InputBlockAnnouncement
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants.parameters
++import org.ergoplatform.utils.HistoryTestHelpers.generateHistory
++import org.ergoplatform.utils.generators.ChainGenerator.{applyChain, genChain}
++import scorex.crypto.authds.merkle.BatchMerkleProof
++import scorex.crypto.hash.Digest32
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.data.TrivialProp.TrueProp
++
++import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
++
++/**
++  * The node view holder applies input blocks to the history while the synchronizer reads the same history from its
++  * own thread (e.g. `getInputBlock` on `NewBestInputBlock`). An input block already stored must stay visible to a
++  * reader while other input blocks are being applied.
++  */
++class InputBlockProcessorConcurrencySpecification extends ErgoCorePropertyTest {
++
++  import org.ergoplatform.utils.ErgoNodeTestConstants._
++
++  private val box = new ErgoBox(
++    value = 1000000000L,
++    ergoTree = ErgoTree.fromProposition(TrueProp),
++    creationHeight = 0,
++    additionalTokens = Colls.emptyColl,
++    additionalRegisters = Map.empty,
++    transactionId = bytesToId(Algos.hash("concurrencyTx")),
++    index = 0
++  )
++
++  // a previous input block this history does not know: the announcement goes to the disconnected waitlist
++  private def unknownPrev(i: Int): InputBlockFields = {
++    new InputBlockFields(
++      Some(Algos.hash(s"unknown-prev-$i")),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      BatchMerkleProof(Seq.empty, Seq.empty)(Algos.hash))
++  }
++
++  property("a stored input block stays visible to a reader while other input blocks are applied") {
++    val us = UtxoState.fromBoxHolder(BoxHolder(Seq(box)), None, createTempDir, settings, parameters)
++    val h = generateHistory(verifyTransactions = true, StateType.Utxo, PoPoWBootstrap = false, blocksToKeep = -1,
++      epochLength = 10000, useLastEpochs = 3, initialDiffOpt = None, None)
++    applyChain(h, genChain(2, h, stateOpt = Some(us)))
++    val template = genChain(2, h, stateOpt = Some(us)).tail.head.header
++
++    val target = InputBlockAnnouncement(1, template, InputBlockFields.empty, None)
++    h.applyInputBlock(target)
++    h.getInputBlock(target.id) shouldBe Some(target)
++
++    val others = (1 to 20000).map { i =>
++      InputBlockAnnouncement(1, template.copy(timestamp = template.timestamp + i), unknownPrev(i), None)
++    }
++
++    val writing = new AtomicBoolean(true)
++    val misses = new AtomicLong(0)
++    val reads = new AtomicLong(0)
++    val readerError = new AtomicReference[Throwable](null)
++    val reader = new Thread(() => {
++      try {
++        while (writing.get()) {
++          reads.incrementAndGet()
++          if (h.getInputBlock(target.id).isEmpty) misses.incrementAndGet()
++        }
++      } catch {
++        case t: Throwable => readerError.set(t)
++      }
++    })
++    reader.start()
++    try {
++      others.foreach(h.applyInputBlock)
++    } finally {
++      writing.set(false)
++      reader.join()
++    }
++
++    Option(readerError.get()) shouldBe None
++    h.getInputBlock(target.id) shouldBe Some(target)
++    reads.get() should be > 0L
++    withClue(s"${misses.get()} of ${reads.get()} concurrent reads missed the stored input block: ") {
++      misses.get() shouldBe 0L
++    }
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/nodeView/viewholder/ErgoNodeViewHolderSpec.scala b/src/test/scala/org/ergoplatform/nodeView/viewholder/ErgoNodeViewHolderSpec.scala
+index 1982e4499..146a9388e 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/viewholder/ErgoNodeViewHolderSpec.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/viewholder/ErgoNodeViewHolderSpec.scala
+@@ -1465,6 +1465,62 @@ class ErgoNodeViewHolderSpec extends ErgoCorePropertyTest with NodeViewTestOps w
+     }
+   }
+ 
++  private val t49 = TestCase("input-block transactions not included into the new best block return to mempool") { fixture =>
++    import fixture._
++    if (stateType == Utxo && verifyTransactions) {
++      val (us, bh) = createUtxoState(fixture.settings)
++      val genesis = validFullBlock(parentOpt = None, us, bh)
++      applyBlock(genesis) shouldBe 'success
++
++      // tx1 spends a genesis output, tx2 spends an output of tx1
++      val boxes = ErgoState.newBoxes(genesis.transactions).find(_.ergoTree == TrueTree).toIndexedSeq
++      boxes.nonEmpty shouldBe true
++      val tx1 = validTransactionFromBoxes(boxes, issueNew = false)
++      val tx2 = validTransactionFromBoxes(IndexedSeq(tx1.outputs.head), issueNew = false)
++
++      nodeViewHolderRef ! LocallyGeneratedTransaction(UnconfirmedTransaction(tx1, None))
++      expectMsgType[Accepted]
++      getPoolSize shouldBe 1
++
++      // an input block built on genesis carries both transactions
++      val (_, bh2) = createUtxoState(fixture.settings)
++      val siblingBlock = validFullBlock(Some(genesis), WrappedUtxoState(us, bh2, fixture.settings))
++      val inputBlock = InputBlockAnnouncement(1, siblingBlock.header, emptyInputBlockFields, None)
++      val dummyPeer = ConnectedPeer(
++        scorex.core.network.ConnectionId(
++          new java.net.InetSocketAddress("127.0.0.1", 1234),
++          new java.net.InetSocketAddress("127.0.0.1", 5678),
++          scorex.core.network.Outgoing
++        ),
++        testProbe.ref,
++        None
++      )
++
++      subscribeEvents(classOf[NewBestInputBlock])
++      nodeViewHolderRef ! ProcessInputBlock(inputBlock, dummyPeer)
++      nodeViewHolderRef ! ProcessInputBlockTransactions(InputBlockTransactionsData(inputBlock.id, Seq(tx1, tx2)))
++      testProbe.fishForMessage(5.seconds) {
++        case NewBestInputBlock(idOpt, _) => idOpt.contains(inputBlock.id)
++        case _ => false
++      }
++      unsubscribeEvents(classOf[NewBestInputBlock])
++
++      // applying the input block took its transactions out of the mempool
++      getPoolSize shouldBe 0
++
++      // the next best block includes tx1 only
++      val wusAfterGenesis = WrappedUtxoState(us, bh, fixture.settings).applyModifier(genesis)(_ => ()).get
++      val nextBlock = validFullBlock(Some(genesis), wusAfterGenesis, Seq(tx1))
++      applyBlock(nextBlock) shouldBe 'success
++      getBestFullBlockOpt.map(_.id) shouldBe Some(nextBlock.id)
++
++      // tx2 is still valid and was not included, so it is back in the mempool; tx1 is not
++      val pool = getCurrentView.pool
++      pool.contains(tx2.id) shouldBe true
++      pool.contains(tx1.id) shouldBe false
++    }
++  }
++
+   private val t45 = TestCase("SemanticallyFailedModification carries failing transaction id") { fixture =>
+     import fixture._
+ 
+@@ -1631,7 +1687,7 @@ class ErgoNodeViewHolderSpec extends ErgoCorePropertyTest with NodeViewTestOps w
+     }
+   }
+ 
+-  val edgeCaseCases: List[TestCase] = List(t26, t28, t29, t30, t31, t32, t33, t34, t35, t36, t38, t39, t40, t41, t42, t43, t44)
++  val edgeCaseCases: List[TestCase] = List(t26, t28, t29, t30, t31, t32, t33, t34, t35, t36, t38, t39, t40, t41, t42, t43, t44, t49)
+ 
+   NodeViewTestConfig.verifyTxConfigs.filter(_.stateType == StateType.Utxo).foreach { c =>
+     edgeCaseCases.foreach { t =>

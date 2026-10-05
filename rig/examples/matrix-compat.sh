@@ -19,6 +19,7 @@
 #     holding ordering block, lost or not; txrecords.jsonl). Reported, not judged.
 #   PEERYARD_EXTMINE_POLL=<1s|4s|...>  (rig.sh) every miner is an external miner polling /mining/candidate at that
 #     interval instead of the node's internal CPU miner; MATRIX-EXTMINE sums each miner's submissions.
+#     PEERYARD_EXTMINE_STRICT=1: those miners read the candidate only on the poll schedule (extminer.py --strict).
 DUR=${MATRIX_COMPAT_S:-480}
 TXL=${MATRIX_COMPAT_TXLOAD:-0}; TXL_DRAIN=${MATRIX_COMPAT_TXLOAD_DRAIN_S:-60}; TXL_FUND=${MATRIX_COMPAT_TXLOAD_FUND:-20000000000}
 [[ "$TXL" =~ ^[0-9]+$ && $TXL -le 50 ]] || { echo "[matrix-compat] MATRIX_COMPAT_TXLOAD '$TXL': 0-50 payments per 10 s"; rig_verdict=INCONCLUSIVE; return; }
@@ -73,8 +74,8 @@ if (( TXL > 0 )); then txload_chain A "$H0"
 if [[ -n "${EXTMINE_POLL:-}" ]]; then for x in $MINERS; do
   f="$RIG_LOG_DIR/extminer_$x.log"; [[ -f "$f" ]] || { echo "MATRIX-EXTMINE $x no-log"; continue; }
   # each miner process prints EXTMINER-SUMMARY when stopped (stop_mining above); a node mined by more than one process sums them
-  awk -v n="$x" '/ EXTMINER-SUMMARY /{for(i=3;i<=NF;i++){split($i,kv,"="); if(kv[1]!="poll_s" && kv[1]!="rate") s[kv[1]]+=kv[2]; else o[kv[1]]=kv[2]} c++}
-    END{printf "MATRIX-EXTMINE %s processes=%d", n, c; for(k in s) printf " %s=%d", k, s[k]; printf " poll_s=%s rate=%s\n", o["poll_s"], o["rate"]}' "$f"
+  awk -v n="$x" '/ EXTMINER-SUMMARY /{for(i=3;i<=NF;i++){split($i,kv,"="); if(kv[1]!="poll_s" && kv[1]!="rate" && kv[1]!="strict") s[kv[1]]+=kv[2]; else o[kv[1]]=kv[2]} c++}
+    END{printf "MATRIX-EXTMINE %s processes=%d", n, c; for(k in s) printf " %s=%d", k, s[k]; printf " poll_s=%s rate=%s strict=%s\n", o["poll_s"], o["rate"], (o["strict"]==""?0:o["strict"])}' "$f"
 done; fi
 res=PASS
 for x in "${NODES[@]}"; do [[ "$x" == A ]] && continue

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """extminer.py: an external Autolykos v2 miner for one node, getting work the way a pool or a mining proxy does.
 
-  extminer.py --url http://127.0.0.1:<rest port> --poll 4s [--rate 0] [--api-key hello] [--seed S]
+  extminer.py --url http://127.0.0.1:<rest port> --poll 4s [--rate 0] [--api-key hello] [--seed S] [--strict]
 
 Every --poll it reads GET /mining/candidate ({msg, b, h, pk}); between reads it searches nonces on the last
 candidate it read. A nonce whose hit is below b (the ordering-block target) is posted to POST /mining/solution as
@@ -16,6 +16,10 @@ Seen on weak-blocks 8769baace (and its head on 2026-10-03): MiningApiRoute sends
 InputSolutionFound to ErgoMiner, whose started state forwards only a bare AutolykosSolution, so both routes' messages
 are logged as "Unexpected message" and the request times out (5 s); no external solution reaches the generator there. After any submission the miner
 reads the candidate again at once (its own block changed the work), then keeps the --poll schedule.
+--strict (rig: PEERYARD_EXTMINE_STRICT=1): no read after a submission. The miner reads the candidate only on its fixed
+--poll schedule and keeps searching the candidate it has after a submission, accepted or not, the way pool software
+that polls the node on a timer hands out work. A solution it finds after its own accepted input block, on the same
+candidate, then names the parent its own block already extended; the node judges it.
 
 The node must run with ergo.node.mining = true and ergo.node.useExternalMiner = true (no internal CPU miner).
 A version-1 candidate (no "h": the first block of a fresh devnet chain, an Autolykos v1 header that needs the node's
@@ -26,10 +30,18 @@ nonces per second (0: as fast as one core runs the Python hash, about 2,000-3,00
 Output, one line per event on stdout (the rig writes it to $RIG_LOG_DIR/extminer_<node>.log):
   <epoch ms> cand msg=<16 hex> h=<height> k=<subblocksPerBlock or -> changed=<0|1>
   <epoch ms> submit kind=<ordering|input> h=<height> msg=<16 hex> n=<nonce> -> <http status> <reply, 160 chars>
+  <epoch ms> work kind=<ordering|input> msg=<16 hex> n=<nonce> status=<http status> fetch_first_ms=<epoch ms>
+            fetch_last_ms=<epoch ms> solve_ms=<epoch ms> reply_ms=<epoch ms> age_first_ms=<n> age_last_ms=<n>
+            fetch_lat_ms=<n> strict=<0|1> reply=<reply class>
+     (one per submission, after its submit line: fetch_first = when the miner first received this candidate msg,
+      fetch_last = the latest read that returned it, solve = when the hit was found, reply = when the node answered;
+      age_first = solve - fetch_first (how long the miner had worked on this candidate), age_last = solve - fetch_last
+      (how long since the miner last saw it current), fetch_lat = duration of the candidate request that returned it
+      last; reply class: ok, stale (PoW valid: false), solved (Block already solved), nocand, noreply, other)
   <epoch ms> poll-error <text>
 and on exit (SIGTERM) one summary line:
   <epoch ms> EXTMINER-SUMMARY polls=<n> cand_changes=<n> nonces=<n> ordering_sent=<n> ordering_ok=<n>
-            input_sent=<n> input_ok=<n> poll_s=<poll> rate=<rate>
+            input_sent=<n> input_ok=<n> poll_s=<poll> rate=<rate> strict=<0|1>
 Standard library only.
 """
 import argparse
@@ -124,6 +136,8 @@ def main(argv):
     ap.add_argument("--rate", type=float, default=0.0, help="nonces per second, 0 = unlimited")
     ap.add_argument("--api-key", default="hello")
     ap.add_argument("--seed", default=None)
+    ap.add_argument("--strict", action="store_true",
+                    help="read the candidate only on the --poll schedule; keep the current candidate after a submission")
     a = ap.parse_args(argv)
     poll_s = parse_poll(a.poll)
     node = Node(a.url, a.api_key)
@@ -132,23 +146,26 @@ def main(argv):
 
     def summary(*_):
         print(f"{now_ms()} EXTMINER-SUMMARY " + " ".join(f"{k}={v}" for k, v in st.items())
-              + f" poll_s={poll_s} rate={a.rate}", flush=True)
+              + f" poll_s={poll_s} rate={a.rate} strict={int(a.strict)}", flush=True)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, summary)
     signal.signal(signal.SIGINT, summary)
 
     cand = None          # (msg bytes, b int, h int, n int, k int|None)
+    cand_t = (0, 0, 0)   # (first receipt ms of the current msg, latest receipt ms, latency ms of that latest read)
     next_poll = 0.0
     no_weak = False      # the node has no /mining/weakSolution route (a release jar): input-level hits are not sent
     nonce = rnd.getrandbits(64)
     t_rate0, n_rate0 = time.time(), 0
 
     def poll():
-        nonlocal cand, nonce
+        nonlocal cand, nonce, cand_t
         st["polls"] += 1
         try:
+            t_req = now_ms()
             s, body = node.call("/mining/candidate")
+            t_got = now_ms()
             if s != 200:
                 print(f"{now_ms()} poll-error candidate {s} {body[:160]}", flush=True)
                 return
@@ -174,11 +191,13 @@ def main(argv):
             st["cand_changes"] += 1
             nonce = rnd.getrandbits(64)
         cand = (msg, b, h, calc_n(h), k)
+        cand_t = (t_got if changed else cand_t[0], t_got, t_got - t_req)
         print(f"{now_ms()} cand msg={msg.hex()[:16]} h={h} k={k if k else '-'} changed={int(changed)}", flush=True)
 
-    def submit(kind, nb):
+    def submit(kind, nb, t_solve):
         nonlocal no_weak
         msg, _, h, _, _ = cand
+        f_first, f_last, f_lat = cand_t
         path = "/mining/solution" if kind == "ordering" else "/mining/weakSolution"
         st[kind + "_sent"] += 1
         try:
@@ -190,8 +209,14 @@ def main(argv):
         elif kind == "input" and (s in (404, 405) or "Rejection" in body):
             no_weak = True
             print(f"{now_ms()} no-weak-route the node has no /mining/weakSolution; input-level hits are no longer sent", flush=True)
+        t_reply = now_ms()
         body = body.replace("\n", " ")[:160]
-        print(f"{now_ms()} submit kind={kind} h={h} msg={msg.hex()[:16]} n={nb.hex()} -> {s} {body}", flush=True)
+        print(f"{t_reply} submit kind={kind} h={h} msg={msg.hex()[:16]} n={nb.hex()} -> {s} {body}", flush=True)
+        rc = ("ok" if s == 200 else "noreply" if s == 0 else "stale" if "PoW valid: false" in body
+              else "solved" if "already solved" in body else "nocand" if "No candidate" in body else "other")
+        print(f"{t_reply} work kind={kind} msg={msg.hex()[:16]} n={nb.hex()} status={s} fetch_first_ms={f_first} "
+              f"fetch_last_ms={f_last} solve_ms={t_solve} reply_ms={t_reply} age_first_ms={t_solve - f_first} "
+              f"age_last_ms={t_solve - f_last} fetch_lat_ms={f_lat} strict={int(a.strict)} reply={rc}", flush=True)
 
     while True:
         t = time.time()
@@ -209,13 +234,16 @@ def main(argv):
             st["nonces"] += 1
             n_rate0 += 1
             if hit < b:
-                submit("ordering", nb)
-                next_poll = 0.0
-                break
+                submit("ordering", nb, now_ms())
+                if not a.strict:
+                    next_poll = 0.0
+                    break
+                continue
             if k and not no_weak and hit < b * k:
-                submit("input", nb)
-                next_poll = 0.0
-                break
+                submit("input", nb, now_ms())
+                if not a.strict:
+                    next_poll = 0.0
+                    break
         if a.rate > 0:
             ahead = n_rate0 / a.rate - (time.time() - t_rate0)
             if ahead > 0:

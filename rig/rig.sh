@@ -63,7 +63,7 @@
 #   and the variables NODES, RIG_LOG_DIR, SCRATCH, CONF_OVR (per-node extra HOCON for a deferred launch).
 #   A hook sets rig_verdict=PASS|FAIL|INCONCLUSIVE; rig.sh exits 1 on FAIL, 3 on INCONCLUSIVE.
 # Env overrides: PEERYARD_CHAIN (preset), PEERYARD_MINE_POLL, PEERYARD_DURATION (hooks read it), PEERYARD_KEEP_DATA=1,
-# PEERYARD_EXTMINE_POLL / PEERYARD_EXTMINE_RATE (external miners through /mining/*, lib/extminer.py).
+# PEERYARD_EXTMINE_POLL / PEERYARD_EXTMINE_RATE / PEERYARD_EXTMINE_STRICT (external miners through /mining/*, lib/extminer.py).
 #   txload_fund / txload_start / txload_stop / txwatch_start / txwatch_stop / txload_pools / txload_chain
 #                                   a benign payment load and its observer (lib/txload.sh; diag/txload_report.py)
 # The run's effective configuration (jars, chain, links, polls, duration, a host card) is written to $RIG_LOG_DIR/effective.json.
@@ -154,7 +154,11 @@ DEFAULT_POLL="${PEERYARD_MINE_POLL:-500ms}"
 # at that interval and posts solutions to /mining/solution (on a Matrix node, input-block solutions to
 # /mining/weakSolution), the way a pool or mining proxy gets work. PEERYARD_EXTMINE_RATE caps its nonces per second
 # (default 0: one core's worth of the Python hash). Log per node: $RIG_LOG_DIR/extminer_<node>.log.
-EXTMINE_POLL="${PEERYARD_EXTMINE_POLL:-}"; EXTMINE_RATE="${PEERYARD_EXTMINE_RATE:-0}"
+# PEERYARD_EXTMINE_STRICT=1 (default 0): the miner reads the candidate only on its poll schedule and keeps searching the
+# candidate it has after a submission (extminer.py --strict), as pool software polling on a timer does; 0 keeps the
+# read-after-every-submission behaviour.
+EXTMINE_POLL="${PEERYARD_EXTMINE_POLL:-}"; EXTMINE_RATE="${PEERYARD_EXTMINE_RATE:-0}"; EXTMINE_STRICT="${PEERYARD_EXTMINE_STRICT:-0}"
+[[ "$EXTMINE_STRICT" =~ ^[01]$ ]] || { echo "FAIL: PEERYARD_EXTMINE_STRICT '$EXTMINE_STRICT' (0 or 1)"; exit 2; }
 [[ -z "$EXTMINE_POLL" || "$EXTMINE_POLL" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "FAIL: PEERYARD_EXTMINE_POLL '$EXTMINE_POLL' (e.g. 500ms or 4s)"; exit 2; }
 [[ "$EXTMINE_RATE" =~ ^[0-9]{1,6}$ ]] || { echo "FAIL: PEERYARD_EXTMINE_RATE '$EXTMINE_RATE' (nonces per second, 0 = unlimited)"; exit 2; }
 RUST_DEVNET=0
@@ -685,8 +689,9 @@ extmine_release(){ local n end h
 # miner process in its namespace, which waits for the REST API itself. extmine_stop TERMs it (it prints its summary).
 extmine_start(){ local n="$1"; extmine_on "$n" || return 0; extmine_stop "$n"
   ip netns exec "${NS[$n]}" python3 "$(dirname "${BASH_SOURCE[0]}")/lib/extminer.py" --url "http://127.0.0.1:${REST[$n]}" \
-    --poll "$EXTMINE_POLL" --rate "$EXTMINE_RATE" --api-key "$API_KEY" >> "$RIG_LOG_DIR/extminer_$n.log" 2>&1 &
-  EXTMINER_PID[$n]=$!; echo "[extminer] started for $n (pid ${EXTMINER_PID[$n]}, poll $EXTMINE_POLL, rate $EXTMINE_RATE)"; }
+    --poll "$EXTMINE_POLL" --rate "$EXTMINE_RATE" --api-key "$API_KEY" $([[ "$EXTMINE_STRICT" == 1 ]] && echo --strict) \
+    >> "$RIG_LOG_DIR/extminer_$n.log" 2>&1 &
+  EXTMINER_PID[$n]=$!; echo "[extminer] started for $n (pid ${EXTMINER_PID[$n]}, poll $EXTMINE_POLL, rate $EXTMINE_RATE, strict $EXTMINE_STRICT)"; }
 extmine_stop(){ local n="$1" p="${EXTMINER_PID[$1]:-}"; [[ -n "$p" ]] || return 0
   kill "$p" 2>/dev/null; for _ in $(seq 1 30); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
   kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; EXTMINER_PID[$n]=""; echo "[extminer] stopped for $n"; }
@@ -794,7 +799,7 @@ wire_json="$(jq -n --argjson on "$([[ $WIRE_ON == 1 ]] && echo true || echo fals
   else {enabled: false} end')"
 jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --argjson ips "$ips_json" --argjson lips "$lips_json" --argjson wire "$wire_json" --arg preset "$CHAIN_PRESET" --arg bi "$BLOCK_INTERVAL" --arg rd "$REWARD_DELAY" \
       --arg gd "$GENESIS_DIGEST" --arg v4 "$V4" --argjson magic "$MAGIC" --arg poll "$DEFAULT_POLL" --arg dur "${PEERYARD_DURATION:-}" --arg keep "${PEERYARD_KEEP_DATA:-0}" \
-      --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" --arg xpoll "$EXTMINE_POLL" --arg xrate "$EXTMINE_RATE" '
+      --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" --arg xpoll "$EXTMINE_POLL" --arg xrate "$EXTMINE_RATE" --arg xstrict "$EXTMINE_STRICT" '
   $cfg[0] as $c
   | { effective_schema_version: 1, host: $host,
       chain: { preset: $preset, blockInterval: (if $bi == "" then "jar default" else $bi end),
@@ -810,7 +815,7 @@ jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --argjson ips "$ips_jso
                               ab: { delay_ms: (.delay_ms_ab // .delay_ms // 0), loss_pct: (.loss_pct_ab // .loss_pct // 0), jitter_ms: (.jitter_ms_ab // .jitter_ms // 0), rate_kbit: (.rate_kbit_ab // .rate_kbit // 0) },
                               ba: { delay_ms: (.delay_ms_ba // .delay_ms // 0), loss_pct: (.loss_pct_ba // .loss_pct // 0), jitter_ms: (.jitter_ms_ba // .jitter_ms // 0), rate_kbit: (.rate_kbit_ba // .rate_kbit // 0) } } ],
       wire: $wire,
-      external_miner: (if $xpoll == "" then null else {poll: $xpoll, rate: ($xrate | tonumber)} end),
+      external_miner: (if $xpoll == "" then null else {poll: $xpoll, rate: ($xrate | tonumber), strict: ($xstrict == "1")} end),
       duration_s: (if $dur == "" then null else ($dur | tonumber) end), keep_data: ($keep == "1") }' > "$RIG_LOG_DIR/effective.json"
 echo "[rig] effective configuration: $RIG_LOG_DIR/effective.json ($(jq -c '{chain: .chain.preset, nodes: [.nodes[] | .name + ":" + .jar], links: (.links | length)}' "$RIG_LOG_DIR/effective.json"))"
 # ---- prefix fixtures ("snapshot starts") ----

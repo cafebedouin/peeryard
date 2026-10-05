@@ -1,0 +1,64 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
+index 421ea3096..5a0b97309 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
+@@ -402,8 +402,14 @@ trait ErgoHistoryReader
+       }
+ 
+       val headers = offsets.flatMap(offset => bestHeaderAtHeight(h - offset))
++      // Keep a shared starting point in full summaries when it is available locally.
++      val genesisAnchor = if (full) {
++        bestHeaderAtHeight(GenesisHeight).filterNot(genesis => headers.exists(_.id == genesis.id)).toSeq
++      } else {
++        Seq.empty
++      }
+ 
+-      ErgoSyncInfoV2(headers)
++      ErgoSyncInfoV2(headers.toSeq ++ genesisAnchor)
+     }
+   }
+ 
+diff --git a/src/test/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerSpecification.scala b/src/test/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerSpecification.scala
+index 722d41408..303c86550 100644
+--- a/src/test/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerSpecification.scala
++++ b/src/test/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerSpecification.scala
+@@ -793,7 +793,7 @@ class ErgoNodeViewSynchronizerSpecification
+ 
+       // we check that in case of neighbour with older history (it has more blocks),
+       // sync message will be sent by our node (to get invs from the neighbour),
+-      // sync message will consist of 4 headers
++      // sync message will contain the sampled headers followed by genesis
+       synchronizer ! Message(ErgoSyncInfoMessageSpec, Left(msgBytes), Some(peer))
+       ncProbe.fishForMessage(3 seconds) {
+         case m =>
+@@ -801,7 +801,9 @@ class ErgoNodeViewSynchronizerSpecification
+             case stn: SendToNetwork =>
+               val msg     = stn.message
+               val headers = msg.data.get.asInstanceOf[ErgoSyncInfoV2].lastHeaders
+-              msg.spec.messageCode == ErgoSyncInfoMessageSpec.messageCode && headers.length == 4
++              msg.spec.messageCode == ErgoSyncInfoMessageSpec.messageCode &&
++                headers.map(_.id) == (ErgoHistoryReader.FullV2SyncOffsets.toSeq
++                  .map(offset => localChain(localChain.size - offset - 1).id) :+ localChain.head.id)
+             case _ => false
+           }
+       }
+@@ -819,7 +821,7 @@ class ErgoNodeViewSynchronizerSpecification
+ 
+       // we check that in case of neighbour with older history (it has more blocks),
+       // sync message will be sent by our node (to get invs from the neighbour),
+-      // sync message will consist of 4 headers
++      // sync message will contain the sampled headers followed by genesis
+       synchronizer ! Message(ErgoSyncInfoMessageSpec, Left(msgBytes), Some(peer))
+       ncProbe.fishForMessage(3 seconds) {
+         case m =>
+@@ -827,7 +829,9 @@ class ErgoNodeViewSynchronizerSpecification
+             case stn: SendToNetwork =>
+               val msg     = stn.message
+               val headers = msg.data.get.asInstanceOf[ErgoSyncInfoV2].lastHeaders
+-              msg.spec.messageCode == ErgoSyncInfoMessageSpec.messageCode && headers.length == 4
++              msg.spec.messageCode == ErgoSyncInfoMessageSpec.messageCode &&
++                headers.map(_.id) == (ErgoHistoryReader.FullV2SyncOffsets.toSeq
++                  .map(offset => localChain(localChain.size - offset - 1).id) :+ localChain.head.id)
+             case _ => false
+           }
+       }

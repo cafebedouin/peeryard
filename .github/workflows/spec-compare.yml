@@ -2,15 +2,18 @@
 # development machine discovers; the runs a claim rests on are made where anyone can re-run them). Each patch is
 # applied alone to the base commit peeryard carries (patches/ergo-matrix/patches.json); each spec runs in its own job,
 # `repeats` times, so a flaky test shows as a rate rather than a single red. Each job keeps its sbt log (gzipped; over 20 MB, its first and last 10 MB) and the
-# scalatest XML report. Runs by hand.
+# scalatest XML report. Runs by hand. matrix_base (opt-in): a full weak-blocks commit to use instead of patches.json's
+# base (empty = that base, as before); patches must be diffs from the base they are applied to. The arm `base` is the
+# base alone (no patch), the control. tree.txt, in every job's artifact, names the base and the patch used.
 name: peeryard spec compare
-run-name: "spec compare: ${{ inputs.specs }} x${{ inputs.repeats }} (${{ inputs.patches }})"
+run-name: "spec compare: ${{ inputs.specs }} x${{ inputs.repeats }} (${{ inputs.patches }})${{ inputs.matrix_base && format(' on {0}', inputs.matrix_base) || '' }}"
 on:
   workflow_dispatch:
     inputs:
-      patches: { description: 'space-separated patch files (repo paths), each applied alone to the weak-blocks base' }
+      patches: { description: 'space-separated patch files (repo paths), each applied alone to the weak-blocks base; the word base = the base alone (control)' }
       specs: { description: 'space-separated test classes (org.ergoplatform.mining.CandidateGeneratorSpec ...)' }
       repeats: { description: 'runs per patch and spec (1-5)', default: '2' }
+      matrix_base: { description: 'full 40-hex weak-blocks commit to apply the patches to (empty = patches/ergo-matrix/patches.json base, as before)', default: '' }
 permissions:
   contents: read
 jobs:
@@ -23,10 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: p
-        env: { PATCHES: '${{ inputs.patches }}', SPECS: '${{ inputs.specs }}', REPEATS: '${{ inputs.repeats }}' }
+        env: { PATCHES: '${{ inputs.patches }}', SPECS: '${{ inputs.specs }}', REPEATS: '${{ inputs.repeats }}', MATRIX_BASE: '${{ inputs.matrix_base }}' }
         run: |
           [[ "$REPEATS" =~ ^[1-5]$ ]] || { echo "repeats: 1-5"; exit 1; }
-          for p in $PATCHES; do [[ "$p" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$p" ]] || { echo "patch: $p"; exit 1; }; done
+          [[ -z "$MATRIX_BASE" || "$MATRIX_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "matrix_base: empty, or a full 40-hex commit"; exit 1; }
+          for p in $PATCHES; do [[ "$p" == base || ( "$p" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$p" ) ]] || { echo "patch: $p"; exit 1; }; done
           for s in $SPECS; do [[ "$s" =~ ^org\.ergoplatform\.[A-Za-z0-9.]+Spec[A-Za-z]*$ ]] || { echo "spec: $s"; exit 1; }; done
           echo "arms=$(printf '%s\n' $PATCHES | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "specs=$(printf '%s\n' $SPECS | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
@@ -52,23 +56,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ivy2/local/org.scorexfoundation
-          key: sigma-snapshot-${{ hashFiles('patches/ergo-matrix/patches.json', 'patches/sigma-snapshot.sh') }}
+          key: sigma-snapshot-${{ hashFiles('patches/ergo-matrix/patches.json', 'patches/sigma-snapshot.sh') }}${{ inputs.matrix_base && format('-{0}', inputs.matrix_base) || '' }}
       - name: Cache coursier
         uses: actions/cache@v4
         with:
           path: ~/.cache/coursier
-          key: coursier-weak-blocks-${{ hashFiles('patches/ergo-matrix/patches.json') }}
+          key: coursier-weak-blocks-${{ hashFiles('patches/ergo-matrix/patches.json') }}${{ inputs.matrix_base && format('-{0}', inputs.matrix_base) || '' }}
       - name: ergo at the weak-blocks base, the patch applied
-        env: { PATCH: '${{ matrix.patch }}' }
+        env: { PATCH: '${{ matrix.patch }}', MATRIX_BASE: '${{ inputs.matrix_base }}' }
         run: |
-          base="$(jq -r .base patches/ergo-matrix/patches.json)"
+          base="${MATRIX_BASE:-$(jq -r .base patches/ergo-matrix/patches.json)}"
+          src=patches.json; [ -n "$MATRIX_BASE" ] && src="matrix_base input"
           git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
           git -C "$HOME/ergo-clone" fetch -q origin weak-blocks
+          git -C "$HOME/ergo-clone" cat-file -e "$base^{commit}" 2>/dev/null || git -C "$HOME/ergo-clone" fetch -q origin "$base"
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
           bash patches/sigma-snapshot.sh "$base"
           git -C "$HOME/ergo-clone" checkout -q --detach "$base"
-          git -C "$HOME/ergo-clone" apply --index "$GITHUB_WORKSPACE/$PATCH"
-          { echo "base $base"; echo "patch $PATCH sha256 $(sha256sum "$PATCH" | cut -c1-16)"; } | tee tree.txt
+          if [ "$PATCH" = base ]; then pline="patch none (the base alone)"
+          else git -C "$HOME/ergo-clone" apply --index "$GITHUB_WORKSPACE/$PATCH"; pline="patch $PATCH sha256 $(sha256sum "$PATCH" | cut -c1-16)"; fi
+          { echo "base $base ($src)"; echo "$pline"; } | tee tree.txt
       - name: Run the spec
         env: { SPEC: '${{ matrix.spec }}' }
         run: |

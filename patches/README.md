@@ -87,6 +87,23 @@ the version from the commit's `build.sbt` and, if `~/.ivy2/local` lacks it, buil
 commit the version names (`sbt sigma/publishLocal`, JDK 8, about 3-4 minutes cold). Run it once before
 `stack.sh --build ergo-matrix`; the sweep workflow does.
 
+**The `ergo-matrix/candidates/` patches and their base.** A candidate patch is a diff from one `weak-blocks` commit and
+applies only there. Unmarked files are diffs from `patches.json`'s `base` (8769baace); a file named `...-on-<commit>.patch`
+is a diff from that commit. `patch-compare.yml` and `spec-compare.yml` build on `patches.json`'s base unless the
+`matrix_base` input names another full commit (empty, the default, keeps every earlier run reproducible); `builds.txt`
+(patch compare) and `tree.txt` (spec compare) record the base each run used. `spec-compare`'s arm `base` is the base
+alone, the control. Current on `b2a9e7b00` (`weak-blocks` after ergoplatform/ergo#2666, which carries the ErgoMiner
+forward of external solutions, the CandidateGenerator reply for an unusable solution, and #2608):
+
+| on b2a9e7b00 | from (on 8769baace) | dropped as upstream |
+|---|---|---|
+| `abl-008-010-012-013-014-015-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-apifwd.patch` | the ErgoMiner forward and 008's `case _: AutolykosSolution \| _: SolutionFound` reply line |
+| `abl-008-010-012-013-014-015-016-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-016-apifwd.patch` | the same |
+| `abl-008-010-012-013-014-015-2562-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-apifwd-2562.patch` (#2562 at e18963ad3) | the same |
+
+Run them with `matrix_base: b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6`. The 8769baace files stay as they were, for the
+runs that cite them.
+
 `stack.sh` applies the stacked patches in id order to a scratch worktree of the base and writes one combined diff;
 for ergo, `--build` hands that diff to `diffrun/build.sh`, which caches the jar by the diff's sha256, and leaves
 `<jar>.stack.json` beside it naming the patches, so `review/provenance.sh` can say "reference node v6.0.6+001". For the Rust

@@ -8,8 +8,13 @@ candidate it read. A nonce whose hit is below b (the ordering-block target) is p
 {"n": <nonce hex>}; the node puts its own key into the solution (Autolykos v2 solutions carry no pk from outside).
 On a Matrix node (ergo's weak-blocks line), whose /info parameters carry subblocksPerBlock = k, a nonce whose hit is
 below b * k but not below b is an input-block solution: it goes to POST /mining/weakSolution, the node's route for
-input blocks. Nothing tells an external miner when the node's candidate changed, so a solution found between two
-reads may belong to a candidate the node has already replaced; the node judges it. After any submission the miner
+input blocks; a node without that route (a release jar, whose /info at block version 4 also carries
+subblocksPerBlock) answers with a rejection, after which the miner stops sending input-level hits. Nothing tells an
+external miner when the node's candidate changed, so a solution found between two reads may belong to a candidate the
+node has already replaced; the node judges it.
+Seen on weak-blocks 8769baace (and its head on 2026-10-03): MiningApiRoute sends OrderingSolutionFound /
+InputSolutionFound to ErgoMiner, whose started state forwards only a bare AutolykosSolution, so both routes' messages
+are logged as "Unexpected message" and the request times out (5 s); no external solution reaches the generator there. After any submission the miner
 reads the candidate again at once (its own block changed the work), then keeps the --poll schedule.
 
 The node must run with ergo.node.mining = true and ergo.node.useExternalMiner = true (no internal CPU miner).
@@ -135,6 +140,7 @@ def main(argv):
 
     cand = None          # (msg bytes, b int, h int, n int, k int|None)
     next_poll = 0.0
+    no_weak = False      # the node has no /mining/weakSolution route (a release jar): input-level hits are not sent
     nonce = rnd.getrandbits(64)
     t_rate0, n_rate0 = time.time(), 0
 
@@ -171,6 +177,7 @@ def main(argv):
         print(f"{now_ms()} cand msg={msg.hex()[:16]} h={h} k={k if k else '-'} changed={int(changed)}", flush=True)
 
     def submit(kind, nb):
+        nonlocal no_weak
         msg, _, h, _, _ = cand
         path = "/mining/solution" if kind == "ordering" else "/mining/weakSolution"
         st[kind + "_sent"] += 1
@@ -180,6 +187,9 @@ def main(argv):
             s, body = 0, f"{type(e).__name__} {e}"
         if s == 200:
             st[kind + "_ok"] += 1
+        elif kind == "input" and (s in (404, 405) or "Rejection" in body):
+            no_weak = True
+            print(f"{now_ms()} no-weak-route the node has no /mining/weakSolution; input-level hits are no longer sent", flush=True)
         body = body.replace("\n", " ")[:160]
         print(f"{now_ms()} submit kind={kind} h={h} msg={msg.hex()[:16]} n={nb.hex()} -> {s} {body}", flush=True)
 
@@ -202,7 +212,7 @@ def main(argv):
                 submit("ordering", nb)
                 next_poll = 0.0
                 break
-            if k and hit < b * k:
+            if k and not no_weak and hit < b * k:
                 submit("input", nb)
                 next_poll = 0.0
                 break

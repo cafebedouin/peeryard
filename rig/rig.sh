@@ -694,9 +694,10 @@ extmine_release(){ local n end h
   done; }
 # extmine_start <node>: called by launch; a node launched with mining on (and the external miner enabled) gets one
 # miner process in its namespace, which waits for the REST API itself. extmine_stop TERMs it (it prints its summary).
-extmine_start(){ local n="$1"; extmine_on "$n" || return 0; extmine_stop "$n"
+extmine_start(){ local n="$1" strict=(); extmine_on "$n" || return 0; extmine_stop "$n"
+  [[ "$EXTMINE_STRICT" == 1 ]] && strict=(--strict)
   ip netns exec "${NS[$n]}" python3 "$(dirname "${BASH_SOURCE[0]}")/lib/extminer.py" --url "http://127.0.0.1:${REST[$n]}" \
-    --poll "$EXTMINE_POLL" --rate "$EXTMINE_RATE" --api-key "$API_KEY" $([[ "$EXTMINE_STRICT" == 1 ]] && echo --strict) \
+    --poll "$EXTMINE_POLL" --rate "$EXTMINE_RATE" --api-key "$API_KEY" "${strict[@]}" \
     >> "$RIG_LOG_DIR/extminer_$n.log" 2>&1 &
   EXTMINER_PID[$n]=$!; echo "[extminer] started for $n (pid ${EXTMINER_PID[$n]}, poll $EXTMINE_POLL, rate $EXTMINE_RATE, strict $EXTMINE_STRICT)"; }
 extmine_stop(){ local n="$1" p="${EXTMINER_PID[$1]:-}"; [[ -n "$p" ]] || return 0

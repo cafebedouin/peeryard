@@ -97,9 +97,11 @@ forward of external solutions, the CandidateGenerator reply for an unusable solu
 
 | on b2a9e7b00 | from (on 8769baace) | dropped as upstream |
 |---|---|---|
-| `abl-008-010-012-013-014-015-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-apifwd.patch` | the ErgoMiner forward and 008's `case _: AutolykosSolution \| _: SolutionFound` reply line |
-| `abl-008-010-012-013-014-015-016-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-016-apifwd.patch` | the same |
-| `abl-008-010-012-013-014-015-2562-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-apifwd-2562.patch` (#2562 at e18963ad3) | the same |
+| `abl-008-010-012-013-014-015-on-b2a9e7b00-v2.patch` | `abl-008-010-012-013-014-015-apifwd.patch` | the ErgoMiner forward and 008's `case _: AutolykosSolution \| _: SolutionFound` reply line |
+| `abl-008-010-012-013-014-015-016-on-b2a9e7b00-v2.patch` | `abl-008-010-012-013-014-015-016-apifwd.patch` | the same |
+| `abl-008-010-012-013-014-015-2562-on-b2a9e7b00-v2.patch` | `abl-008-010-012-013-014-015-apifwd-2562.patch` (#2562 at e18963ad3) | the same |
+
+The `-v2` files are the earlier `-on-b2a9e7b00.patch` files plus only #2529's matching test hunk (the two SyncInfo V2 "older peer"/"unknown peer" assertions in ErgoNodeViewSynchronizerSpecification, which the stack's patch 004 production hunk makes fail without it); the un-suffixed files stay as they were, for the runs that cite them.
 
 Two adaptations beyond dropping what is upstream, the same in all three: 008's "no candidate" reply for an input-block
 solution is `StatusReply.error("...")` (a String, as upstream's own reply at that point), not `StatusReply.error(new

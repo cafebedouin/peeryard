@@ -1,0 +1,339 @@
+diff --git a/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala b/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala
+index bfc1f1a91..d3becce05 100644
+--- a/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala
++++ b/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala
+@@ -2,7 +2,8 @@ package org.ergoplatform.mining
+ 
+ import akka.actor.{Actor, ActorRef, ActorRefFactory, Props}
+ import akka.pattern.StatusReply
+-import org.ergoplatform.{InputBlockFound, InputSolutionFound, NothingFound, OrderingBlockFound, OrderingSolutionFound}
++import com.google.common.primitives.Longs
++import org.ergoplatform.{AutolykosSolution, InputBlockFound, InputSolutionFound, NothingFound, OrderingBlockFound, OrderingSolutionFound}
+ import org.ergoplatform.mining.CandidateGenerator.{Candidate, GenerateCandidate}
+ import org.ergoplatform.settings.{ErgoSettings, Parameters}
+ import scorex.util.ScorexLogging
+@@ -25,6 +26,16 @@ class ErgoMiningThread(
+ 
+   private val powScheme = ergoSettings.chainSettings.powScheme
+   private val NonceStep = 1000
++  // true while a MineCmd is queued: at most one is ever in the mailbox, so a new candidate or an error reply cannot
++  // start a second chain of MineCmd steps beside the running one (MineCmd is private, so no other sender can either)
++  private var mineCmdPending = false
++
++  private def enqueueMineCmdIfIdle(): Unit = {
++    if (!mineCmdPending) {
++      mineCmdPending = true
++      self ! MineCmd
++    }
++  }
+ 
+   override def preStart(): Unit = {
+     log.info(s"Starting miner thread: ${self.path.name}")
+@@ -49,13 +60,13 @@ class ErgoMiningThread(
+     case StatusReply.Success(Candidate(candidateBlock, _, _, parameters)) =>
+       log.info(s"Initiating block mining")
+       context.become(mining(nonce = 0, candidateBlock, parameters, solvedBlocksCount = 0))
+-      self ! MineCmd
++      enqueueMineCmdIfIdle()
+     case StatusReply.Error(ex) =>
+       log.error(s"Preparing candidate did not succeed", ex)
+   }
+ 
+   def mining(
+-    nonce: Int,
++    nonce: Long,
+     candidateBlock: CandidateBlock,
+     parameters: Parameters,
+     solvedBlocksCount: Int
+@@ -64,28 +75,36 @@ class ErgoMiningThread(
+       // if we get new candidate instead of a cached one, mine it
+       if (cb.timestamp != candidateBlock.timestamp) {
+         context.become(mining(nonce = 0, cb, newParameters, solvedBlocksCount))
+-        self ! MineCmd
++        enqueueMineCmdIfIdle()
+       }
+     case StatusReply.Error(ex) =>
+       log.error(s"Accepting solution or preparing candidate did not succeed", ex)
+-      context.become(mining(nonce + 1, candidateBlock, parameters, solvedBlocksCount))
+-      self ! MineCmd
++      // resume after the rejected solution's nonce (recorded when it was found), not at the batch start
++      context.become(mining(nonce, candidateBlock, parameters, solvedBlocksCount))
++      enqueueMineCmdIfIdle()
+     case StatusReply.Success(()) =>
+       log.info(s"Solution accepted")
+       context.become(mining(nonce, candidateBlock, parameters, solvedBlocksCount + 1))
+     case MineCmd =>
+-      val lastNonceToCheck = nonce + NonceStep
++      mineCmdPending = false
++      val lastNonceToCheck = batchEnd(nonce, NonceStep)
+       powScheme.proveCandidate(candidateBlock, sk, nonce, lastNonceToCheck, parameters) match {
+         case OrderingBlockFound(newBlock) =>
+           log.info(s"Found solution for ordering block, sending it for validation")
++          context.become(mining(nonceAfter(newBlock.header.powSolution), candidateBlock, parameters, solvedBlocksCount))
+           candidateGenerator ! OrderingSolutionFound(newBlock.header.powSolution)
+         case InputBlockFound(newBlock) =>
+           log.info(s"Found solution for input block, sending it for validation")
++          context.become(mining(nonceAfter(newBlock.header.powSolution), candidateBlock, parameters, solvedBlocksCount))
+           candidateGenerator ! InputSolutionFound(newBlock.header.powSolution)
+         case NothingFound =>
+-          log.info(s"Trying nonce $lastNonceToCheck")
+           context.become(mining(lastNonceToCheck, candidateBlock, parameters, solvedBlocksCount))
+-          self ! MineCmd
++          if (lastNonceToCheck < NonceRangeEnd) {
++            log.info(s"Trying nonce $lastNonceToCheck")
++            enqueueMineCmdIfIdle()
++          } else {
++            log.warn(s"Nonce range [0, $NonceRangeEnd) searched for this candidate, waiting for a new one")
++          }
+         case _ =>
+           //todo : rework ProveBlockResult hierarchy to avoid this branch
+       }
+@@ -93,11 +112,23 @@ class ErgoMiningThread(
+       sender() ! SolvedBlocksCount(solvedBlocksCount)
+   }
+ 
++  private def nonceAfter(solution: AutolykosSolution): Long = ErgoMiningThread.nonceAfter(Longs.fromByteArray(solution.n))
++
+ }
+ 
+ object ErgoMiningThread {
+ 
+-  case object MineCmd
++  /** The thread searches nonces in [0, NonceRangeEnd); proveCandidate's upper bound is exclusive. */
++  private[mining] val NonceRangeEnd: Long = Long.MaxValue
++
++  /** End (exclusive) of the batch starting at `nonce`, cut at the end of the range instead of overflowing. */
++  private[mining] def batchEnd(nonce: Long, step: Int): Long = nonce + math.min(step.toLong, NonceRangeEnd - nonce)
++
++  /** Where to resume after a solution at nonce `n`. A found nonce lies inside the range, so this is at most
++    * NonceRangeEnd, which means the range is used up (the next batch is empty and the search stops). */
++  private[mining] def nonceAfter(n: Long): Long = if (n >= NonceRangeEnd) NonceRangeEnd else n + 1
++
++  private case object MineCmd
+   case object GetSolvedBlocksCount // metric just for testing purposes for now
+   case class SolvedBlocksCount(count: Int)
+ 
+diff --git a/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadChainSpec.scala b/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadChainSpec.scala
+new file mode 100644
+index 000000000..9d7e4c655
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadChainSpec.scala
+@@ -0,0 +1,99 @@
++package org.ergoplatform.mining
++
++import akka.actor.{ActorRef, ActorSystem}
++import akka.pattern.StatusReply
++import akka.testkit.{TestKit, TestProbe}
++import org.ergoplatform.mining.CandidateGenerator.{Candidate, GenerateCandidate}
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.nodeView.state.StateType
++import org.ergoplatform.nodeView.{ErgoNodeViewRef, ErgoReadersHolderRef}
++import org.ergoplatform.settings.{ErgoSettings, ErgoSettingsReader, Parameters}
++import org.ergoplatform.utils.ErgoTestHelpers
++import org.ergoplatform.{NothingFound, ProveBlockResult}
++import org.scalatest.flatspec.AnyFlatSpec
++import org.scalatest.matchers.should.Matchers
++import scorex.crypto.authds.ADDigest
++import scorex.crypto.hash.Digest32
++
++import scala.concurrent.duration._
++
++class ErgoMiningThreadChainSpec extends AnyFlatSpec with Matchers with ErgoTestHelpers {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++
++  private val settings: ErgoSettings = {
++    val empty = ErgoSettingsReader.read()
++    empty.copy(
++      nodeSettings = empty.nodeSettings.copy(
++        mining = true,
++        stateType = StateType.Utxo,
++        internalMinerPollingInterval = 1.second,
++        offlineGeneration = true,
++        verifyTransactions = true
++      ),
++      chainSettings = empty.chainSettings.copy(blockInterval = 1.seconds)
++    )
++  }
++
++  /** Fake PoW that never finds a solution and takes `stepMillis` per nonce step. */
++  private class SlowNothingPowScheme(stepMillis: Long) extends DefaultFakePowScheme(32, 26) {
++    override def prove(parentOpt: Option[Header],
++                       version: Header.Version,
++                       nBits: Long,
++                       stateRoot: ADDigest,
++                       adProofsRoot: Digest32,
++                       transactionsRoot: Digest32,
++                       timestamp: Header.Timestamp,
++                       extensionHash: Digest32,
++                       votes: Array[Byte],
++                       sk: PrivateKey,
++                       minNonce: Long,
++                       maxNonce: Long,
++                       parameters: Parameters): ProveBlockResult = {
++      Thread.sleep(stepMillis)
++      NothingFound
++    }
++  }
++
++  it should "run one nonce-search chain however many candidates and error replies arrive while mining" in
++    new TestKit(ActorSystem()) {
++    // a real candidate, built once by a real generator on a chain of its own
++    val chainSettings: ErgoSettings =
++      settings.copy(directory = s"${settings.directory}-thread-chain-${System.currentTimeMillis()}")
++    val viewHolderRef: ActorRef = ErgoNodeViewRef(chainSettings)
++    val readersHolderRef: ActorRef = ErgoReadersHolderRef(viewHolderRef)
++    val realGenerator: ActorRef =
++      CandidateGenerator(defaultMinerSecret.publicImage, readersHolderRef, viewHolderRef, chainSettings)
++    val candidateProbe = TestProbe()
++    realGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = None), candidateProbe.ref)
++    // the first request waits for the genesis state, which can take a while on a loaded machine
++    val candidate = candidateProbe.expectMsgPF(60.seconds) { case StatusReply.Success(c: Candidate) => c }
++
++    // the thread under test talks to a probe and searches with a PoW that finds nothing, 20 ms per step
++    val stepMillis = 20L
++    val generator = TestProbe()
++    val minerSettings = settings.copy(chainSettings =
++      settings.chainSettings.copy(powScheme = new SlowNothingPowScheme(stepMillis)))
++    val thread = ErgoMiningThread(minerSettings, generator.ref, defaultMinerSecret.w)
++    generator.fishForMessage(5.seconds) { case _: GenerateCandidate => true; case _ => false }
++    generator.reply(StatusReply.Success(candidate))
++
++    // n new candidates (distinct timestamps) and n error replies while the thread is mining
++    val n = 10
++    (1 to n).foreach { i =>
++      val cb = candidate.candidateBlock.copy(timestamp = candidate.candidateBlock.timestamp + i)
++      thread ! StatusReply.Success(candidate.copy(candidateBlock = cb))
++      thread ! StatusReply.Error(new Exception("solution refused"))
++    }
++    Thread.sleep(stepMillis * (2 * n + 5))
++
++    // with one chain in flight a message waits about one step; with a chain per message it waits about 2n + 1 steps
++    val probe = TestProbe()
++    val start = System.nanoTime()
++    thread.tell(ErgoMiningThread.GetSolvedBlocksCount, probe.ref)
++    probe.expectMsgClass(5.seconds, classOf[ErgoMiningThread.SolvedBlocksCount])
++    val lagMillis = (System.nanoTime() - start) / 1000000
++    info(s"mailbox round trip after $n candidates and $n error replies: $lagMillis ms (step $stepMillis ms)")
++    lagMillis should be < (stepMillis * 5)
++    system.terminate()
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadSpec.scala b/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadSpec.scala
+new file mode 100644
+index 000000000..abc0ca127
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadSpec.scala
+@@ -0,0 +1,113 @@
++package org.ergoplatform.mining
++
++import akka.actor.{ActorRef, ActorSystem}
++import akka.pattern.StatusReply
++import akka.testkit.{TestKit, TestProbe}
++import org.ergoplatform.mining.CandidateGenerator.{Candidate, GenerateCandidate}
++import org.ergoplatform.nodeView.state.StateType
++import org.ergoplatform.nodeView.{ErgoNodeViewRef, ErgoReadersHolderRef}
++import org.ergoplatform.settings.{ErgoSettings, ErgoSettingsReader}
++import org.ergoplatform.utils.ErgoTestHelpers
++import com.google.common.primitives.Longs
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.settings.Parameters
++import org.ergoplatform.{AutolykosSolution, InputBlockHeaderFound, InputSolutionFound, NothingFound,
++  OrderingBlockHeaderFound, OrderingSolutionFound, ProveBlockResult, SolutionFound}
++import scorex.crypto.authds.ADDigest
++import scorex.crypto.hash.Digest32
++import org.scalatest.flatspec.AnyFlatSpec
++import org.scalatest.matchers.should.Matchers
++
++import scala.concurrent.duration._
++
++class ErgoMiningThreadSpec extends AnyFlatSpec with Matchers with ErgoTestHelpers {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++
++  private val settings: ErgoSettings = {
++    val empty = ErgoSettingsReader.read()
++    empty.copy(
++      nodeSettings = empty.nodeSettings.copy(
++        mining = true,
++        stateType = StateType.Utxo,
++        internalMinerPollingInterval = 1.second,
++        offlineGeneration = true,
++        verifyTransactions = true
++      ),
++      chainSettings = empty.chainSettings.copy(blockInterval = 1.seconds)
++    )
++  }
++
++  /** Fake PoW with input-block hits at fixed nonces only, so the miner's nonce search is observable. */
++  private class FixedHitsPowScheme(hits: Seq[Long]) extends DefaultFakePowScheme(32, 26) {
++    override def prove(parentOpt: Option[Header],
++                       version: Header.Version,
++                       nBits: Long,
++                       stateRoot: ADDigest,
++                       adProofsRoot: Digest32,
++                       transactionsRoot: Digest32,
++                       timestamp: Header.Timestamp,
++                       extensionHash: Digest32,
++                       votes: Array[Byte],
++                       sk: PrivateKey,
++                       minNonce: Long,
++                       maxNonce: Long,
++                       parameters: Parameters): ProveBlockResult =
++      hits.find(h => h >= minNonce && h < maxNonce) match {
++        case None => NothingFound
++        case Some(hit) =>
++          super.prove(parentOpt, version, nBits, stateRoot, adProofsRoot, transactionsRoot, timestamp, extensionHash,
++            votes, sk, minNonce, maxNonce, parameters) match {
++            case OrderingBlockHeaderFound(h) =>
++              val s = h.powSolution
++              InputBlockHeaderFound(h.copy(powSolution = new AutolykosSolution(s.pk, s.w, Longs.toByteArray(hit), s.d)))
++            case other => other
++          }
++      }
++  }
++
++  it should "not resubmit a rejected solution's nonce for the same candidate" in new TestKit(ActorSystem()) {
++    // a real candidate, from a real generator
++    val viewHolderRef: ActorRef = ErgoNodeViewRef(settings)
++    val readersHolderRef: ActorRef = ErgoReadersHolderRef(viewHolderRef)
++    val realGenerator: ActorRef =
++      CandidateGenerator(defaultMinerSecret.publicImage, readersHolderRef, viewHolderRef, settings)
++    val candidateProbe = TestProbe()
++    realGenerator.tell(GenerateCandidate(Seq.empty, reply = true, forced = false, optPk = None), candidateProbe.ref)
++    val candidate = candidateProbe.expectMsgPF(5.seconds) { case StatusReply.Success(c: Candidate) => c }
++
++    // the miner thread talks to a probe standing in for the generator
++    val generator = TestProbe()
++    // input-block hits at nonces 5 and 900 of the first 1000-nonce batch
++    val minerSettings = settings.copy(chainSettings = settings.chainSettings.copy(powScheme = new FixedHitsPowScheme(Seq(5L, 900L))))
++    val thread = ErgoMiningThread(minerSettings, generator.ref, defaultMinerSecret.w)
++    generator.expectMsgClass(5.seconds, classOf[GenerateCandidate])
++    generator.reply(StatusReply.Success(candidate))
++
++    def nextSolution(): SolutionFound = generator.fishForMessage(10.seconds) {
++      case _: InputSolutionFound | _: OrderingSolutionFound => true
++      case _ => false // periodic candidate polls
++    }.asInstanceOf[SolutionFound]
++
++    val first = nextSolution()
++    // the generator rejects it (e.g. the candidate it was mined on is no longer the cached one)
++    thread.tell(StatusReply.Error(new Exception("Invalid input block! PoW valid: false")), generator.ref)
++    val second = nextSolution()
++
++    val (n1, n2) = (Longs.fromByteArray(first.as.n), Longs.fromByteArray(second.as.n))
++    n1 shouldBe 5L
++    n2 should not be n1
++    system.terminate()
++  }
++
++  it should "keep the nonce cursor in [0, Long.MaxValue) without truncating or wrapping" in {
++    import ErgoMiningThread.{NonceRangeEnd, batchEnd, nonceAfter}
++    // past Int.MaxValue: no truncation to Int, no wrap to Int.MinValue
++    nonceAfter(Int.MaxValue.toLong) shouldBe Int.MaxValue.toLong + 1
++    batchEnd(Int.MaxValue.toLong, 1000) shouldBe Int.MaxValue.toLong + 1000
++    // at the end of the range the last batch is cut, and the cursor stops there
++    batchEnd(NonceRangeEnd - 10, 1000) shouldBe NonceRangeEnd
++    batchEnd(NonceRangeEnd, 1000) shouldBe NonceRangeEnd
++    nonceAfter(NonceRangeEnd - 1) shouldBe NonceRangeEnd
++    nonceAfter(NonceRangeEnd) shouldBe NonceRangeEnd
++  }
++}

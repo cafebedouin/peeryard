@@ -7,8 +7,9 @@
 # Opt-in inputs, each off by default so earlier runs stay reproducible: txload (a benign payment load on matrix-compat,
 # rig/lib/txload.sh), extmine_poll (every miner an external miner polling /mining/candidate, rig/lib/extminer.py) and
 # ref_2429 (the reference jar also carries patches/ergo/011, ergoplatform/ergo#2429's CandidateGenerator change, a
-# rig-only patch). builds.txt, copied into every run and printed at the head of the pooled output, names each jar
-# with its sha256.
+# rig-only patch) or ref_fairminer (011 plus patches/ergo/012, ergoplatform/ergo#2655's ErgoMiningThread change: a fair
+# reference miner for share measurement, rig-only; it includes ref_2429). builds.txt, copied into every run and printed
+# at the head of the pooled output, names each jar with its sha256.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})"
 on:
@@ -22,6 +23,7 @@ on:
       txload: { description: 'matrix-compat payment load, payments per 10 s (0 = off; MATRIX_COMPAT_TXLOAD)', default: '0' }
       extmine_poll: { description: 'external miners polling /mining/candidate at this interval, e.g. 1s or 4s, instead of the internal CPU miner (empty = internal; PEERYARD_EXTMINE_POLL)', default: '' }
       ref_2429: { description: 'reference jar also carries patches/ergo/011 (#2429, rig-only)', type: boolean, default: false }
+      ref_fairminer: { description: 'reference jar also carries patches/ergo/011 + 012 (#2429 + #2655, rig-only fair miner; implies ref_2429)', type: boolean, default: false }
 permissions:
   contents: read
 jobs:
@@ -66,7 +68,7 @@ jobs:
           bash patches/sigma-snapshot.sh "$(jq -r .base patches/ergo-matrix/patches.json)"
       - name: Build the base and the base + each patch
         id: b
-        env: { PATCHES: '${{ inputs.patches }}', REPEATS: '${{ inputs.repeats }}', REF_2429: '${{ inputs.ref_2429 }}' }
+        env: { PATCHES: '${{ inputs.patches }}', REPEATS: '${{ inputs.repeats }}', REF_2429: '${{ inputs.ref_2429 }}', REF_FAIR: '${{ inputs.ref_fairminer }}' }
         run: |
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME" DIFFRUN_NO_LOCK=1
           base="$(jq -r .base patches/ergo-matrix/patches.json)"; out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
@@ -74,11 +76,13 @@ jobs:
           cp "$(build "$base")" "$out/base.jar"; names=(base); echo "base: weak-blocks $base" > "$out/builds.txt"
           # the reference nodes of mixed examples (PEERYARD_JAR): the release-line stack, as the sweep builds it
           # ref_2429: the stack plus the rig-only patch 011 (stack.sh --for rig-2429); off, the default stack as before
-          forsc=(); [ "$REF_2429" = true ] && forsc=(--for rig-2429)
+          # ref_fairminer: the stack plus 011 and 012 (stack.sh --for rig-fairminer); it takes precedence over ref_2429
+          forsc=(); refnote=""; [ "$REF_2429" = true ] && { forsc=(--for rig-2429); refnote=' (ref_2429: 011 = #2429, rig-only)'; }
+          [ "$REF_FAIR" = true ] && { forsc=(--for rig-fairminer); refnote=' (ref_fairminer: 011 = #2429, 012 = #2655, rig-only)'; }
           ref=""; for attempt in 1 2; do ref="$(bash patches/stack.sh --build "${forsc[@]}" ergo | tail -1)" && [ -f "$ref" ] && break; ref=""; sleep 20; done
           [ -n "$ref" ] || { echo "reference stack did not build"; exit 1; }
           cp "$ref" "$out/reference.jar"
-          echo "reference: $(jq -r .base patches/ergo/patches.json) + ergo stack patches $(jq -r '[.patches[].id] | join(",")' "$ref.stack.json")$([ "$REF_2429" = true ] && echo ' (ref_2429: 011 = #2429, rig-only)') (patches/ergo/patches.json)" >> "$out/builds.txt"
+          echo "reference: $(jq -r .base patches/ergo/patches.json) + ergo stack patches $(jq -r '[.patches[].id] | join(",")' "$ref.stack.json")${refnote} (patches/ergo/patches.json)" >> "$out/builds.txt"
           i=0; for p in $PATCHES; do i=$((i+1)); cp "$(build "$base" "$p")" "$out/p$i.jar"; names+=("p$i")
             echo "p$i: weak-blocks $base + $p (sha256 $(sha256sum "$p" | cut -c1-16))" >> "$out/builds.txt"; done
           # every jar by sha256, in the file every run carries: a result names the jars it ran

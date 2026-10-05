@@ -92,6 +92,7 @@ gen_conf() {  # $1 = node name -> prints the conf path (SCRATCH_DATA_OVERRIDE: a
     [[ -n "$REWARD_DELAY" ]] && echo "ergo.chain.monetary.minerRewardDelay=$REWARD_DELAY"
     [[ -n "$GENESIS_DIGEST" ]] && echo "ergo.chain.genesisStateDigestHex=\"$GENESIS_DIGEST\""
     [[ "$V4" == true ]] && printf '%s\n' "ergo.chain.voting.votingLength=4" "ergo.chain.voting.softForkEpochs=1" "ergo.chain.voting.activationEpochs=1"
+    [[ "${NO_DIFF_RESET:-false}" == true ]] && echo "ergo.chain.voting.version2ActivationHeight=2147483647"
     while IFS= read -r line; do [[ -n "$line" ]] && echo "$line"; done <<< "$extra"
     # runtime HOCON lines set by the hook before a deferred launch, e.g. a genesisId pin
     [[ -n "${CONF_OVR[$n]:-}" ]] && printf '%s\n' "${CONF_OVR[$n]}"

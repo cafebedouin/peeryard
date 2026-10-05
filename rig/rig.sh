@@ -177,6 +177,13 @@ GENESIS_DIGEST="$(jq -r 'if (.chain | type) == "object" then (.chain.genesisStat
 # The chain keeps its preset's difficulty and interval, so on the Matrix line input blocks still form (the rust-devnet
 # preset is v4 from genesis but at difficulty 1, where every solution meets the ordering target and no input block can).
 V4="$(jq -r 'if (.chain | type) == "object" then (.chain.v4 // false) else false end' "$CFG")"; [[ "${PEERYARD_V4:-0}" == 1 ]] && V4=true
+# "noDifficultyReset": true in the chain object (or PEERYARD_NO_DIFF_RESET=1): JVM nodes get
+# ergo.chain.voting.version2ActivationHeight = 2147483647, as the jar's testnet.conf and the rust-devnet preset have.
+# The jar's devnet.conf sets it to 128 with version2ActivationDifficultyHex "20", and the node's
+# requiredDifficultyAfter (HeadersProcessor) then forces difficulty 32 on heights 128 and 129, which stays until the next
+# retarget (height 145 with epochLength 16): a 17-block low-difficulty phase in any run that reaches height 128. The
+# devnet's block version starts at 3 (DevnetLaunchParameters), so the height has no other effect. Off by default.
+NO_DIFF_RESET="$(jq -r 'if (.chain | type) == "object" then (.chain.noDifficultyReset // false) else false end' "$CFG")"; [[ "${PEERYARD_NO_DIFF_RESET:-0}" == 1 ]] && NO_DIFF_RESET=true
 RUST_MAGIC_OVERRIDE=0
 if [[ $RUST_DEVNET == 1 ]]; then
   # The Rust binaries' devnet magic is compiled in as [7,7,7,7]; that is the default here. A topology may set
@@ -188,7 +195,7 @@ if [[ $RUST_DEVNET == 1 ]]; then
     echo "[rig] rust-devnet with magic $MAGIC: the Rust nodes get a devnet magic override (needs binaries that accept one)"; fi
   [[ "$BLOCK_INTERVAL$REWARD_DELAY$GENESIS_DIGEST" == "" && "$V4" != true ]] || { echo "FAIL: chain preset rust-devnet takes no overrides (its parameters are compiled into the Rust nodes)"; exit 2; }
 fi
-echo "[rig] chain preset $CHAIN_PRESET: blockInterval=${BLOCK_INTERVAL:-jar default} minerRewardDelay=${REWARD_DELAY:-jar default}$([[ $V4 == true ]] && echo ' v4=early (soft-fork voting 4/1/1)')$([[ $RUST_DEVNET == 1 ]] && echo ' (rust-devnet: 20s, 720, protocol v4, difficulty 1, magic '"$MAGIC"')')"
+echo "[rig] chain preset $CHAIN_PRESET: blockInterval=${BLOCK_INTERVAL:-jar default} minerRewardDelay=${REWARD_DELAY:-jar default}$([[ $V4 == true ]] && echo ' v4=early (soft-fork voting 4/1/1)')$([[ $NO_DIFF_RESET == true ]] && echo ' no difficulty reset at h128 (version2ActivationHeight off)')$([[ $RUST_DEVNET == 1 ]] && echo ' (rust-devnet: 20s, 720, protocol v4, difficulty 1, magic '"$MAGIC"')')"
 # JVM launch: `--devnet` loads the jar's devnet.conf (networkType devnet, protocol v3 at genesis, voting for v4).
 # rust-devnet launches with no network flag and writes every chain parameter into the node's conf instead, as
 # the Rust implementations' own mixed-devnet recipe does (arkadianet scripts/devnet-mixed/genesis.conf).
@@ -798,13 +805,13 @@ wire_json="$(jq -n --argjson on "$([[ $WIRE_ON == 1 ]] && echo true || echo fals
   if $on then {enabled: true, cpus: (if $cpus == "" then $aff else $cpus end), pinned: ($cpus != ""), overlaps_node_cpus: ($cpus == "")}
   else {enabled: false} end')"
 jq -n --slurpfile cfg "$CFG" --argjson jars "$jars_json" --argjson ips "$ips_json" --argjson lips "$lips_json" --argjson wire "$wire_json" --arg preset "$CHAIN_PRESET" --arg bi "$BLOCK_INTERVAL" --arg rd "$REWARD_DELAY" \
-      --arg gd "$GENESIS_DIGEST" --arg v4 "$V4" --argjson magic "$MAGIC" --arg poll "$DEFAULT_POLL" --arg dur "${PEERYARD_DURATION:-}" --arg keep "${PEERYARD_KEEP_DATA:-0}" \
+      --arg gd "$GENESIS_DIGEST" --arg v4 "$V4" --arg ndr "$NO_DIFF_RESET" --argjson magic "$MAGIC" --arg poll "$DEFAULT_POLL" --arg dur "${PEERYARD_DURATION:-}" --arg keep "${PEERYARD_KEEP_DATA:-0}" \
       --arg jv "$JAVA_VERSION" --arg jb "$JAVA_BIN" --arg jo "$JAVA_OPTS" --argjson host "$(host_card)" --arg xpoll "$EXTMINE_POLL" --arg xrate "$EXTMINE_RATE" --arg xstrict "$EXTMINE_STRICT" '
   $cfg[0] as $c
   | { effective_schema_version: 1, host: $host,
       chain: { preset: $preset, blockInterval: (if $bi == "" then "jar default" else $bi end),
                minerRewardDelay: (if $rd == "" then "jar default" else ($rd | tonumber) end),
-               genesisStateDigestHex: (if $gd == "" then null else $gd end), v4_early: ($v4 == "true") },
+               genesisStateDigestHex: (if $gd == "" then null else $gd end), v4_early: ($v4 == "true"), no_difficulty_reset: ($ndr == "true") },
       magic: $magic,
       java: { version: $jv, binary: $jb, opts: $jo },
       nodes: [ $c.nodes[] | { name, mining: (.mining // false), mine_poll: (if .mining // false then (.mine_poll // $poll) else null end),
@@ -827,7 +834,7 @@ echo "[rig] effective configuration: $RIG_LOG_DIR/effective.json ($(jq -c '{chai
 # and the chain settings, so any change to them builds a new fixture. Off when PEERYARD_FIXTURES is unset.
 FIXTURE_RESTORED=0
 fixture_key(){ { for n in "${NODES[@]}"; do sha256sum "${NODE_JAR[$n]}" | cut -d' ' -f1; done
-                 cat "$CFG" "$HOOK"; echo "chain=${PEERYARD_CHAIN:-} bi=${BLOCK_INTERVAL:-} rd=${REWARD_DELAY:-} gd=${GENESIS_DIGEST:-} v4=$V4"
+                 cat "$CFG" "$HOOK"; echo "chain=${PEERYARD_CHAIN:-} bi=${BLOCK_INTERVAL:-} rd=${REWARD_DELAY:-} gd=${GENESIS_DIGEST:-} v4=$V4$([[ $NO_DIFF_RESET == true ]] && echo ' ndr=1')"
                } | sha256sum | cut -c1-16; }
 fixture_path(){ echo "${PEERYARD_FIXTURES%/}/$(basename "$HOOK" .sh)-$(fixture_key)"; }
 fixture_restored(){ [[ "$FIXTURE_RESTORED" == 1 ]]; }

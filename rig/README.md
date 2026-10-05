@@ -61,6 +61,13 @@ Only `nodes[].name` and `links[].a/b` are required. Other fields:
     soft-fork epoch, one activation epoch) so version 4 activates at about height 16, with the preset's difficulty
     and interval kept, so input blocks still form. `rust-devnet` is version 4 from genesis but at difficulty 1,
     where no input block can form, so it does not serve for this. `effective.json` records `chain.v4_early`.
+    The jar's devnet.conf also sets `version2ActivationHeight = 128` with `version2ActivationDifficultyHex = "20"`:
+    the node forces difficulty 32 on heights 128 and 129, and it stays until the retarget at 145. A run that
+    reaches height 128 mines 17 blocks at that difficulty. `"noDifficultyReset": true` in the chain object, or
+    `PEERYARD_NO_DIFF_RESET=1`, moves that height out of reach (2147483647, as in testnet.conf). The devnet starts
+    at block version 3, so the height has no other effect. Off by default. `effective.json` records
+    `chain.no_difficulty_reset`. matrix-compat's `MATRIX_COMPAT_WARMUP_H` starts its window after the start-up
+    difficulty ramp.
   - `devnet`: nothing overridden.
   - `rust-devnet`: the private devnet compiled into the Rust implementations (arkadianet's `network = "devnet"`;
     ergo-node-rust's devnet network): magic `[7,7,7,7]`, protocol version 4 from genesis (the JVM node runs as

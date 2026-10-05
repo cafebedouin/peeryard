@@ -33,7 +33,22 @@ H0=$(full_height A); echo "[matrix-compat] joined at A.h=$H0"
 # MATRIX_COMPAT_POLL: the miners' candidate poll interval (default 500ms); a slow poll without candidate push stands in for
 # external miners and pools, which poll /mining/candidate every few seconds. A follows PEERYARD_MINE_POLL (set both).
 for x in $MINERS; do [[ "$x" == A ]] || start_mining "$x" "${MATRIX_COMPAT_POLL:-500ms}"; done
+# MATRIX_COMPAT_WARMUP_H=<h> (default 0 = off, the window starts as before): the miners mine until A's full height
+# reaches h, and the window (MARK, the payment load, the analysis) starts only then, so it skips the devnet's start-up
+# difficulty ramp (initial difficulty 1, retarget every 16 blocks over the last 8 epochs). Use it with the rig's
+# PEERYARD_NO_DIFF_RESET=1, or the window meets the forced difficulty 32 at heights 128-144. The per-height table below
+# still starts at the join height; "[matrix-compat] window from A.h=" names the window's first height.
+WARM=${MATRIX_COMPAT_WARMUP_H:-0}
+[[ "$WARM" =~ ^[0-9]{1,4}$ ]] || { echo "[matrix-compat] MATRIX_COMPAT_WARMUP_H '$WARM': a height (0 = off)"; rig_verdict=INCONCLUSIVE; return; }
+if (( WARM > 0 )); then
+  echo "[matrix-compat] warm-up: all miners mining from $(date +%H:%M:%S) at A.h=$(full_height A); window starts at A.h>=$WARM"
+  wend=$((SECONDS + ${MATRIX_COMPAT_WARMUP_MAX_S:-3600}))
+  while :; do hw=$(full_height A); [[ -n "$hw" && "$hw" -ge $WARM ]] && break
+    (( SECONDS >= wend )) && { echo "[matrix-compat] warm-up: A.h=${hw:-?} after ${MATRIX_COMPAT_WARMUP_MAX_S:-3600} s, below $WARM"; rig_verdict=INCONCLUSIVE; return; }
+    sleep 2; done
+fi
 MARK=$(date +%H:%M:%S); echo "[matrix-compat] all miners mining from $MARK"
+echo "[matrix-compat] window from A.h=$(full_height A)"
 if (( TXL > 0 )); then
   others=(); for x in "${NODES[@]}"; do [[ "$x" == A ]] || others+=("$x"); done
   txwatch_start "${NODES[@]}"; txload_fund A "$TXL_FUND" "${others[@]}"; txload_start "$TXL" "${NODES[@]}"

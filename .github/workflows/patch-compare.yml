@@ -9,7 +9,8 @@
 # ref_2429 (the reference jar also carries patches/ergo/011, ergoplatform/ergo#2429's CandidateGenerator change, a
 # rig-only patch), extmine_strict (those external miners read the candidate only on their poll schedule, extminer.py
 # --strict) or ref_fairminer (011 plus patches/ergo/012, ergoplatform/ergo#2655's ErgoMiningThread change: a fair
-# reference miner for share measurement, rig-only; it includes ref_2429). builds.txt, copied into every run and printed
+# reference miner for share measurement, rig-only; it includes ref_2429), steady_from_h (matrix-compat: the window starts
+# at that height, after the start-up difficulty ramp, and the devnet's forced difficulty 32 at h128 is off). builds.txt, copied into every run and printed
 # at the head of the pooled output, names each jar with its sha256.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})"
@@ -26,6 +27,7 @@ on:
       extmine_strict: { description: 'external miners read the candidate only on the poll schedule, no read after a submission (pool-like; PEERYARD_EXTMINE_STRICT; needs extmine_poll)', type: boolean, default: false }
       ref_2429: { description: 'reference jar also carries patches/ergo/011 (#2429, rig-only)', type: boolean, default: false }
       ref_fairminer: { description: 'reference jar also carries patches/ergo/011 + 012 (#2429 + #2655, rig-only fair miner; implies ref_2429)', type: boolean, default: false }
+      steady_from_h: { description: 'matrix-compat: 0 = off (as before); else the window starts once A reaches this height (MATRIX_COMPAT_WARMUP_H) and the devnet difficulty reset to 32 at h128 is off (PEERYARD_NO_DIFF_RESET); 113 suggested', default: '0' }
 permissions:
   contents: read
 jobs:
@@ -119,14 +121,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: compare-jars, path: jars }
       - name: Run the example
-        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', EXTSTRICT: "${{ inputs.extmine_strict && '1' || '0' }}" }
+        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', EXTSTRICT: "${{ inputs.extmine_strict && '1' || '0' }}", STEADY_H: '${{ inputs.steady_from_h }}' }
         run: |
           [[ "$COMPAT_POLL" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "compat_poll: e.g. 500ms or 4s"; exit 1; }
+          [[ "$STEADY_H" =~ ^[0-9]{1,4}$ ]] || { echo "steady_from_h: a height, 0 = off"; exit 1; }
+          ndr=0; [ "$STEADY_H" -gt 0 ] && ndr=1
           run="$PWD/runs/${{ matrix.build }}-${{ matrix.version }}-${{ matrix.repeat }}"; mkdir -p "$run"
           v4=0; [ "${{ matrix.version }}" = v4 ] && v4=1
           PEERYARD_V4=$v4 PEERYARD_MATRIX_JAR="$PWD/jars/${{ matrix.build }}.jar" PEERYARD_JAR="$PWD/jars/reference.jar" \
             MATRIX_COMPAT_S="$COMPAT_S" PEERYARD_MINE_POLL="$COMPAT_POLL" MATRIX_COMPAT_POLL="$COMPAT_POLL" SCRATCH="$run/scratch" \
             MATRIX_COMPAT_TXLOAD="$TXLOAD" PEERYARD_EXTMINE_POLL="$EXTMINE" PEERYARD_EXTMINE_STRICT="$EXTSTRICT" \
+            MATRIX_COMPAT_WARMUP_H="$STEADY_H" PEERYARD_NO_DIFF_RESET="$ndr" \
             bash rig/rig.sh "rig/examples/$EXAMPLE.json" "rig/examples/$EXAMPLE.sh" > "$run/rig.log" 2>&1 || echo "rig exit $?"
           for f in "$run"/scratch/out/node_*.log; do [ -f "$f" ] || continue
             n=$(basename "$f" .log); grep -h ' ERROR ' "$f" | sed -E 's/^[0-9:.]+ ERROR +\[[^]]*\] //' | cut -c1-160 | sort | uniq -c > "$run/errors-$n.txt" || true; done

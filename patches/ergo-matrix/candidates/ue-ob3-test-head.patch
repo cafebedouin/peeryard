@@ -1,0 +1,327 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+index 9eaaa17ef..cb412e32d 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+@@ -15,6 +15,7 @@ import spire.syntax.all.cfor
+ 
+ import java.util.concurrent.TimeUnit
+ import scala.annotation.tailrec
++import scala.collection.concurrent.TrieMap
+ import scala.collection.mutable
+ import scala.util.{Failure, Success, Try}
+ 
+@@ -678,13 +679,17 @@ trait InputBlocksProcessor extends ScorexLogging {
+     def empty: InputBlocksTree = InputBlocksTree(Seq.empty)
+   }
+ 
++  // The maps below are written by the node view holder and read from other actors' threads (e.g. the synchronizer's
++  // getInputBlock), so they are concurrent maps: a read finds every entry stored and not yet removed, whatever else is
++  // written meanwhile. Consistency across maps (a record visible before its tree update) is not implied.
++
+   // dictionary which is storing ordering block -> best input block correspondence
+-  private val inputBlockTrees = mutable.Map[ModifierId, InputBlocksTree]()
++  private val inputBlockTrees = TrieMap[ModifierId, InputBlocksTree]()
+ 
+   /**
+     * Input block id -> input block index
+     */
+-  private val inputBlockRecords = mutable.Map[ModifierId, InputBlockAnnouncement]()
++  private val inputBlockRecords = TrieMap[ModifierId, InputBlockAnnouncement]()
+ 
+   /**
+     * input block id -> input block transaction ids index
+@@ -692,7 +697,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+   // todo: transactions can be put here without input block received, ie PoW and difficulty checked
+   // todo: and they wont be cleared on pruning and the so structure can be DoSed. Fix by putting such transactions
+   // todo: into a special queue
+-  private val inputBlockTransactions = mutable.Map[ModifierId, Seq[ModifierId]]()
++  private val inputBlockTransactions = TrieMap[ModifierId, Seq[ModifierId]]()
+ 
+   /**
+     * txid -> transaction index
+@@ -713,7 +718,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+     * Transactions commited in an ordering block
+     * Ordering (full) block -> transactions committed by it
+     */
+-  private val orderingBlockTransactions = mutable.Map[ModifierId, Seq[ErgoTransaction]]()
++  private val orderingBlockTransactions = TrieMap[ModifierId, Seq[ErgoTransaction]]()
+ 
+   /**
+     * Temporary cache of children which do not have parents downloaded yet
+@@ -1097,7 +1102,8 @@ trait InputBlocksProcessor extends ScorexLogging {
+     }
+   }
+ 
+-  private val orderingBlockAnnouncements = mutable.Map[ModifierId, OrderingBlockAnnouncement]()
++  // written by the synchronizer (storeOrderingBlockAnnouncement), pruned by the node view holder: concurrent, as above
++  private val orderingBlockAnnouncements = TrieMap[ModifierId, OrderingBlockAnnouncement]()
+ 
+   /**
+     * Stores an ordering block announcement for later retrieval.
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+new file mode 100644
+index 000000000..62a197ea6
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+@@ -0,0 +1,94 @@
++package org.ergoplatform.nodeView.history.modifierprocessors
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.ErgoBox
++import org.ergoplatform.mining.InputBlockFields
++import org.ergoplatform.nodeView.state.{BoxHolder, StateType, UtxoState}
++import org.ergoplatform.settings.Algos
++import org.ergoplatform.subblocks.InputBlockAnnouncement
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants.parameters
++import org.ergoplatform.utils.HistoryTestHelpers.generateHistory
++import org.ergoplatform.utils.generators.ChainGenerator.{applyChain, genChain}
++import scorex.crypto.authds.merkle.BatchMerkleProof
++import scorex.crypto.hash.Digest32
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.data.TrivialProp.TrueProp
++
++import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
++
++/**
++  * The node view holder applies input blocks to the history while the synchronizer reads the same history from its
++  * own thread (e.g. `getInputBlock` on `NewBestInputBlock`). An input block already stored must stay visible to a
++  * reader while other input blocks are being applied.
++  */
++class InputBlockProcessorConcurrencySpecification extends ErgoCorePropertyTest {
++
++  import org.ergoplatform.utils.ErgoNodeTestConstants._
++
++  private val box = new ErgoBox(
++    value = 1000000000L,
++    ergoTree = ErgoTree.fromProposition(TrueProp),
++    creationHeight = 0,
++    additionalTokens = Colls.emptyColl,
++    additionalRegisters = Map.empty,
++    transactionId = bytesToId(Algos.hash("concurrencyTx")),
++    index = 0
++  )
++
++  // a previous input block this history does not know: the announcement goes to the disconnected waitlist
++  private def unknownPrev(i: Int): InputBlockFields = {
++    new InputBlockFields(
++      Some(Algos.hash(s"unknown-prev-$i")),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      BatchMerkleProof(Seq.empty, Seq.empty)(Algos.hash))
++  }
++
++  property("a stored input block stays visible to a reader while other input blocks are applied") {
++    val us = UtxoState.fromBoxHolder(BoxHolder(Seq(box)), None, createTempDir, settings, parameters)
++    val h = generateHistory(verifyTransactions = true, StateType.Utxo, PoPoWBootstrap = false, blocksToKeep = -1,
++      epochLength = 10000, useLastEpochs = 3, initialDiffOpt = None, None)
++    applyChain(h, genChain(2, h, stateOpt = Some(us)))
++    val template = genChain(2, h, stateOpt = Some(us)).tail.head.header
++
++    val target = InputBlockAnnouncement(1, template, InputBlockFields.empty, None)
++    h.applyInputBlock(target)
++    h.getInputBlock(target.id) shouldBe Some(target)
++
++    val others = (1 to 20000).map { i =>
++      InputBlockAnnouncement(1, template.copy(timestamp = template.timestamp + i), unknownPrev(i), None)
++    }
++
++    val writing = new AtomicBoolean(true)
++    val misses = new AtomicLong(0)
++    val reads = new AtomicLong(0)
++    val readerError = new AtomicReference[Throwable](null)
++    val reader = new Thread(() => {
++      try {
++        while (writing.get()) {
++          reads.incrementAndGet()
++          if (h.getInputBlock(target.id).isEmpty) misses.incrementAndGet()
++        }
++      } catch {
++        case t: Throwable => readerError.set(t)
++      }
++    })
++    reader.start()
++    try {
++      others.foreach(h.applyInputBlock)
++    } finally {
++      writing.set(false)
++      reader.join()
++    }
++
++    Option(readerError.get()) shouldBe None
++    h.getInputBlock(target.id) shouldBe Some(target)
++    reads.get() should be > 0L
++    withClue(s"${misses.get()} of ${reads.get()} concurrent reads missed the stored input block: ") {
++      misses.get() shouldBe 0L
++    }
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/nodeView/viewholder/OrderingBlockRebuildFromInputBlocksSpec.scala b/src/test/scala/org/ergoplatform/nodeView/viewholder/OrderingBlockRebuildFromInputBlocksSpec.scala
+new file mode 100644
+index 000000000..bc148da70
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/viewholder/OrderingBlockRebuildFromInputBlocksSpec.scala
+@@ -0,0 +1,161 @@
++package org.ergoplatform.nodeView.viewholder
++
++import scala.concurrent.duration._
++import org.ergoplatform.OrderingBlockFound
++import org.ergoplatform.mining.InputBlockFields
++import org.ergoplatform.modifiers.ErgoFullBlock
++import org.ergoplatform.modifiers.history.extension.{Extension, ExtensionCandidate}
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.modifiers.mempool.ErgoTransaction
++import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages._
++import org.ergoplatform.network.message.inputblocks.{InputBlockTransactionsData, OrderingBlockAnnouncement}
++import org.ergoplatform.nodeView.state.{ErgoState, StateType, UtxoState}
++import org.ergoplatform.nodeView.state.StateType.Utxo
++import org.ergoplatform.nodeView.state.wrapped.WrappedUtxoState
++import org.ergoplatform.settings.{ErgoValidationSettingsUpdate, Parameters}
++import org.ergoplatform.settings.Constants.TrueTree
++import org.ergoplatform.subblocks.InputBlockAnnouncement
++import org.ergoplatform.utils.{ErgoCorePropertyTest, NodeViewTestConfig, NodeViewTestOps, TestCase}
++import org.ergoplatform.utils.fixtures.NodeViewFixture
++import org.ergoplatform.wallet.utils.FileUtils
++import scorex.core.network.ConnectedPeer
++import scorex.util.{ModifierId, idToBytes}
++
++/**
++  * A node that has processed the input blocks of an ordering block's parent rebuilds the ordering block from them and
++  * the announced ordering-only transactions, without downloading the block transactions.
++  *
++  * The announcement carries only the transactions the miner added on top of the collected input-block transactions
++  * (the synchronizer sends the ordering-only list); the block holds the collected input-block transactions first,
++  * then the ordering-only ones (CandidateGenerator: previousOrderingBlockTransactions ++ orderingTxs). As a miner's
++  * block does, its extension names the input block it builds on (PrevInputBlockIdKey).
++  */
++class OrderingBlockRebuildFromInputBlocksSpec extends ErgoCorePropertyTest with NodeViewTestOps with FileUtils {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++  import org.ergoplatform.utils.generators.ErgoNodeTransactionGenerators._
++  import org.ergoplatform.utils.generators.ValidBlocksGenerators._
++
++  private val Rebuilt = "rebuilt from input blocks"
++  private val NotRebuilt = "not rebuilt: best full block unchanged"
++
++  /**
++    * Applies genesis, processes an input block on top of it carrying `inputBlockTxs(genesis)`, then announces an
++    * ordering block on top of genesis whose transactions are the input-block ones followed by `orderingTxs`.
++    * @return how the node obtained the ordering block transactions
++    */
++  private def announceAfterInputBlock(fixture: NodeViewFixture)
++                                     (inputBlockTxs: ErgoFullBlock => Seq[ErgoTransaction],
++                                      orderingTxs: Seq[ErgoTransaction] => Seq[ErgoTransaction]): String = {
++    import fixture._
++    val (us, bh) = createUtxoState(fixture.settings)
++    val genesis = validFullBlock(parentOpt = None, us, bh)
++    applyBlock(genesis) shouldBe 'success
++
++    val ibTxs = inputBlockTxs(genesis)
++    val ownTxs = orderingTxs(ibTxs)
++
++    // an input block built on genesis carries ibTxs
++    val (_, bh2) = createUtxoState(fixture.settings)
++    val siblingBlock = validFullBlock(Some(genesis), WrappedUtxoState(us, bh2, fixture.settings))
++    val inputBlock = InputBlockAnnouncement(1, siblingBlock.header, InputBlockFields.empty, None)
++    val dummyPeer = ConnectedPeer(
++      scorex.core.network.ConnectionId(
++        new java.net.InetSocketAddress("127.0.0.1", 1234),
++        new java.net.InetSocketAddress("127.0.0.1", 5678),
++        scorex.core.network.Outgoing
++      ),
++      testProbe.ref,
++      None
++    )
++
++    subscribeEvents(classOf[NewBestInputBlock])
++    nodeViewHolderRef ! ProcessInputBlock(inputBlock, dummyPeer)
++    nodeViewHolderRef ! ProcessInputBlockTransactions(InputBlockTransactionsData(inputBlock.id, ibTxs))
++    testProbe.fishForMessage(5.seconds) {
++      case NewBestInputBlock(idOpt, _) => idOpt.contains(inputBlock.id)
++      case _ => false
++    }
++    unsubscribeEvents(classOf[NewBestInputBlock])
++    // the input block is processed and its transactions are collected for its ordering parent, genesis
++    getHistory.getCollectedInputBlocksTransactions(genesis.id).map(_.map(_.id)) shouldBe Some(ibTxs.map(_.id))
++
++    // the next ordering block, as a miner forms it: collected input-block transactions, then its own ones
++    val wusAfterGenesis = WrappedUtxoState(us, bh, fixture.settings).applyModifier(genesis)(_ => ()).get
++    val orderingBlock = orderingBlockNamingInputBlock(genesis, wusAfterGenesis, ibTxs ++ ownTxs, inputBlock.id)
++    val oba = OrderingBlockAnnouncement(
++      version = OrderingBlockAnnouncement.CurrentVersion,
++      header = orderingBlock.header,
++      nonBroadcastedTransactions = ownTxs,
++      broadcastedTransactionIds = Seq.empty,
++      extensionFields = orderingBlock.extension.fields
++    )
++
++    nodeViewHolderRef ! ProcessOrderingBlock(oba)
++
++    // no peer answers download requests here, so the block becomes the best full block only if the node rebuilt its
++    // transactions from the collected input blocks and the announcement
++    val deadline = System.currentTimeMillis() + 10000
++    while (!getBestFullBlockOpt.map(_.id).contains(orderingBlock.id) && System.currentTimeMillis() < deadline) {
++      Thread.sleep(100)
++    }
++    val outcome = if (getBestFullBlockOpt.map(_.id).contains(orderingBlock.id)) Rebuilt else NotRebuilt
++    outcome
++  }
++
++  /**
++    * An ordering block on `parent` holding `transactions`: the block ValidBlocksGenerators.validFullBlock builds, proved
++    * again with one more extension field, PrevInputBlockIdKey -> `prevInputBlockId`, as CandidateBlock writes it for a
++    * miner that has an input block on top of the parent.
++    */
++  private def orderingBlockNamingInputBlock(parent: ErgoFullBlock,
++                                            utxoState: UtxoState,
++                                            transactions: Seq[ErgoTransaction],
++                                            prevInputBlockId: ModifierId): ErgoFullBlock = {
++    val plain = validFullBlock(Some(parent), utxoState, transactions)
++    val extension: ExtensionCandidate = ExtensionCandidate(plain.extension.fields) ++
++      ExtensionCandidate(Seq(Extension.PrevInputBlockIdKey -> idToBytes(prevInputBlockId)))
++    val defaultParams = Parameters(0, Parameters.DefaultParameters, ErgoValidationSettingsUpdate.empty)
++    powScheme.proveBlock(Some(parent.header), Header.InitialVersion, chainSettings.initialNBits, plain.header.stateRoot,
++      plain.adProofs.get.proofBytes, transactions, plain.header.timestamp, extension, Array.fill(3)(0: Byte),
++      defaultMinerSecretNumber, Long.MinValue, Long.MaxValue, defaultParams).asInstanceOf[OrderingBlockFound].fb
++  }
++
++  private def genesisBoxes(genesis: ErgoFullBlock) = {
++    val boxes = ErgoState.newBoxes(genesis.transactions).find(_.ergoTree == TrueTree).toIndexedSeq
++    boxes.nonEmpty shouldBe true
++    boxes
++  }
++
++  private val onlyInputBlockTxs = TestCase("ordering block holding only input-block transactions is rebuilt") { fixture =>
++    import fixture._
++    if (stateType == Utxo && verifyTransactions) {
++      val outcome = announceAfterInputBlock(fixture)(
++        genesis => Seq(validTransactionFromBoxes(genesisBoxes(genesis), issueNew = false)),
++        _ => Seq.empty
++      )
++      outcome shouldBe Rebuilt
++    }
++  }
++
++  private val inputAndOrderingTxs = TestCase("ordering block holding input-block and ordering-only transactions is rebuilt") { fixture =>
++    import fixture._
++    if (stateType == Utxo && verifyTransactions) {
++      val outcome = announceAfterInputBlock(fixture)(
++        genesis => Seq(validTransactionFromBoxes(genesisBoxes(genesis), issueNew = false)),
++        // the miner's own transaction spends an output of the input-block transaction
++        ibTxs => Seq(validTransactionFromBoxes(IndexedSeq(ibTxs.head.outputs.head), issueNew = false))
++      )
++      outcome shouldBe Rebuilt
++    }
++  }
++
++  val cases: List[TestCase] = List(onlyInputBlockTxs, inputAndOrderingTxs)
++
++  NodeViewTestConfig.verifyTxConfigs.filter(_.stateType == StateType.Utxo).foreach { c =>
++    cases.foreach { t =>
++      property(s"${t.name} - $c") {
++        t.run(parameters, c)
++      }
++    }
++  }
++}

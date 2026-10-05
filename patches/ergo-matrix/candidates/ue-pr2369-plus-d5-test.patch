@@ -1,0 +1,347 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+index 9eaaa17ef..d39020d77 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala
+@@ -15,6 +15,7 @@ import spire.syntax.all.cfor
+ 
+ import java.util.concurrent.TimeUnit
+ import scala.annotation.tailrec
++import scala.collection.concurrent.TrieMap
+ import scala.collection.mutable
+ import scala.util.{Failure, Success, Try}
+ 
+@@ -624,7 +625,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+               // todo: pass real cost of input block instead of costDelta = 0
+               f.registerCompletion(ib.id, costDelta = 0) match {
+                 case Success(ibc) =>
+-                  updTree = new InputBlocksTree(forks.updated(idx, ibc))
++                  updTree = new InputBlocksTree(updTree.forks.updated(idx, ibc))
+                 case Failure(e) =>
+                   log.warn(s"registerCompletion failed for input block ${ib.id} : ", e)
+               }
+@@ -654,7 +655,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+               // todo: pass real cost of input block instead of costDelta = 0
+               f.registerCompletion(ib.id, costDelta = 0) match {
+                 case Success(ibc) =>
+-                  updTree = new InputBlocksTree(forks.updated(idx, ibc))
++                  updTree = new InputBlocksTree(updTree.forks.updated(idx, ibc))
+                 case Failure(e) =>
+                   log.warn(s"registerCompletion failed for input block ${ib.id} : ", e)
+               }
+@@ -678,13 +679,17 @@ trait InputBlocksProcessor extends ScorexLogging {
+     def empty: InputBlocksTree = InputBlocksTree(Seq.empty)
+   }
+ 
++  // The maps below are written by the node view holder and read from other actors' threads (e.g. the synchronizer's
++  // getInputBlock), so they are concurrent maps: a read finds every entry stored and not yet removed, whatever else is
++  // written meanwhile. Consistency across maps (a record visible before its tree update) is not implied.
++
+   // dictionary which is storing ordering block -> best input block correspondence
+-  private val inputBlockTrees = mutable.Map[ModifierId, InputBlocksTree]()
++  private val inputBlockTrees = TrieMap[ModifierId, InputBlocksTree]()
+ 
+   /**
+     * Input block id -> input block index
+     */
+-  private val inputBlockRecords = mutable.Map[ModifierId, InputBlockAnnouncement]()
++  private val inputBlockRecords = TrieMap[ModifierId, InputBlockAnnouncement]()
+ 
+   /**
+     * input block id -> input block transaction ids index
+@@ -692,7 +697,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+   // todo: transactions can be put here without input block received, ie PoW and difficulty checked
+   // todo: and they wont be cleared on pruning and the so structure can be DoSed. Fix by putting such transactions
+   // todo: into a special queue
+-  private val inputBlockTransactions = mutable.Map[ModifierId, Seq[ModifierId]]()
++  private val inputBlockTransactions = TrieMap[ModifierId, Seq[ModifierId]]()
+ 
+   /**
+     * txid -> transaction index
+@@ -713,7 +718,7 @@ trait InputBlocksProcessor extends ScorexLogging {
+     * Transactions commited in an ordering block
+     * Ordering (full) block -> transactions committed by it
+     */
+-  private val orderingBlockTransactions = mutable.Map[ModifierId, Seq[ErgoTransaction]]()
++  private val orderingBlockTransactions = TrieMap[ModifierId, Seq[ErgoTransaction]]()
+ 
+   /**
+     * Temporary cache of children which do not have parents downloaded yet
+@@ -1097,7 +1102,8 @@ trait InputBlocksProcessor extends ScorexLogging {
+     }
+   }
+ 
+-  private val orderingBlockAnnouncements = mutable.Map[ModifierId, OrderingBlockAnnouncement]()
++  // written by the synchronizer (storeOrderingBlockAnnouncement), pruned by the node view holder: concurrent, as above
++  private val orderingBlockAnnouncements = TrieMap[ModifierId, OrderingBlockAnnouncement]()
+ 
+   /**
+     * Stores an ordering block announcement for later retrieval.
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+new file mode 100644
+index 000000000..62a197ea6
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorConcurrencySpecification.scala
+@@ -0,0 +1,94 @@
++package org.ergoplatform.nodeView.history.modifierprocessors
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.ErgoBox
++import org.ergoplatform.mining.InputBlockFields
++import org.ergoplatform.nodeView.state.{BoxHolder, StateType, UtxoState}
++import org.ergoplatform.settings.Algos
++import org.ergoplatform.subblocks.InputBlockAnnouncement
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants.parameters
++import org.ergoplatform.utils.HistoryTestHelpers.generateHistory
++import org.ergoplatform.utils.generators.ChainGenerator.{applyChain, genChain}
++import scorex.crypto.authds.merkle.BatchMerkleProof
++import scorex.crypto.hash.Digest32
++import scorex.util.bytesToId
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.data.TrivialProp.TrueProp
++
++import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
++
++/**
++  * The node view holder applies input blocks to the history while the synchronizer reads the same history from its
++  * own thread (e.g. `getInputBlock` on `NewBestInputBlock`). An input block already stored must stay visible to a
++  * reader while other input blocks are being applied.
++  */
++class InputBlockProcessorConcurrencySpecification extends ErgoCorePropertyTest {
++
++  import org.ergoplatform.utils.ErgoNodeTestConstants._
++
++  private val box = new ErgoBox(
++    value = 1000000000L,
++    ergoTree = ErgoTree.fromProposition(TrueProp),
++    creationHeight = 0,
++    additionalTokens = Colls.emptyColl,
++    additionalRegisters = Map.empty,
++    transactionId = bytesToId(Algos.hash("concurrencyTx")),
++    index = 0
++  )
++
++  // a previous input block this history does not know: the announcement goes to the disconnected waitlist
++  private def unknownPrev(i: Int): InputBlockFields = {
++    new InputBlockFields(
++      Some(Algos.hash(s"unknown-prev-$i")),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      BatchMerkleProof(Seq.empty, Seq.empty)(Algos.hash))
++  }
++
++  property("a stored input block stays visible to a reader while other input blocks are applied") {
++    val us = UtxoState.fromBoxHolder(BoxHolder(Seq(box)), None, createTempDir, settings, parameters)
++    val h = generateHistory(verifyTransactions = true, StateType.Utxo, PoPoWBootstrap = false, blocksToKeep = -1,
++      epochLength = 10000, useLastEpochs = 3, initialDiffOpt = None, None)
++    applyChain(h, genChain(2, h, stateOpt = Some(us)))
++    val template = genChain(2, h, stateOpt = Some(us)).tail.head.header
++
++    val target = InputBlockAnnouncement(1, template, InputBlockFields.empty, None)
++    h.applyInputBlock(target)
++    h.getInputBlock(target.id) shouldBe Some(target)
++
++    val others = (1 to 20000).map { i =>
++      InputBlockAnnouncement(1, template.copy(timestamp = template.timestamp + i), unknownPrev(i), None)
++    }
++
++    val writing = new AtomicBoolean(true)
++    val misses = new AtomicLong(0)
++    val reads = new AtomicLong(0)
++    val readerError = new AtomicReference[Throwable](null)
++    val reader = new Thread(() => {
++      try {
++        while (writing.get()) {
++          reads.incrementAndGet()
++          if (h.getInputBlock(target.id).isEmpty) misses.incrementAndGet()
++        }
++      } catch {
++        case t: Throwable => readerError.set(t)
++      }
++    })
++    reader.start()
++    try {
++      others.foreach(h.applyInputBlock)
++    } finally {
++      writing.set(false)
++      reader.join()
++    }
++
++    Option(readerError.get()) shouldBe None
++    h.getInputBlock(target.id) shouldBe Some(target)
++    reads.get() should be > 0L
++    withClue(s"${misses.get()} of ${reads.get()} concurrent reads missed the stored input block: ") {
++      misses.get() shouldBe 0L
++    }
++  }
++}
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
+index 94a0bcc3d..d103fad78 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
+@@ -323,6 +323,54 @@ class InputBlockProcessorSpecification extends ErgoCorePropertyTest with ErgoCom
+     }
+   }
+ 
++  property("shared-root completion preserves progress in every waiting fork") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      val root = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)
++      val siblings = (0 until 3).map { _ =>
++        InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), parentOnly(idToBytes(root.id)), None)
++      }
++      (root +: siblings).foreach(h.applyInputBlock(_) shouldBe None)
++      val chains = h.inputBlocksTree().get.forks.map(_.chain)
++      chains.size shouldBe 3
++      h.inputBlocksTree().get.forks.map(_.processedIndex) shouldBe Seq(-1, -1, -1)
++
++      h.applyInputBlockTransactions(root.id, Seq.empty, us) shouldBe (Seq(root.id) -> Seq.empty)
++      h.inputBlocksTree().get.forks.map(_.chain) shouldBe chains
++      h.inputBlocksTree().get.forks.map(_.processedIndex) shouldBe Seq(0, 0, 0)
++      h.bestInputBlocksChain() shouldBe Seq(root.id)
++
++      h.applyInputBlockTransactions(siblings.head.id, Seq.empty, us) shouldBe
++        (Seq(siblings.head.id) -> Seq.empty)
++      h.bestInputBlocksChain() shouldBe Seq(siblings.head.id, root.id)
++    }
++  }
++
++  property("fork-switch completion preserves the selected branch and shared progress") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      val root = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)
++      def childOf(parent: InputBlockAnnouncement): InputBlockAnnouncement =
++        InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), parentOnly(idToBytes(parent.id)), None)
++      val oldTip = childOf(root)
++      val shared = childOf(root)
++      val newTip = childOf(shared)
++      val sibling = childOf(shared)
++      Seq(root, oldTip, shared, newTip, sibling).foreach(h.applyInputBlock(_) shouldBe None)
++      val chains = Seq(Seq(root.id, oldTip.id), Seq(root.id, shared.id, newTip.id),
++        Seq(root.id, shared.id, sibling.id))
++      h.inputBlocksTree().get.forks.map(_.chain) shouldBe chains
++
++      h.applyInputBlockTransactions(root.id, Seq.empty, us) shouldBe (Seq(root.id) -> Seq.empty)
++      h.applyInputBlockTransactions(oldTip.id, Seq.empty, us) shouldBe (Seq(oldTip.id) -> Seq.empty)
++      h.applyInputBlockTransactions(shared.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++      h.applyInputBlockTransactions(newTip.id, Seq.empty, us) shouldBe
++        (Seq(shared.id, newTip.id) -> Seq(oldTip.id))
++
++      h.inputBlocksTree().get.forks.map(_.chain) shouldBe chains
++      h.inputBlocksTree().get.forks.map(_.processedIndex) shouldBe Seq(1, 2, 1)
++      h.bestInputBlocksChain() shouldBe Seq(newTip.id, shared.id, root.id)
++    }
++  }
++
+   property("create separate sibling forks for descendants of the same parent") {
+     withInputBlockFixture { (us, h, orderingParent, _) =>
+     val rootIb = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/SiblingForkCompletionSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/SiblingForkCompletionSpecification.scala
+new file mode 100644
+index 000000000..67e4a261b
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/SiblingForkCompletionSpecification.scala
+@@ -0,0 +1,104 @@
++package org.ergoplatform.nodeView.history.modifierprocessors
++
++import com.google.common.io.Files.createTempDir
++import org.ergoplatform.ErgoBox
++import org.ergoplatform.mining.InputBlockFields
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.nodeView.history.ErgoHistory
++import org.ergoplatform.nodeView.state.{BoxHolder, StateType, UtxoState}
++import org.ergoplatform.settings.Algos
++import org.ergoplatform.subblocks.InputBlockAnnouncement
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import org.ergoplatform.utils.ErgoCoreTestConstants.parameters
++import org.ergoplatform.utils.HistoryTestHelpers.generateHistory
++import org.ergoplatform.utils.generators.ChainGenerator.{applyChain, genChain}
++import scorex.crypto.authds.merkle.BatchMerkleProof
++import scorex.crypto.hash.Digest32
++import scorex.util.{bytesToId, idToBytes}
++import sigma.Colls
++import sigma.ast.ErgoTree
++import sigma.data.TrivialProp.TrueProp
++
++/**
++  * A block that two sibling forks wait for keeps the best fork's progress when processed. Observed through the history API.
++  */
++class SiblingForkCompletionSpecification extends ErgoCorePropertyTest {
++
++  import org.ergoplatform.utils.ErgoNodeTestConstants._
++
++  private def box(seed: String, index: Short): ErgoBox = new ErgoBox(
++    value = 1000000000L,
++    ergoTree = ErgoTree.fromProposition(TrueProp),
++    creationHeight = 0,
++    additionalTokens = Colls.emptyColl,
++    additionalRegisters = Map.empty,
++    transactionId = bytesToId(Algos.hash(seed)),
++    index = index
++  )
++
++  private def parentOnly(parentId: Array[Byte]): InputBlockFields = {
++    new InputBlockFields(
++      Some(parentId),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      Digest32 @@ Array.fill(32)(0.toByte),
++      BatchMerkleProof(Seq.empty, Seq.empty)(Algos.hash))
++  }
++
++  private def withHistory(test: (UtxoState, ErgoHistory, Header) => Unit): Unit = {
++    val us = UtxoState.fromBoxHolder(BoxHolder(Seq(box("a", 0), box("b", 1))), None, createTempDir(), settings, parameters)
++    val h = generateHistory(verifyTransactions = true, StateType.Utxo, PoPoWBootstrap = false, blocksToKeep = -1,
++      epochLength = 10000, useLastEpochs = 3, initialDiffOpt = None, None)
++    try {
++      val orderingChain = genChain(height = 2, history = h, stateOpt = Some(us)).toList
++      applyChain(h, orderingChain)
++      h.bestFullBlockOpt.get.id shouldBe orderingChain.last.id
++      test(us, h, h.bestHeaderOpt.get)
++    } finally {
++      try h.closeStorage()
++      finally us.closeStorage()
++    }
++  }
++
++  // header of an input block on top of the given ordering block
++  private def inputHeader(h: ErgoHistory, us: UtxoState, orderingParent: Header): Header = {
++    val header = genChain(2, h, stateOpt = Some(us)).tail.head.header
++    header.parentId shouldBe orderingParent.id
++    header
++  }
++
++  private def root(h: ErgoHistory, us: UtxoState, p: Header): InputBlockAnnouncement =
++    InputBlockAnnouncement(1, inputHeader(h, us, p), InputBlockFields.empty, None)
++
++  private def child(h: ErgoHistory, us: UtxoState, p: Header, parent: InputBlockAnnouncement): InputBlockAnnouncement =
++    InputBlockAnnouncement(1, inputHeader(h, us, p), parentOnly(idToBytes(parent.id)), None)
++
++  property("processing a block both sibling forks wait for keeps the best fork's progress") {
++    withHistory { (us, h, p) =>
++      val a = root(h, us, p)
++      h.applyInputBlock(a) shouldBe None
++      h.applyInputBlockTransactions(a.id, Seq.empty, us) shouldBe (Seq(a.id) -> Seq.empty)
++
++      // a <- b <- c and a <- b <- d: two forks, both waiting for b
++      val b = child(h, us, p, a)
++      val c = child(h, us, p, b)
++      val d = child(h, us, p, b)
++      h.applyInputBlock(b) shouldBe None
++      h.applyInputBlock(c) shouldBe None
++      h.applyInputBlock(d) shouldBe None
++      h.inputBlocksTree().get.forks.map(f => f.chain -> f.processedIndex) shouldBe Seq(
++        Seq(a.id, b.id, c.id) -> 0,
++        Seq(a.id, b.id, d.id) -> 0
++      )
++
++      // c's transactions arrive before b's
++      h.applyInputBlockTransactions(c.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++
++      // b's transactions: b and then c are processed on the best fork, and reported as applied
++      h.applyInputBlockTransactions(b.id, Seq.empty, us) shouldBe (Seq(b.id, c.id) -> Seq.empty)
++
++      // the tree keeps what was reported
++      h.bestInputBlocksChain() shouldBe Seq(c.id, b.id, a.id)
++    }
++  }
++
++}

@@ -221,7 +221,7 @@
         "matrix-compat share measurements on mixed topologies (reference miner), opt-in through patch-compare's ref_fairminer input (stack + 011 + 012)"
       ],
       "note": "rig-only: a fair reference miner for share measurement; not a claim about the released node",
-      "witness": "ErgoMiningThread.scala has the same blob (15d9f367bb) in v6.0.6, v6.0.7 and v6.0.8, the PR's base blob; applies cleanly on v6.0.6 + 001..011 (checked 2026-10-04); network effect to be read from the first patch-compare run with ref_fairminer",
+      "witness": "ErgoMiningThread.scala has the same blob (15d9f367bb) in v6.0.6, v6.0.7 and v6.0.8, the PR's base blob; applies cleanly on v6.0.6 + 001..011 (checked 2026-10-04). Network smoke, patch-compare run 37248478569 (matrix-compat-2m2r-all, 1 repeat, 600 s, ref_fairminer, reference jar sha256 c277d93ce516...) against run 37241882234 (ref_2429 only, same base and candidate jars), reference nodes C and D in the mining window, summed over the 4 runs (base and one candidate, v3 and v4): 'no previous candidate available' replies 181 -> 23, 'Block already solved' replies 8 -> 0, finds 315 -> 147, finds published (New block mined) 126 -> 124 (40% -> 84%); one repeat per cell, so a direction, not a rate",
       "responses": [
         "2026-10-04: #2655 open upstream (base v6.0.8); carried here for the rig only, never proposed from this tree"
       ]

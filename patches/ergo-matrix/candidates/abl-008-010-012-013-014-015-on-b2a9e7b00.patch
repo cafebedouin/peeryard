@@ -65,7 +65,7 @@ index 61a63ace4..d24fe9efc 100644
    }
  
 diff --git a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
-index 1413fdf8b..e8d65cb96 100644
+index 1413fdf8b..2de6ffae5 100644
 --- a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
 +++ b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
 @@ -1,6 +1,6 @@
@@ -256,7 +256,7 @@ index 1413fdf8b..e8d65cb96 100644
                  )
              }
 +          case _: InputSolutionFound if state.cachedCandidate.isEmpty =>
-+            StatusReply.error(new Exception("No candidate for the input-block solution"))
++            StatusReply.error("No candidate for the input-block solution")
            case _: InputSolutionFound =>
              val cachedCandidate = state.cachedCandidate.get
              val (sbi, sbt) = completeInputBlock(cachedCandidate.candidateBlock, solution)
@@ -1324,7 +1324,7 @@ index a85328684..656f3a241 100644
  }
 diff --git a/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadSpec.scala b/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadSpec.scala
 new file mode 100644
-index 000000000..be051e583
+index 000000000..8e1fb4ccd
 --- /dev/null
 +++ b/src/test/scala/org/ergoplatform/mining/ErgoMiningThreadSpec.scala
 @@ -0,0 +1,149 @@
@@ -1410,7 +1410,7 @@ index 000000000..be051e583
 +    // input-block hits at nonces 5 and 900 of the first 1000-nonce batch
 +    val minerSettings = settings.copy(chainSettings = settings.chainSettings.copy(powScheme = new FixedHitsPowScheme(Seq(5L, 900L))))
 +    val thread = ErgoMiningThread(minerSettings, generator.ref, defaultMinerSecret.w)
-+    generator.expectMsgClass(5.seconds, classOf[GenerateCandidate])
++    generator.fishForMessage(5.seconds) { case _: GenerateCandidate => true; case _ => false } // a subscription may come first
 +    generator.reply(StatusReply.Success(candidate))
 +
 +    def nextSolution(): SolutionFound = generator.fishForMessage(10.seconds) {

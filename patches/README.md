@@ -101,8 +101,12 @@ forward of external solutions, the CandidateGenerator reply for an unusable solu
 | `abl-008-010-012-013-014-015-016-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-016-apifwd.patch` | the same |
 | `abl-008-010-012-013-014-015-2562-on-b2a9e7b00.patch` | `abl-008-010-012-013-014-015-apifwd-2562.patch` (#2562 at e18963ad3) | the same |
 
-Run them with `matrix_base: b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6`. The 8769baace files stay as they were, for the
-runs that cite them.
+Two adaptations beyond dropping what is upstream, the same in all three: 008's "no candidate" reply for an input-block
+solution is `StatusReply.error("...")` (a String, as upstream's own reply at that point), not `StatusReply.error(new
+Exception("..."))`, because #2666's ErgoMinerSpec case expects a `StatusReply.ErrorMessage` (the HTTP reply text is the
+same); and the first ErgoMiningThreadSpec case waits for `GenerateCandidate` past a subscription, as the file's other
+cases do (it failed on 8769baace too). Run them with `matrix_base: b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6`. The
+8769baace files stay as they were, for the runs that cite them.
 
 `stack.sh` applies the stacked patches in id order to a scratch worktree of the base and writes one combined diff;
 for ergo, `--build` hands that diff to `diffrun/build.sh`, which caches the jar by the diff's sha256, and leaves

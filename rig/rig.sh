@@ -58,10 +58,16 @@
 #                                   no internal miner (an arkadianet node with "mining": true): at difficulty 1
 #                                   every nonce solves, so the loop submits a fixed solution per candidate
 #   mempool_ids <node> / mempool_size <node>   the unconfirmed pool's tx ids (in listed order) / its count
+#   blockwatch_start <node>... / blockwatch_stop [--contract <cmd>]...   per-block invariant monitor (lib/blockwatch.sh):
+#                                   every new block on each node checked against diag/block_invariants.py; a violation
+#                                   turns PASS into FAIL (cause BLOCK_INVARIANT)
 #   mark <label>                    a labelled event in $RIG_LOG_DIR/events.jsonl, beside the rig's own (partition,
 #                                   heal, link_netem, crash, revive, relaunch, launch), each with a sample taken then
 #   and the variables NODES, RIG_LOG_DIR, SCRATCH, CONF_OVR (per-node extra HOCON for a deferred launch).
-#   A hook sets rig_verdict=PASS|FAIL|INCONCLUSIVE; rig.sh exits 1 on FAIL, 3 on INCONCLUSIVE.
+#   A hook sets rig_verdict=PASS|FAIL|INCONCLUSIVE; rig.sh exits 1 on FAIL, 3 on INCONCLUSIVE. Node health
+#   (diag/health.py: unplanned process exits, OutOfMemoryError, JVM fatal errors, restart loops) is checked after
+#   every hook and turns PASS into FAIL (PEERYARD_HEALTH=judge|report|0; HEALTH_REPORT_ONLY="<node>..." for a hook
+#   that damages a node on purpose and reports what it does).
 # Env overrides: PEERYARD_CHAIN (preset), PEERYARD_MINE_POLL, PEERYARD_DURATION (hooks read it), PEERYARD_KEEP_DATA=1,
 # PEERYARD_EXTMINE_POLL / PEERYARD_EXTMINE_RATE / PEERYARD_EXTMINE_STRICT (external miners through /mining/*, lib/extminer.py).
 #   txload_fund / txload_start / txload_stop / txwatch_start / txwatch_stop / txload_pools / txload_chain
@@ -446,6 +452,9 @@ rig_event(){ local t; t=$(date +%s%3N)
     'def nn: if . == "" then null else . end; {t: $t, kind: $k, a: ($a | nn), b: ($b | nn), node: ($n | nn), detail: ($d | nn)} + $x' \
     >> "$RIG_LOG_DIR/events.jsonl"
   [[ "${RIG_SAMPLING:-0}" == 1 ]] && sample_row "$1"; return 0; }
+# planned_exit <node> <pid>: the rig is about to stop this node process (relaunch, crash, a fixture save, stop_all), so
+# the health watcher (diag/health.py --watch) does not report its exit as unplanned
+planned_exit(){ [[ -n "${2:-}" ]] && echo "$1 $2" >> "$RIG_LOG_DIR/planned_exits"; return 0; }
 # mark <label>: a labelled event in events.jsonl (and a sample), for a hook's own phases
 mark(){ rig_event mark "" "" "" "$1"; }
 
@@ -551,7 +560,7 @@ rss_mb(){ local p="${PID[$1]:-}"; [[ -n "$p" ]] && ps -o rss= -p "$p" 2>/dev/nul
 data_mb(){ du -sm "$SCRATCH/data_$1" 2>/dev/null | cut -f1; }
 # crash NODE: SIGKILL it (not a graceful stop) and leave it down. revive NODE brings it back with its chain.
 crash(){ local n="$1"; local p="${PID[$n]:-}"
-  extmine_stop "$n"
+  extmine_stop "$n"; planned_exit "$n" "$p"
   [[ -n "$p" ]] && { kill -9 "$p" 2>/dev/null; }
   pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true
   [[ -n "$p" ]] && wait "$p" 2>/dev/null || true
@@ -708,6 +717,8 @@ extmine_stop(){ local n="$1" p="${EXTMINER_PID[$1]:-}"; [[ -n "$p" ]] || return 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/faults.sh"
 # shellcheck source=rig/lib/txload.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/txload.sh"
+# shellcheck source=rig/lib/blockwatch.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/blockwatch.sh"
 
 # ---- mining control ----
 # The node has no runtime mining switch (/mining/* serves candidates and solutions only). Two controls exist: the
@@ -720,7 +731,7 @@ relaunch(){ # $1=node: stop, wait for a full exit (RocksDB lock and ports releas
   local n="$1"; local p="${PID[$n]:-}" h0 end
   h0=$(full_height "$n" 2>/dev/null); [[ "$h0" =~ ^[0-9]+$ ]] || h0=0
   rig_event relaunch "" "" "$n" "mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg}"
-  extmine_stop "$n"
+  extmine_stop "$n"; planned_exit "$n" "$p"
   if [[ -n "$p" ]]; then
     kill "$p" 2>/dev/null
     for _ in $(seq 1 40); do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done
@@ -762,7 +773,7 @@ stop_all(){ local n p end
   for n in "${NODES[@]}"; do [[ -n "${SOLVER_PID[$n]:-}" ]] && kill "${SOLVER_PID[$n]}" 2>/dev/null; done
   for n in "${NODES[@]}"; do extmine_stop "$n" >/dev/null; done
   for p in "${BG_PIDS[@]}"; do kill "$p" 2>/dev/null; done
-  for n in "${NODES[@]}"; do [[ -n "${PID[$n]:-}" ]] && kill "${PID[$n]}" 2>/dev/null; done
+  for n in "${NODES[@]}"; do [[ -n "${PID[$n]:-}" ]] && { planned_exit "$n" "${PID[$n]}"; kill "${PID[$n]}" 2>/dev/null; }; done
   end=$((SECONDS + ${RIG_STOP_GRACE_S:-30}))
   while [[ $SECONDS -lt $end ]]; do
     p=0; for n in "${NODES[@]}"; do pgrep -f "$SCRATCH/conf_${n}\.(conf|toml)" >/dev/null 2>&1 && p=1; done
@@ -848,7 +859,7 @@ fixture_save(){ # fixture_save k=v ...: archive the data dirs of the running nod
   declare -A h0; for n in "${running[@]}"; do h0[$n]=$(full_height "$n" 2>/dev/null); [[ "${h0[$n]}" =~ ^[0-9]+$ ]] || h0[$n]=0; done
   # stop the nodes gracefully (TERM; the node flushes its databases), poll until they are gone, KILL what is left.
   # Not stop_all: its final `wait` also waits for the rig's background diag sampler, which never ends mid-run.
-  for n in "${running[@]}"; do kill "${PID[$n]}" 2>/dev/null; done
+  for n in "${running[@]}"; do planned_exit "$n" "${PID[$n]}"; kill "${PID[$n]}" 2>/dev/null; done
   local end=$((SECONDS + ${RIG_STOP_GRACE_S:-30})) left
   while [[ $SECONDS -lt $end ]]; do
     left=0; for n in "${running[@]}"; do pgrep -f "$SCRATCH/conf_${n}\.(conf|toml)" >/dev/null 2>&1 && left=1; done
@@ -989,13 +1000,44 @@ sample_row(){ local ev="${1:-}" n p st info ms rc to tmp ticks rss io row="" t l
 diag_sampler(){ while :; do sample_row; sleep "${PEERYARD_SAMPLE_S:-3}"; done; }
 diag_sampler & DIAG_PID=$!
 RIG_SAMPLING=1   # from here on, every rig event also takes a sample (bring-up launches record their event only)
-trap 'kill "$DIAG_PID" 2>/dev/null; stop_all' EXIT
+# Node health (diag/health.py): a watcher notes every node process that ends without the rig stopping it (an `exit`
+# event and a line in the node's log); after the hook the node logs are read for those exits, OutOfMemoryError, JVM
+# fatal errors and restart loops. PEERYARD_HEALTH=judge (default): an unhealthy node turns PASS into FAIL (cause
+# NODE_HEALTH); =report: printed and kept in health.json, the verdict untouched; =0: neither the watcher nor the check.
+# A hook that damages a node on purpose and reports what it then does names it in HEALTH_REPORT_ONLY (space-separated):
+# that node's problems are printed, not judged.
+HEALTH_MODE="${PEERYARD_HEALTH:-judge}"
+[[ "$HEALTH_MODE" =~ ^(judge|report|0)$ ]] || { echo "[rig] PEERYARD_HEALTH '$HEALTH_MODE': judge, report or 0"; exit 2; }
+HEALTH_PID=""
+[[ "$HEALTH_MODE" != 0 ]] && { python3 "$(dirname "${BASH_SOURCE[0]}")/../diag/health.py" --watch "$RIG_LOG_DIR" & HEALTH_PID=$!; }
+trap 'kill "$DIAG_PID" $HEALTH_PID 2>/dev/null; stop_all' EXIT
 
 echo "[rig] === handing off to hook: $HOOK ==="
 export NODES RIG_LOG_DIR
 # shellcheck disable=SC1090
 source "$HOOK"
 kill "$DIAG_PID" 2>/dev/null; wait "$DIAG_PID" 2>/dev/null
+if [[ -n "$HEALTH_PID" ]]; then
+  sleep "${PEERYARD_HEALTH_POLL_S:-1}"; kill "$HEALTH_PID" 2>/dev/null; wait "$HEALTH_PID" 2>/dev/null; HEALTH_PID=""   # one more poll first
+  health_args=(); for n in ${HEALTH_REPORT_ONLY:-}; do health_args+=(--report-only "$n"); done
+  health_out="$(python3 "$(dirname "${BASH_SOURCE[0]}")/../diag/health.py" "$RIG_LOG_DIR" --json "$RIG_LOG_DIR/health.json" "${health_args[@]}" 2>&1)"; health_rc=$?
+  while IFS= read -r l; do echo "[rig] $l"; done <<< "$health_out"
+  if [[ $health_rc == 1 && "$HEALTH_MODE" == judge ]]; then
+    health_cause="NODE_HEALTH: $(sed -n 's/^HEALTH: UNHEALTHY //p' <<< "$health_out")"
+    if [[ "${rig_verdict:-}" == PASS || -z "${rig_verdict:-}" ]]; then
+      echo "[rig] a node was unhealthy; verdict ${rig_verdict:-none} -> FAIL; any PASS line above does not count"
+      rig_verdict=FAIL; rig_cause="$health_cause"
+    else rig_cause="${rig_cause:+$rig_cause; }$health_cause"; fi
+  elif [[ $health_rc -gt 1 ]]; then echo "[rig] HEALTH check could not run (the verdict is unaffected)"; fi
+fi
+# shellcheck disable=SC2119  # no contract arguments here: BLOCKWATCH_CONTRACTS still applies
+[[ -n "${BLOCKWATCH_PID:-}" ]] && blockwatch_stop   # a hook that started the per-block monitor and did not stop it
+if [[ "${BLOCKWATCH_RESULT:-}" == VIOLATED* && "${PEERYARD_BLOCKWATCH_JUDGE:-1}" == 1 ]]; then
+  if [[ "${rig_verdict:-}" == PASS || -z "${rig_verdict:-}" ]]; then
+    echo "[rig] a per-block invariant was violated; verdict ${rig_verdict:-none} -> FAIL; any PASS line above does not count"
+    rig_verdict=FAIL; rig_cause="BLOCK_INVARIANT: $BLOCKWATCH_RESULT"
+  else rig_cause="${rig_cause:+$rig_cause; }BLOCK_INVARIANT: $BLOCKWATCH_RESULT"; fi
+fi
 # The wire decode (a report, never part of the verdict), before the diagnosis, which reads messages.jsonl
 if [[ $WIRE_ON == 1 ]]; then
   wire_stop

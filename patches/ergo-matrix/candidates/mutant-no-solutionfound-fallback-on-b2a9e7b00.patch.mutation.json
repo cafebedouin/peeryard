@@ -1,0 +1,9 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": null,
+  "file": "src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala",
+  "removed": "case _: AutolykosSolution | _: SolutionFound =>",
+  "inserted": "case _: AutolykosSolution =>",
+  "occurrences": 1,
+  "mutant_sha256": "7cc2afc279f0904f8dd45fe5eae9acd4fa1cfee25a3519c44995824096a66f34"
+}

@@ -5,6 +5,9 @@
 # scalatest XML report. Runs by hand. matrix_base (opt-in): a full weak-blocks commit to use instead of patches.json's
 # base (empty = that base, as before); patches must be diffs from the base they are applied to. The arm `base` is the
 # base alone (no patch), the control. tree.txt, in every job's artifact, names the base and the patch used.
+# Mutation arms (opt-in): a patch from patches/mutate.sh is one more arm; with judge_mutant (that patch) and judge_test
+# (a test name, or a part of it) set, a last job reads every job's report and prints diag/mutation_judge.py's verdict:
+# KILLED when the control arm (judge_control, default base) passes in every job and the mutant fails in every job.
 name: peeryard spec compare
 run-name: "spec compare: ${{ inputs.specs }} x${{ inputs.repeats }} (${{ inputs.patches }})${{ inputs.matrix_base && format(' on {0}', inputs.matrix_base) || '' }}"
 on:
@@ -14,6 +17,9 @@ on:
       specs: { description: 'space-separated test classes (org.ergoplatform.mining.CandidateGeneratorSpec ...)' }
       repeats: { description: 'runs per patch and spec (1-5)', default: '2' }
       matrix_base: { description: 'full 40-hex weak-blocks commit to apply the patches to (empty = patches/ergo-matrix/patches.json base, as before)', default: '' }
+      judge_mutant: { description: 'mutation arm to judge (one of the patches; empty = no judge job)', default: '' }
+      judge_test: { description: 'the test the mutation must make fail (its name or a part of it)', default: '' }
+      judge_control: { description: 'the arm that must pass (base, or one of the patches)', default: 'base' }
 permissions:
   contents: read
 jobs:
@@ -100,3 +106,21 @@ jobs:
           name: spec-${{ strategy.job-index }}
           path: out/
           retention-days: 30
+
+  judge:
+    needs: spec
+    if: always() && inputs.judge_mutant != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: art, pattern: 'spec-*' }
+      - name: Mutation verdict
+        env: { MUTANT: '${{ inputs.judge_mutant }}', TEST: '${{ inputs.judge_test }}', CONTROL: '${{ inputs.judge_control }}' }
+        run: |
+          [[ -n "$TEST" ]] || { echo "judge_test: the test name"; exit 1; }
+          rc=0; python3 diag/mutation_judge.py art --test "$TEST" --mutant "$MUTANT" --control "$CONTROL" > judge.txt || rc=$?
+          { echo '```'; cat judge.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; cat judge.txt
+          echo "judge exit $rc (0 KILLED, 1 SURVIVED, 3 INVALID)"
+      - uses: actions/upload-artifact@v4
+        with: { name: mutation-judge, path: judge.txt, retention-days: 90 }

@@ -110,6 +110,27 @@ same); and the first ErgoMiningThreadSpec case waits for `GenerateCandidate` pas
 cases do (it failed on 8769baace too). Run them with `matrix_base: b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6`. The
 8769baace files stay as they were, for the runs that cite them.
 
+**Mutation arms (`mutate.sh`).** A test that guards a change must fail on a tree with that change taken out.
+`patches/mutate.sh --clone <ergo clone> --base <commit> [--patch <candidate.patch>] --file <path> --remove '<text>'
+[--insert '<text>'] --out <mutant.patch>` writes that tree as one patch from the base (the candidate and the mutation
+together), so it is one more arm of `spec-compare.yml` or `patch-compare.yml`; the removed text must occur exactly
+once, and `<mutant.patch>.mutation.json` records what was changed. `spec-compare.yml` with `judge_mutant` and
+`judge_test` ends with `diag/mutation_judge.py`'s verdict: KILLED when the control arm passes in every job and the
+mutant fails in every job. `ergo-matrix/candidates/mutant-no-solutionfound-fallback-on-b2a9e7b00.patch` is
+b2a9e7b00 with `| _: SolutionFound` removed from CandidateGenerator's fallback reply (`case _: AutolykosSolution |
+_: SolutionFound =>`, ergoplatform/ergo#2666's aa813bc51); #2666's end-to-end ErgoMinerSpec case ("pass external
+ordering and input-block solutions to the candidate generator") must fail on it and pass on the base alone:
+
+```
+bash patches/mutate.sh --clone ~/src/ergo --base b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6 \
+  --file src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala \
+  --remove 'case _: AutolykosSolution | _: SolutionFound =>' --insert 'case _: AutolykosSolution =>' \
+  --out patches/ergo-matrix/candidates/mutant-no-solutionfound-fallback-on-b2a9e7b00.patch
+# spec-compare.yml: patches "base patches/ergo-matrix/candidates/mutant-no-solutionfound-fallback-on-b2a9e7b00.patch",
+# specs org.ergoplatform.mining.ErgoMinerSpec, matrix_base b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6,
+# judge_mutant <that patch>, judge_test "pass external ordering and input-block solutions to the candidate generator"
+```
+
 `stack.sh` applies the stacked patches in id order to a scratch worktree of the base and writes one combined diff;
 for ergo, `--build` hands that diff to `diffrun/build.sh`, which caches the jar by the diff's sha256, and leaves
 `<jar>.stack.json` beside it naming the patches, so `review/provenance.sh` can say "reference node v6.0.6+001". For the Rust

@@ -1,0 +1,124 @@
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/settings/Parameters.scala b/ergo-core/src/main/scala/org/ergoplatform/settings/Parameters.scala
+index 40c074121..a8d3a070c 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/settings/Parameters.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/settings/Parameters.scala
+@@ -68,9 +68,11 @@ class Parameters(val height: Height,
+   lazy val maxBlockCost: Int = parametersTable(MaxBlockCostIncrease)
+ 
+   /**
+-    * Number of sub-blocks per block, on average
++    * Number of sub-blocks per block, on average.
++    * Tables parsed from extensions written before 6.0 activation carry no key 9; for them the value
++    * inserted on 6.0 activation is used, as ErgoStateContext.processExtension does.
+     */
+-  lazy val subBlocksPerBlock: Int = parametersTable(SubblocksPerBlockIncrease)
++  lazy val subBlocksPerBlock: Int = subBlocksPerBlockOpt.getOrElse(SubblocksPerBlockDefault)
+ 
+   lazy val subBlocksPerBlockOpt: Option[Int] = parametersTable.get(SubblocksPerBlockIncrease)
+ 
+diff --git a/ergo-core/src/test/scala/org/ergoplatform/mining/SubBlocksPerBlockMissingKeySpec.scala b/ergo-core/src/test/scala/org/ergoplatform/mining/SubBlocksPerBlockMissingKeySpec.scala
+new file mode 100644
+index 000000000..1fc0bd6c4
+--- /dev/null
++++ b/ergo-core/src/test/scala/org/ergoplatform/mining/SubBlocksPerBlockMissingKeySpec.scala
+@@ -0,0 +1,100 @@
++package org.ergoplatform.mining
++
++import com.google.common.primitives.Ints
++import org.ergoplatform.modifiers.history.extension.Extension
++import org.ergoplatform.modifiers.history.header.Header
++import org.ergoplatform.nodeView.state.{ErgoStateContext, VotingData}
++import org.ergoplatform.settings.{ErgoValidationSettingsUpdate, MainnetLaunchParameters, Parameters, VotingSettings}
++import org.ergoplatform.utils.ErgoCorePropertyTest
++import scorex.util.bytesToId
++
++/**
++  * Parameter 9 (input blocks per ordering block) is absent from every epoch-start extension
++  * written before 6.0 activation by nodes that do not know it. A node crossing a v3 voting
++  * boundary on such a chain takes the parsed table as its current parameters, so key 9 is gone
++  * from then on, while the input-block PoW code reads it unconditionally.
++  */
++class SubBlocksPerBlockMissingKeySpec extends ErgoCorePropertyTest {
++  import org.ergoplatform.utils.ErgoCoreTestConstants._
++  import org.ergoplatform.utils.generators.ErgoCoreGenerators._
++  import Parameters._
++
++  private val powScheme = new AutolykosPowScheme(32, 26)
++
++  private val votingEpochLength = 2
++
++  private val votingSettings: VotingSettings =
++    VotingSettings(
++      votingEpochLength,
++      softForkEpochs = 2,
++      activationEpochs = 3,
++      version2ActivationHeight = 100,
++      version2ActivationDifficultyHex = "01"
++    )
++
++  private val updSettings = chainSettings.copy(voting = votingSettings)
++
++  private val headerId = bytesToId(Array.fill(32)(0: Byte))
++
++  private val v3 = Header.Interpreter50Version
++
++  // what this node starts from: the launch table, which carries key 9, at block version 3
++  private val launchV3 =
++    Parameters(0, MainnetLaunchParameters.parametersTable.updated(BlockVersion, v3.toInt), ErgoValidationSettingsUpdate.empty)
++
++  // what a node without key 9 writes at a v3 epoch start
++  private val tableWithoutKey9 = launchV3.parametersTable - SubblocksPerBlockIncrease
++
++  private def epochStartExtension(height: Int): Extension =
++    (Parameters(height, tableWithoutKey9, ErgoValidationSettingsUpdate.empty).toExtensionCandidate ++
++      validationSettingsNoIl.toExtensionCandidate).toExtension(headerId)
++
++  private def epochStartHeader(height: Int): Header =
++    defaultHeaderGen.sample.get.copy(height = height, version = v3, votes = Array.fill(3)(NoParameter))
++
++  // crosses two v3 voting boundaries: the first after genesis, then one computed by update()
++  private lazy val paramsAfterBoundaries: Parameters = {
++    val esc0 = new ErgoStateContext(Seq.empty, None, genesisStateDigest, launchV3, validationSettingsNoIl, VotingData.empty)(updSettings)
++    val esc1 = esc0.process(epochStartHeader(votingEpochLength), Some(epochStartExtension(votingEpochLength))).get
++    val esc2 = esc1.process(epochStartHeader(2 * votingEpochLength), Some(epochStartExtension(2 * votingEpochLength))).get
++    esc2.currentParameters
++  }
++
++  property("a v3 epoch-start extension without key 9 leaves the current parameters without key 9") {
++    launchV3.parametersTable.contains(SubblocksPerBlockIncrease) shouldBe true
++    paramsAfterBoundaries.height shouldBe 2 * votingEpochLength
++    paramsAfterBoundaries.blockVersion shouldBe v3
++    paramsAfterBoundaries.parametersTable.contains(SubblocksPerBlockIncrease) shouldBe false
++  }
++
++  property("subBlocksPerBlock falls back to the 6.0 activation value when key 9 is absent") {
++    paramsAfterBoundaries.subBlocksPerBlockOpt shouldBe None
++    paramsAfterBoundaries.subBlocksPerBlock shouldBe SubblocksPerBlockDefault
++  }
++
++  property("checkInputBlockPoW accepts v3 parameters without key 9") {
++    val header = defaultHeaderGen.sample.get.copy(version = v3)
++    val withActivationValue = paramsAfterBoundaries.withNumOfSubblocksPerBlock(SubblocksPerBlockDefault)
++    powScheme.checkInputBlockPoW(header, paramsAfterBoundaries) shouldBe
++      powScheme.checkInputBlockPoW(header, withActivationValue)
++  }
++
++  property("checkNonces accepts v3 parameters without key 9") {
++    val nBits = chainSettings.initialNBits
++    noException should be thrownBy {
++      powScheme.checkNonces(
++        v3,
++        Ints.toByteArray(1),
++        Array.fill(32)(0: Byte),
++        randomSecret(),
++        randomSecret(),
++        powScheme.getB(nBits),
++        powScheme.NBase,
++        0L,
++        1L,
++        paramsAfterBoundaries
++      )
++    }
++  }
++
++}

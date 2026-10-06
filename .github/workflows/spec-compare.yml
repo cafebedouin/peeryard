@@ -31,7 +31,7 @@ jobs:
           [[ "$REPEATS" =~ ^[1-5]$ ]] || { echo "repeats: 1-5"; exit 1; }
           [[ -z "$MATRIX_BASE" || "$MATRIX_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "matrix_base: empty, or a full 40-hex commit"; exit 1; }
           for p in $PATCHES; do [[ "$p" == base || ( "$p" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$p" ) ]] || { echo "patch: $p"; exit 1; }; done
-          for s in $SPECS; do [[ "$s" =~ ^org\.ergoplatform\.[A-Za-z0-9.]+Spec[A-Za-z]*$ ]] || { echo "spec: $s"; exit 1; }; done
+          for s in $SPECS; do [[ "$s" =~ ^([A-Za-z][A-Za-z0-9]*/)?org\.ergoplatform\.[A-Za-z0-9.]+Spec[A-Za-z]*$ ]] || { echo "spec: $s"; exit 1; }; done
           echo "arms=$(printf '%s\n' $PATCHES | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "specs=$(printf '%s\n' $SPECS | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"

@@ -81,8 +81,11 @@ jobs:
         run: |
           out="$GITHUB_WORKSPACE/out"; mkdir -p "$out"; cp tree.txt "$out/"
           cd "$HOME/ergo-clone"
-          sbt -Denv=test ++2.12.20 "testOnly $SPEC" > "$out/sbt.log" 2>&1 && echo "rc 0" > "$out/rc.txt" || echo "rc $?" > "$out/rc.txt"
+          # a spec may be project-qualified, e.g. ergoCore/org.ergoplatform.mining.SomeSpec (subproject tests)
+          if [[ "$SPEC" == */* ]]; then proj="${SPEC%%/*}"; cls="${SPEC#*/}"; cmd="$proj/testOnly $cls"; else cmd="testOnly $SPEC"; fi
+          sbt -Denv=test ++2.12.20 "$cmd" > "$out/sbt.log" 2>&1 && echo "rc 0" > "$out/rc.txt" || echo "rc $?" > "$out/rc.txt"
           cp target/test-reports/*.xml "$out/" 2>/dev/null || true
+          find . -path '*/target/test-reports/*.xml' -not -path './target/*' -exec cp {} "$out/" \; 2>/dev/null || true
           sed 's/\x1b\[[0-9;]*m//g' "$out/sbt.log" | grep -E '^\[info\] - |Tests: ' | tee -a "$GITHUB_STEP_SUMMARY"
           # keep the artifact small: a runaway test can write gigabytes of log. Over 20 MB, keep the first and last
           # 10 MB (the cut is marked); then gzip it (sbt.log.gz)

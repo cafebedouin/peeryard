@@ -179,6 +179,31 @@ Listed at the top of `rig.sh`. The main ones:
   start, so they do not drift); its partition and heal events carry `flap i/N`, and it sets `FLAP_LAST_HEIGHT` (the
   first node's full height at the last edge)
 - phases: `mark <label>` writes a labelled event (below)
+- node health (every run, `diag/health.py`): while the hook runs, a watcher notes each node process that ends
+  without the rig stopping it (relaunch, crash, a fixture save and the final stop are announced to it first, in
+  `planned_exits`): an `exit` event and a `==== [rig] exit <node> pid=<pid> <time> unplanned ====` line in the node's
+  log. After the hook the node logs are read for those exits (`NODE_EXIT`), `java.lang.OutOfMemoryError`
+  (`NODE_OOM`), the JVM's fatal-error banner (`JVM_FATAL`) and restart loops (`RESTART_LOOP`: one Akka supervisor
+  ERROR or one "restart" message logged 20 or more times, `PEERYARD_HEALTH_LOOP_MIN`), printed as `[rig] HEALTH <node>
+  ...` lines and kept in `health.json`. An unhealthy node turns the hook's PASS (or no verdict) into FAIL with cause
+  `NODE_HEALTH: <node>=<CODE>`; a FAIL or INCONCLUSIVE keeps its verdict and gains the cause.
+  `PEERYARD_HEALTH=report` prints without judging, `=0` turns watcher and check off. A hook that damages a node on
+  purpose and reports what it then does names it in `HEALTH_REPORT_ONLY` (`corruption` does, for B). Why: a run can
+  end with every node on one chain and state after a node spent the run failing; patch-compare run
+  [37306440981](https://github.com/cafebedouin/peeryard/actions/runs/37306440981)'s p1-v3 job printed
+  `MATRIX-COMPAT: PASS` while its miner's supervisor restarted the mining thread 230779 times (`key not found: 9`)
+- per-block invariants (`lib/blockwatch.sh`, `diag/block_invariants.py`): `blockwatch_start <node>...` records every
+  full block new on each node (re-reading the last `BLOCKWATCH_DEPTH`, 6, heights so a reorg is seen) and the node's
+  pool after new blocks, into `blocks.jsonl`; `blockwatch_stop [--contract <cmd>]...` checks them and sets
+  `BLOCKWATCH_RESULT`. The checks read what the node serves rather than re-running its consensus rules: `link` (header
+  height and id, parent held one below), `body` (transactions served, none twice in a block), `once` (no transaction
+  in two blocks of the final chain), `pool` (a confirmed transaction has left the pool), `agree` (nodes hold the same
+  block below the lowest tip minus 3), and contract checks: a command per block (the block JSON on stdin,
+  `BLOCK_NODE` / `BLOCK_HEIGHT` / `BLOCK_ID` in the environment; exit 0 = holds), from `--contract` or
+  `BLOCKWATCH_CONTRACTS` (`;`-separated), for a protocol's own invariants. A violation turns PASS into FAIL (cause
+  `BLOCK_INVARIANT`; `PEERYARD_BLOCKWATCH_JUDGE=0` reports only); a monitor the hook left running is stopped and
+  checked by the rig. `lib/invariants/deliberate-fail.sh` is a contract check that fails on every block
+  (`DELIBERATE_FAIL_EVERY=<n>`: every n-th height): the `blockwatch-control` example shows that it is reported
 
 A hook can also be written as data: one phase per line (`floor`, `wait`, `pass`, `record`, actions such as `partition`
 or `settle_follow`), checked before anything runs and interpreted by `lib/phases.sh`. It is an optional runner for
@@ -187,7 +212,8 @@ hooks that are generic phases plus a pass rule; the grammar and the verdict rule
 ### Events, samples, costs and the wire
 Beside the node logs, every run keeps three records on one clock (epoch milliseconds), and a fourth when asked:
 - `events.jsonl`: one line per `partition`, `heal`, `link_netem` (detail: the tc spec), `crash`, `revive`, `relaunch`,
-  `launch` and `mark`, as `{t, kind, a, b, node, detail}`. A `launch` event also carries the node's `pid`,
+  `launch`, `mark` and `exit` (a node process that ended without the rig stopping it; detail `unplanned`, with its
+  `pid`), as `{t, kind, a, b, node, detail}`. A `launch` event also carries the node's `pid`,
   `cpus_requested`, `cpus_applied` (its `Cpus_allowed_list` after the exec chain reached the node binary: what was
   applied, not what was asked), `gc` (the collector a `-XX:+PrintFlagsFinal` probe selects under the same mask and
   options) and `java_opts`. Once the hook runs, each event is followed by one sample taken at that moment.
@@ -270,6 +296,8 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 | `flap-phases` | 2 | `flap`'s claim as a data scenario, with the same knobs and the same `FLAP_CONTROL=down-edge` control in the file (the settle gets `FLAP_MARGIN_S` itself); 3 of 3 PASS hosted, with its original ([sweep](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) |
 | `reorg-mempool-phases` | 3 | `reorg-mempool`'s claim as a data scenario: the same staging, with the conditions `reorg-mempool` checks together in one loop waited for one after another; 3 of 3 PASS hosted, with its original ([sweep](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) |
 | `reorder-dup-phases` | 3 | payments from a miner to a wallet two hops away while every link direction reorders and duplicates packets (`RD_REORDER`, `RD_DUP`): every accepted payment arrives and the ends agree on chain and state; `RD_CONTROL=cut` cuts the relay before the payments, which must FAIL |
+| `blockwatch` | 2 | the per-block invariant monitor on A and B while A pays B five times and mines on: PASS = blocks checked on both nodes with no violation (link, body, once, pool, agree) and B on A's chain; INCONCLUSIVE when no payment was accepted. With `BLOCKWATCH_CONTRACTS=rig/lib/invariants/deliberate-fail.sh` it must FAIL with cause `BLOCK_INVARIANT` |
+| `blockwatch-control` | 2 | the monitor's designed failing check: with `deliberate-fail.sh` as a contract check, PASS = that check is reported violated on every distinct block checked (at least 5) and no generic check is; the rig is told not to judge this run's own, expected, violation |
 | `mixed-roles-phases` | 3 | a digest and a pruned follower of a full miner through partitions, the digest node killed and revived while cut (it restores its height from disk): both reach the miner's state root at its final height; `MR_CONTROL=down` leaves the digest node down, which must FAIL |
 
 ## Experimental examples

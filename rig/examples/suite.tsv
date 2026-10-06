@@ -47,3 +47,5 @@ flap-phases	FLAP-PHASES: PASS	900	-	-
 flap	FLAP: PASS	900	-	-
 reorder-dup-phases	REORDER-DUP-PHASES: PASS	900	-	-
 mixed-roles-phases	MIXED-ROLES-PHASES: PASS	900	-	-
+blockwatch	BLOCKWATCH: PASS	900	-	-
+blockwatch-control	BLOCKWATCH-CONTROL: PASS	600	-	-

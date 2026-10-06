@@ -1,0 +1,6 @@
+ 230779 a.actor.OneForOneStrategy - key not found: 9
+ 230779 o.e.m.ErgoMiningThread - Attempted mining thread restart due to key not found: 9
+    270 o.e.m.ErgoMiningThread - Accepting solution or preparing candidate did not succeed
+      8 o.e.m.CandidateGenerator$ - Failed to produce proofs for transactions, but emission box is found: 
+      4 o.e.m.CandidateGenerator$ - Retrying candidate generation after failed proofs
+      4 o.e.m.CandidateGenerator$ - Retrying candidate generation after failed collection or proofs

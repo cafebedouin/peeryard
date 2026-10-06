@@ -1,0 +1,39 @@
+# Node health over an earlier run's artifacts (diag/health.py): process exits, OutOfMemoryError, JVM fatal errors and
+# restart loops, per run directory, and the patch-compare pooled view with health judged (diag/compare_pool.py). For
+# runs made before the rig checked health itself, or to re-read any run's kept node logs. Runs by hand; it reads the
+# artifacts of a run in this repository and changes nothing.
+name: peeryard health recheck
+run-name: "health recheck: run ${{ inputs.run_id }} (${{ inputs.pattern }})"
+on:
+  workflow_dispatch:
+    inputs:
+      run_id: { description: 'the workflow run whose artifacts to read (its number in the run URL)' }
+      pattern: { description: 'artifact names to read (glob)', default: 'run-*' }
+permissions:
+  contents: read
+  actions: read
+jobs:
+  health:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the inputs
+        env: { RUN_ID: '${{ inputs.run_id }}', PATTERN: '${{ inputs.pattern }}' }
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]{1,15}$ ]] || { echo "run_id: digits"; exit 1; }
+          [[ "$PATTERN" =~ ^[A-Za-z0-9*._-]{1,64}$ ]] || { echo "pattern: a glob of artifact names"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with: { run-id: '${{ inputs.run_id }}', github-token: '${{ github.token }}', pattern: '${{ inputs.pattern }}', path: art, merge-multiple: true }
+      - name: Node health per run
+        env: { RUN_ID: '${{ inputs.run_id }}' }
+        run: |
+          {
+            echo "health of run $RUN_ID (https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID), peeryard $(git rev-parse --short HEAD)"
+            echo '```'
+            for d in art/*/; do echo "== $(basename "$d")"; python3 diag/health.py "$d" --json "$d/health.json" || true; done
+            if ls -d art/*-v[34]-* >/dev/null 2>&1; then echo; echo "== pooled (diag/compare_pool.py)"; python3 diag/compare_pool.py art/; fi
+            echo '```'
+          } | tee health.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: health-recheck, path: health.txt, retention-days: 90 }

@@ -14,6 +14,11 @@
 # at the head of the pooled output, names each jar with its sha256. matrix_base (opt-in): a full weak-blocks commit to
 # build on instead of patches/ergo-matrix/patches.json's base (empty = that base, as before); the patches must be diffs
 # from it. builds.txt's base line names the commit and where it came from.
+# Opt-in measurement inputs (off by default, the run as before): wire (the rig's passive P2P capture, PEERYARD_WIRE=1;
+# each run keeps the decoded messages.jsonl gzipped and the capture's health files, never the pcaps), versions (the
+# block versions to run, default both), base_runs (false: build the base but run only the patches), txload_fund_split
+# (each funded wallet gets that many boxes, rig/lib/txload.sh TXLOAD_FUND_SPLIT). Every run also gets
+# diag/matrix_value.py's report (value.txt, value.json) when the example is a matrix-compat one; a report, no verdict.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})${{ inputs.matrix_base && format(' on {0}', inputs.matrix_base) || '' }}"
 on:
@@ -31,6 +36,10 @@ on:
       ref_fairminer: { description: 'reference jar also carries patches/ergo/011 + 012 (#2429 + #2655, rig-only fair miner; implies ref_2429)', type: boolean, default: false }
       matrix_base: { description: 'full 40-hex weak-blocks commit to build the base and patches on (empty = patches/ergo-matrix/patches.json base, as before)', default: '' }
       steady_from_h: { description: 'matrix-compat: 0 = off (as before); else the window starts once A reaches this height (MATRIX_COMPAT_WARMUP_H) and the devnet difficulty reset to 32 at h128 is off (PEERYARD_NO_DIFF_RESET); 113 suggested', default: '0' }
+      wire: { description: 'passive P2P capture on every link (PEERYARD_WIRE=1); keeps messages.jsonl.gz per run, never the pcaps', type: boolean, default: false }
+      versions: { description: 'block versions to run: v3, v4 or both (space-separated)', default: 'v3 v4' }
+      base_runs: { description: 'run the base jar too (false: build it, run only the patches)', type: boolean, default: true }
+      txload_fund_split: { description: 'each wallet txload funds gets this many boxes (1-100; TXLOAD_FUND_SPLIT)', default: '1' }
 permissions:
   contents: read
 jobs:
@@ -40,14 +49,17 @@ jobs:
     outputs:
       builds: ${{ steps.b.outputs.builds }}
       repeats: ${{ steps.b.outputs.repeats }}
+      versions: ${{ steps.b.outputs.versions }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
       - name: Check the inputs
-        env: { PATCHES: '${{ inputs.patches }}', EXAMPLE: '${{ inputs.example }}', REPEATS: '${{ inputs.repeats }}', COMPAT_S: '${{ inputs.compat_s }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', MATRIX_BASE: '${{ inputs.matrix_base }}' }
+        env: { PATCHES: '${{ inputs.patches }}', EXAMPLE: '${{ inputs.example }}', REPEATS: '${{ inputs.repeats }}', COMPAT_S: '${{ inputs.compat_s }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', MATRIX_BASE: '${{ inputs.matrix_base }}', VERSIONS: '${{ inputs.versions }}', SPLIT: '${{ inputs.txload_fund_split }}' }
         run: |
+          [[ "$VERSIONS" =~ ^(v3|v4)( (v3|v4))?$ ]] || { echo "versions: v3, v4 or 'v3 v4'"; exit 1; }
+          [[ "$SPLIT" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || { echo "txload_fund_split: 1-100"; exit 1; }
           [[ -z "$MATRIX_BASE" || "$MATRIX_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "matrix_base: empty, or a full 40-hex commit"; exit 1; }
           [[ "$TXLOAD" =~ ^([0-9]|[1-4][0-9]|50)$ ]] || { echo "txload: 0-50 payments per 10 s"; exit 1; }
           [[ -z "$EXTMINE" || "$EXTMINE" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "extmine_poll: empty, or e.g. 1s or 4s"; exit 1; }
@@ -80,7 +92,7 @@ jobs:
           bash patches/sigma-snapshot.sh "${MATRIX_BASE:-$(jq -r .base patches/ergo-matrix/patches.json)}"
       - name: Build the base and the base + each patch
         id: b
-        env: { PATCHES: '${{ inputs.patches }}', REPEATS: '${{ inputs.repeats }}', REF_2429: '${{ inputs.ref_2429 }}', REF_FAIR: '${{ inputs.ref_fairminer }}', MATRIX_BASE: '${{ inputs.matrix_base }}' }
+        env: { PATCHES: '${{ inputs.patches }}', REPEATS: '${{ inputs.repeats }}', REF_2429: '${{ inputs.ref_2429 }}', REF_FAIR: '${{ inputs.ref_fairminer }}', MATRIX_BASE: '${{ inputs.matrix_base }}', VERSIONS: '${{ inputs.versions }}', BASE_RUNS: '${{ inputs.base_runs }}' }
         run: |
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME" DIFFRUN_NO_LOCK=1
           base="${MATRIX_BASE:-$(jq -r .base patches/ergo-matrix/patches.json)}"; out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
@@ -100,8 +112,11 @@ jobs:
             echo "p$i: weak-blocks $base + $p (sha256 $(sha256sum "$p" | cut -c1-16))" >> "$out/builds.txt"; done
           # every jar by sha256, in the file every run carries: a result names the jars it ran
           (cd "$out" && sha256sum ./*.jar | sed 's#\./##; s/^/jar sha256 /') >> "$out/builds.txt"
+          # base_runs false: the base jar is built (builds.txt names it) but only the patches run
+          [ "$BASE_RUNS" = false ] && [ "${#names[@]}" -gt 1 ] && names=("${names[@]:1}")
           echo "builds=$(printf '%s\n' "${names[@]}" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "versions=$(printf '%s\n' ${VERSIONS:-v3 v4} | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           { echo '```'; cat "$out/builds.txt"; sha256sum "$out"/*.jar; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with: { name: compare-jars, path: jars/, retention-days: 14 }
@@ -115,7 +130,7 @@ jobs:
       fail-fast: false
       matrix:
         build: ${{ fromJSON(needs.build.outputs.builds) }}
-        version: [ v3, v4 ]
+        version: ${{ fromJSON(needs.build.outputs.versions) }}
         repeat: ${{ fromJSON(needs.build.outputs.repeats) }}
     steps:
       - uses: actions/checkout@v4
@@ -130,7 +145,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: compare-jars, path: jars }
       - name: Run the example
-        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', EXTSTRICT: "${{ inputs.extmine_strict && '1' || '0' }}", STEADY_H: '${{ inputs.steady_from_h }}' }
+        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', EXTSTRICT: "${{ inputs.extmine_strict && '1' || '0' }}", STEADY_H: '${{ inputs.steady_from_h }}', WIRE: "${{ inputs.wire && '1' || '0' }}", SPLIT: '${{ inputs.txload_fund_split }}' }
         run: |
           [[ "$COMPAT_POLL" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "compat_poll: e.g. 500ms or 4s"; exit 1; }
           [[ "$STEADY_H" =~ ^[0-9]{1,4}$ ]] || { echo "steady_from_h: a height, 0 = off"; exit 1; }
@@ -140,7 +155,7 @@ jobs:
           PEERYARD_V4=$v4 PEERYARD_MATRIX_JAR="$PWD/jars/${{ matrix.build }}.jar" PEERYARD_JAR="$PWD/jars/reference.jar" \
             MATRIX_COMPAT_S="$COMPAT_S" PEERYARD_MINE_POLL="$COMPAT_POLL" MATRIX_COMPAT_POLL="$COMPAT_POLL" SCRATCH="$run/scratch" \
             MATRIX_COMPAT_TXLOAD="$TXLOAD" PEERYARD_EXTMINE_POLL="$EXTMINE" PEERYARD_EXTMINE_STRICT="$EXTSTRICT" \
-            MATRIX_COMPAT_WARMUP_H="$STEADY_H" PEERYARD_NO_DIFF_RESET="$ndr" \
+            MATRIX_COMPAT_WARMUP_H="$STEADY_H" PEERYARD_NO_DIFF_RESET="$ndr" PEERYARD_WIRE="$WIRE" TXLOAD_FUND_SPLIT="$SPLIT" \
             bash rig/rig.sh "rig/examples/$EXAMPLE.json" "rig/examples/$EXAMPLE.sh" > "$run/rig.log" 2>&1 || echo "rig exit $?"
           for f in "$run"/scratch/out/node_*.log; do [ -f "$f" ] || continue
             n=$(basename "$f" .log); grep -h ' ERROR ' "$f" | sed -E 's/^[0-9:.]+ ERROR +\[[^]]*\] //' | cut -c1-160 | sort | uniq -c > "$run/errors-$n.txt" || true; done
@@ -150,6 +165,17 @@ jobs:
             [ -s "$f" ] && gzip -c "$f" > "$run/load/$(basename "$f").gz"; done; rmdir "$run/load" 2>/dev/null || true
           # the node logs (gzipped, about 1 MB a run) and the rig's topology, so a result can be traced per block
           mkdir -p "$run/nodes"; for f in "$run"/scratch/out/node_*.log "$run"/scratch/out/effective.json; do [ -f "$f" ] && gzip -c "$f" > "$run/nodes/$(basename "$f").gz"; done
+          # wire on: the decoded messages (gzipped) and the capture's health files; the pcaps are never uploaded
+          if [ "$WIRE" = 1 ]; then
+            [ -s "$run/scratch/out/messages.jsonl" ] && gzip -c "$run/scratch/out/messages.jsonl" > "$run/messages.jsonl.gz"
+            mkdir -p "$run/wire"; cp "$run"/scratch/out/wire/*.stats.json "$run"/scratch/out/wire/summary.json "$run"/scratch/out/wire/capture.log "$run/wire/" 2>/dev/null || true
+            du -sh "$run"/scratch/out/wire/*.pcap 2>/dev/null | tee "$run/wire/pcap-sizes.txt" || true
+          fi
+          # the value / bytes / requests / load report over this run's artifact layout (a report; it never fails the job)
+          if [[ "$EXAMPLE" == matrix-compat* ]]; then
+            python3 diag/matrix_value.py "$run" --json "$run/value.json" > "$run/value.txt" 2>&1 || echo "matrix_value.py failed (see value.txt)"
+            grep -E '^(BYTES|REQUESTS|VALUE|LOAD|WIRE)' "$run/value.txt" | cut -c1-400 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          fi
           rm -rf "$run/scratch"
       - uses: actions/upload-artifact@v4
         if: always()

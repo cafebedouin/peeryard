@@ -9,7 +9,7 @@
 #
 # Needs: LITHOS_STAGE (the staged client distribution), LITHOS_KEYSTORE and LITHOS_PASS (the client's wallet keystore
 # JSON and its password), LITHOS_MNEMONIC (the same wallet's mnemonic, restored into node A's wallet so A mines to it),
-# JAVA_HOME at 17. The mnemonic and password stay in the environment, never in a file here.
+# LITHOS_PUBKEY (that wallet's EIP-3 index 0 raw public key), JAVA_HOME at 17. Secrets stay in the environment.
 : "${LITHOS_STAGE:?the staged client distribution directory}"; : "${LITHOS_KEYSTORE:?the client keystore json}"; : "${LITHOS_PASS:?the keystore password}"; : "${LITHOS_MNEMONIC:?the client wallet mnemonic}"
 JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"; HERE_LIB="$(cd "$(dirname "$RIG_HOOK")/../lib" && pwd)"
 PROXY_PORT=${PROXY_PORT:-9153}; WD="$SCRATCH/lithos"; mkdir -p "$WD"; CHECKS="$WD/checks.jsonl"; : > "$CHECKS"
@@ -29,12 +29,18 @@ boxes_at_tree(){ rest_post /blockchain/box/unspent/byErgoTree "\"$TREE\""; }
 block_txs(){ local hid; hid=$(header_at A "$1"); [[ -n "$hid" ]] && rest A "/blocks/$hid/transactions" | jq -c '.transactions'; }
 fail(){ echo "[lb] FAIL: $*"; rig_verdict=FAIL; }
 rig_verdict=FAIL
-# 0. node A's wallet is the client's keystore key set, restored over the API from the mnemonic: a node started with a
-# test mnemonic would use the root key and its direct children, not the EIP-3 path the keystore derives, so the
-# topology sets ergo.wallet.testMnemonic = null and the wallet is restored here before A can mine.
+# 0. node A mines with the client's key. Two node facts make this two steps: a wallet from a test mnemonic uses the
+# root key and its children, not the EIP-3 path a keystore derives (so testMnemonic = null and the wallet is restored
+# over the API); and the internal miner mines with its own reward key unless ergo.node.miningPubKeyHex names one, while
+# the client's candidates name the collateral lender's key, and the node serves a cached candidate only to a requester
+# with the same key. So A is launched with miningPubKeyHex = the client's EIP-3 index 0 key (LITHOS_PUBKEY, the raw
+# hex public key: any node's /utils/addressToRaw/<address>), and the client holds that one key (numAddresses = 1).
+: "${LITHOS_PUBKEY:?the raw hex public key of the keystore EIP-3 index 0 address}"
+CONF_OVR[A]="ergo.node.miningPubKeyHex=\"$LITHOS_PUBKEY\""
+launch A; wait_up A || { fail "A did not come up"; return 0 2>/dev/null || exit 0; }
 r=$(wallet A /wallet/restore "{\"pass\":\"$LITHOS_PASS\",\"mnemonic\":\"$LITHOS_MNEMONIC\",\"usePre1627KeyDerivation\":false}")
 wallet A /wallet/unlock "{\"pass\":\"$LITHOS_PASS\"}" >/dev/null
-echo "[lb] A's wallet restored ($r), mines to $(address A)"
+echo "[lb] A's wallet restored ($r); wallet $(address A); miner key $(wallet A /mining/rewardPublicKey | jq -r .rewardPubkey)"
 # 1. block version 4 and a matured wallet on A
 end=$((SECONDS + 600)); bv=""
 while [[ $SECONDS -lt $end ]]; do bv=$(rest A /info | jq -r '.parameters.blockVersion // empty'); [[ "$bv" == 4 ]] && break; sleep 10; done
@@ -65,7 +71,7 @@ echo "[lb] due-job box funded at height $H: tx $tx"
 # 5. the client: reads the deployment, joins the queue by itself, carries upkeep in candidate mode
 cat > "$CONF" <<EOC
 include "application"
-node { url = "http://127.0.0.1:$PROXY_PORT", key = "hello", storagePath = "$LITHOS_KEYSTORE", pass = "$LITHOS_PASS", networkType = "TESTNET"
+node { url = "http://127.0.0.1:$PROXY_PORT", key = "hello", storagePath = "$LITHOS_KEYSTORE", pass = "$LITHOS_PASS", networkType = "TESTNET", numAddresses = 1
        deployment { file = "$DESC" } }
 sync.startHeight = 2
 stats.enabled = false

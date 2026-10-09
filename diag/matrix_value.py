@@ -541,7 +541,12 @@ def load_section(txload, watch, chain, logs, ib, start, end):
     out = {}
     pays = [r for r in txload if r.get("kind") == "pay" and start <= r.get("t_ms", 0) < end]
     mins = (end - start) / 60000.0
-    errs = Counter((r.get("error") or "")[:60] for r in pays if not r.get("id"))
+    def reason(e):
+        # the node's text after the echoed request ("Bad request List(PaymentRequest(...)). <reason>"), ids and
+        # numbers folded, so refusals group by kind
+        e = (e or "").split(")). ")[-1]
+        return re.sub(r"\d+", "N", re.sub(r"[0-9a-f]{64}", "H", e))[:70]
+    errs = Counter(reason(r.get("error")) for r in pays if not r.get("id"))
     out["payments"] = {"attempts_per_min": round(len(pays) / mins, 1), "accepted": sum(1 for r in pays if r.get("id")),
                        "refused": sum(1 for r in pays if not r.get("id")),
                        "refusal_reasons": dict(errs.most_common(4))}

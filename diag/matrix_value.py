@@ -31,7 +31,8 @@ Sections (each prints what it read, and "n/a: <why>" when its source is absent):
             their uncles', and X's earlier uncles) are duplicates, the rest are unique (recovered into L). Also, for
             both builds alike, every sibling (an input block under a final-chain ordering block that is not on that
             interval's winning path, the deepest chain under it) and what became of its transactions: on the winning
-            path already (duplicate), merged into it (recovered), in a later input block (re-included), or in none.
+            path already (duplicate), merged into it (recovered), in a later input block (re-included), or in none;
+            and, of those neither on the path nor merged, how many the final chain holds anyway.
             A transaction is matched by its weak id (3 bytes of its id + 3 of its witness id); a payment or a
             final-chain transaction is matched to a weak id by the first 3 bytes of its id (a 1-in-16.7M collision
             per pair, counted as is).
@@ -526,6 +527,10 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
                     sib["re_included_later"] += 1
                 else:
                     sib["in_no_other_input_block"] += 1
+                # a sibling transaction neither on the winning path nor merged that the final chain holds anyway
+                # (re-included later, or carried by an ordering block's own part)
+                if w not in path_own and s not in path_merged and fin3.get(w[:6]):
+                    sib["not_merged_but_on_final_chain"] += 1
     return {"weak_vs_full_ids": dict(check), "merged_uncles": merged,
             "siblings": {"blocks": dict(sib_blocks), "transactions": dict(sib), "winning_path_ties": ties},
             "merges": merges}

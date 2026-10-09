@@ -39,10 +39,11 @@ class Value(unittest.TestCase):
 
     def test_without_uncles_the_same_sibling_is_re_included_or_lost(self):
         ib, s = tree(False)
-        v = mv.value_section(ib, {}, set(), set(), {O}, 0, 100)
+        v = mv.value_section(ib, {}, set(), {"cc0000" + "2" * 58}, {O}, 0, 100)
         self.assertEqual(v["merged_uncles"]["merges"], 0)
         self.assertEqual(v["siblings"]["transactions"],
-                         {"txs": 3, "on_winning_path": 1, "re_included_later": 1, "in_no_other_input_block": 1})
+                         {"txs": 3, "on_winning_path": 1, "re_included_later": 1, "in_no_other_input_block": 1,
+                          "not_merged_but_on_final_chain": 1})
 
     def test_uncle_with_unknown_transactions_is_counted_not_guessed(self):
         ib, s = tree(True)

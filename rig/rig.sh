@@ -188,13 +188,13 @@ derive_genesis_digest(){
   mkdir -p "$pdir/tmp"   # the node copies <network>.conf into java.io.tmpdir at startup and needs it to exist
   conf="$(GENESIS_DIGEST="" SCRATCH_DATA_OVERRIDE="$pdir" gen_conf "$n")"
   ip netns exec "${NS[$n]}" bash -c "cd '${RT_CWD[$n]}' && exec '$JAVA_BIN' $JAVA_OPTS -Djava.io.tmpdir='$pdir/tmp' -jar '${NODE_JAR[$n]}' $NET_ARGS -c '$conf'" > "$plog" 2>&1 &
-  pid=$!; end=$((SECONDS + 90)); d=""
+  pid=$!; end=$((SECONDS + ${RIG_PROBE_TIMEOUT_S:-90})); d=""
   while [[ $SECONDS -lt $end ]]; do
     d="$(grep -oE 'Genesis UTXO state generated with hex digest [0-9a-f]+' "$plog" | head -1 | awk '{print $NF}')"
     [[ -n "$d" ]] && break; kill -0 "$pid" 2>/dev/null || break; sleep 1
   done
   kill -9 "$pid" 2>/dev/null; pkill -9 -f "$conf" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
-  [[ -n "$d" ]] || { echo "FAIL: could not derive the genesis digest for minerRewardDelay=$REWARD_DELAY (see $plog)"; exit 2; }
+  [[ -n "$d" ]] || { echo "FAIL: the probe node did not log 'Genesis UTXO state generated' within ${RIG_PROBE_TIMEOUT_S:-90} s (RIG_PROBE_TIMEOUT_S raises it; a loaded host needs more); minerRewardDelay=$REWARD_DELAY; last line of $plog: $(tail -1 "$plog" 2>/dev/null | cut -c1-160)"; exit 2; }
   # Only the probe's own dir goes: node data_$n is never touched here (the probe ran with SCRATCH_DATA_OVERRIDE),
   # so a persisted chain (PEERYARD_KEEP_DATA=1, devnet.sh) survives the probe on every start.
   GENESIS_DIGEST="$d"; rm -rf "$pdir"
@@ -709,7 +709,7 @@ stop_all(){ local n p end
     [[ $p == 0 ]] && break; sleep 1
   done
   for n in "${NODES[@]}"; do pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true; done
-  wire_stop
+  declare -F wire_stop >/dev/null && wire_stop   # not yet defined when an early exit (the probe failing) fires the trap
   wait 2>/dev/null; echo "[rig] all nodes stopped$([[ $p == 1 ]] && echo ' (some killed after the grace period)')"; }
 trap stop_all EXIT
 

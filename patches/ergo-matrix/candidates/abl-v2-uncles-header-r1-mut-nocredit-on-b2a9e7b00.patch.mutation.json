@@ -1,0 +1,12 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": {
+    "path": "patches/ergo-matrix/candidates/abl-v2-uncles-header-r1-on-b2a9e7b00.patch",
+    "sha256": "2918bd8b2a3be4de71259c638571d9e4517b01c32c9048f17ac8eac4f6dbf56a"
+  },
+  "file": "src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala",
+  "removed": "creditedUncles.put(ib.id, creditFor(ib, chain.init))",
+  "inserted": "creditedUncles.put(ib.id, creditFor(ib, chain.init).take(0))",
+  "occurrences": 1,
+  "mutant_sha256": "bb8616d71638bf15a939d37c9fe726b9ccbe891d0eb075176f70e954af5972b0"
+}

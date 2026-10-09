@@ -19,5 +19,12 @@
     "applies_from": "v6.0.0",
     "upstream": "",
     "workaround": "rig/lib/appkit-proxy.py rewrites the /info field to testnet; the devnet uses testnet address prefixes"
+  },
+  {
+    "id": "test-mnemonic-root-key",
+    "what": "ergo.wallet.testMnemonic builds the node wallet from the root key and its direct children (ErgoWalletSupport.buildProverFromMnemonic), not the EIP-3 path a restored or keystore wallet uses, so a node and an application sharing a mnemonic do not share addresses.",
+    "applies_from": "v6.0.0",
+    "upstream": "",
+    "workaround": "topology conf \"ergo.wallet.testMnemonic\": \"null\", then /wallet/restore over the API with the application's mnemonic (rig/examples/lithos-block.sh)"
   }
 ]

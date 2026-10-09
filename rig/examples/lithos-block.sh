@@ -1,14 +1,16 @@
 # lithos-block: the Lithos proof of concept end to end on a fresh devnet. One indexed mining node A at block version 4,
-# 20 s blocks, zero mempool fee floor, candidate regenerated on every mempool change. The hook: pays the client's key
-# from A's wallet; runs the client's deployer (tools.DeployProtocol) against A through the appkit proxy, which mints
-# the protocol tokens, creates the emission, config, FP-control and dictionary boxes and funds the client with ERG and
-# LIT; funds a due-job box; writes a client config that reads the deployment descriptor and joins the collateral queue
-# by itself; starts the client; then waits for a Lithos block: one whose first transaction spends a box holding the
-# deployment's collateral token, and which also carries the heartbeat successor. PASS = that block exists.
+# 20 s blocks, zero mempool fee floor, candidate regenerated on every mempool change, mining to the client's own key:
+# the node's wallet and the client's keystore are the same key set, as a Lithos miner's are. The hook runs the client's
+# deployer (tools.DeployProtocol) against A through the appkit proxy, which mints the protocol tokens and creates the
+# emission, config, FP-control and dictionary boxes from the key's matured rewards; funds a due-job box (the client's
+# reference contract, DueJob.ergo); writes a client config that reads the deployment descriptor and joins the collateral
+# queue by itself; starts the client; then waits for a Lithos block: one whose first transaction spends a box holding
+# the deployment's collateral token, and which also carries the heartbeat successor. PASS = that block exists.
 #
 # Needs: LITHOS_STAGE (the staged client distribution), LITHOS_KEYSTORE and LITHOS_PASS (the client's wallet keystore
-# JSON and its password), LITHOS_ADDRESS (that keystore's EIP-3 index 0 address, which gets funded), JAVA_HOME at 17.
-: "${LITHOS_STAGE:?the staged client distribution directory}"; : "${LITHOS_KEYSTORE:?the client keystore json}"; : "${LITHOS_PASS:?the keystore password}"
+# JSON and its password), LITHOS_MNEMONIC (the same wallet's mnemonic, which node A mines to: A is declared "defer"
+# and launched here with it), JAVA_HOME at 17. The mnemonic and password stay in the environment, never in a file here.
+: "${LITHOS_STAGE:?the staged client distribution directory}"; : "${LITHOS_KEYSTORE:?the client keystore json}"; : "${LITHOS_PASS:?the keystore password}"; : "${LITHOS_MNEMONIC:?the client wallet mnemonic}"
 JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"; HERE_LIB="$(cd "$(dirname "$RIG_HOOK")/../lib" && pwd)"
 PROXY_PORT=${PROXY_PORT:-9153}; WD="$SCRATCH/lithos"; mkdir -p "$WD"; CHECKS="$WD/checks.jsonl"; : > "$CHECKS"
 DESC="$WD/deployment.json"; CONF="$WD/client.conf"
@@ -27,25 +29,23 @@ boxes_at_tree(){ rest_post /blockchain/box/unspent/byErgoTree "\"$TREE\""; }
 block_txs(){ local hid; hid=$(header_at A "$1"); [[ -n "$hid" ]] && rest A "/blocks/$hid/transactions" | jq -c '.transactions'; }
 fail(){ echo "[lb] FAIL: $*"; rig_verdict=FAIL; }
 rig_verdict=FAIL
+# 0. node A, mining to the client's key: its wallet is the keystore's key set, so the client sees its own boxes
+CONF_OVR[A]="ergo.wallet.testMnemonic=\"$LITHOS_MNEMONIC\""
+launch A; wait_up A || { fail "A did not come up"; return 0 2>/dev/null || exit 0; }
+echo "[lb] A mines to $(address A)"
 # 1. block version 4 and a matured wallet on A
 end=$((SECONDS + 600)); bv=""
 while [[ $SECONDS -lt $end ]]; do bv=$(rest A /info | jq -r '.parameters.blockVersion // empty'); [[ "$bv" == 4 ]] && break; sleep 10; done
 [[ "$bv" == 4 ]] || { fail "block version 4 did not activate"; return 0 2>/dev/null || exit 0; }
 wait_balance A 400000000000 600 >/dev/null || { fail "A's wallet never reached 400 ERG"; return 0 2>/dev/null || exit 0; }
-# 2. the proxy, and the client's key funded from A
+# 2. the proxy
 companion_start proxy --in A -- python3 "$HERE_LIB/appkit-proxy.py" --listen "127.0.0.1:$PROXY_PORT" \
   --upstream "http://127.0.0.1:${REST[A]}" --record-checks "$CHECKS"; sleep 2
-: "${LITHOS_ADDRESS:?the address of the keystore EIP-3 index 0 key, e.g. 3Wxtnw...}"
-pay=$(wallet A /wallet/payment/send "[{\"address\":\"$LITHOS_ADDRESS\",\"value\":300000000000}]" | jq -r 'if type=="string" then . else (.detail // tojson) end')
-echo "[lb] paid 300 ERG to the client key: $pay"
-end=$((SECONDS + 180)); have=0
-while [[ $SECONDS -lt $end ]]; do have=$(rest_post /blockchain/box/unspent/byAddress "\"$LITHOS_ADDRESS\"" | jq -r '[.[]?.value] | add // 0'); [[ "$have" -ge 300000000000 ]] && break; sleep 10; done
-[[ "$have" -ge 300000000000 ]] || { fail "the client key never received its ERG ($have)"; return 0 2>/dev/null || exit 0; }
-# 3. the deployment: tokens, protocol boxes, descriptor, and the client funded with ERG and LIT for its own joins
+# 3. the deployment: tokens, protocol boxes, descriptor; the LIT not placed in the emission box stays with this key
 # the stage's launcher jar carries the classpath in its manifest, so `-main` cannot see the app; run the class directly
 ( cd "$WD" && in_a env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" java -cp "$LITHOS_STAGE/lib/*" tools.DeployProtocol \
     --node "http://127.0.0.1:$PROXY_PORT" --api-key hello --keystore "$LITHOS_KEYSTORE" --pass "$LITHOS_PASS" --network TESTNET \
-    --out "$DESC" --fund "$LITHOS_ADDRESS:20000000000:20000000000000" --timeout-seconds 1500 ) > "$WD/deploy.log" 2>&1
+    --out "$DESC" --timeout-seconds 1500 ) > "$WD/deploy.log" 2>&1
 rc=$?; tail -5 "$WD/deploy.log" | cut -c1-200
 [[ $rc == 0 && -s "$DESC" ]] || { fail "the deployer exited $rc (see $WD/deploy.log)"; return 0 2>/dev/null || exit 0; }
 COLLAT=$(jq -r .collatToken "$DESC"); LIT=$(jq -r .litId "$DESC"); echo "[lb] deployed: collateral token $COLLAT, LIT $LIT, at height $(jq -r .height "$DESC")"

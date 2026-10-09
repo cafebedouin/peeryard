@@ -41,6 +41,9 @@ Sections (each prints what it read, and "n/a: <why>" when its source is absent):
             otherwise) and how many; "Modifier ... is permanently invalid" verdicts of its synchronizer and the
             "Double application of a modifier" rejections (on the exception's continuation line) behind them;
             penalties it gave, by peer and kind; its last best full block and matrix-compat's same_chain against A.
+  CREDIT    Header-level uncles: of the input blocks seen on two or more flag-on nodes' best chains, the share whose
+            credited-uncle sets (txwatch "credited", read at first sighting per node) are identical; disagreements
+            counted, with an example.
   LOAD      Pool size (txwatch "pool" events), payment attempts and refusals (txload.jsonl), transactions per
             final-chain ordering block (txload_chain.jsonl), per input block (wire weak ids or txwatch), and the
             pool count each Matrix candidate was assembled from ("Assembling a block candidate ... from N
@@ -702,6 +705,31 @@ def nodes_section(logs, watch, eff, rig_log, start, end):
     return {"per_node": out, "final_tips_agree": len(tips) == 1 if tips else None}
 
 
+def credit_agreement(watch, start, end):
+    """Header-level uncles: do the flag-on nodes credit the same uncles to the same input block? For every input block
+    that txwatch saw on the best input chain of two or more nodes reporting "creditedUncles" (a list), whether the
+    credited sets are identical. Each node's set is read once, when txwatch first saw the block on that node's chain
+    (a later credit refresh is not seen), so a disagreement can be a difference in time, not in rule."""
+    sets = defaultdict(dict)   # input block -> node -> frozenset of credited uncles
+    for r in watch:
+        if r.get("ev") == "input" and isinstance(r.get("credited"), list) and start <= r["t_ms"] < end:
+            sets[r["id"]].setdefault(r["node"], frozenset(r["credited"]))
+    multi = {i: v for i, v in sets.items() if len(v) >= 2}
+    if not sets:
+        return "n/a: no node reports credited uncles"
+    dis = {i: v for i, v in multi.items() if len(set(v.values())) > 1}
+    with_credit = sum(1 for v in multi.values() if any(v.values()))
+    ex = None
+    if dis:
+        i = sorted(dis)[0]
+        ex = {"input_block": i, "credited": {n: sorted(u) for n, u in sorted(dis[i].items())}}
+    return {"blocks_on_2plus_nodes": len(multi), "of_which_with_any_credit": with_credit,
+            "identical": len(multi) - len(dis), "disagree": len(dis),
+            "identical_share": round((len(multi) - len(dis)) / len(multi), 4) if multi else None,
+            "identical_share_among_credited": (round((with_credit - len(dis)) / with_credit, 4) if with_credit else None),
+            "example": ex}
+
+
 def analyze(run, arg_from=None, arg_to=None, matrix_arg=None):
     msgs = read_jsonl(locate(run, "messages.jsonl"))
     watch = read_jsonl(locate(run, "txwatch.jsonl"))
@@ -755,6 +783,7 @@ def analyze(run, arg_from=None, arg_to=None, matrix_arg=None):
     rl = locate(run, "rig.log")
     rig_text = open_text(rl).read() if rl else ""
     res["nodes"] = nodes_section(logs, watch, eff, rig_text, start, end)
+    res["credit_agreement"] = credit_agreement(watch, start, end)
     return res
 
 
@@ -815,6 +844,14 @@ def print_report(res):
               f"{v['penalties_given'] or 0}; final full block {v['final_full'][0] if v['final_full'] else '-'}; "
               f"same chain as A {v['same_chain_as_A']}")
     print(f"NODE final best full blocks agree: {res['nodes']['final_tips_agree']}")
+    ca = res["credit_agreement"]
+    if isinstance(ca, str):
+        print(f"CREDIT agreement {ca}")
+    else:
+        print(f"CREDIT agreement: {ca['identical']}/{ca['blocks_on_2plus_nodes']} input blocks on two or more flag-on "
+              f"nodes' best chains have identical credited-uncle sets ({fmt(ca['identical_share'], 4)}; among the "
+              f"{ca['of_which_with_any_credit']} with any credit {fmt(ca['identical_share_among_credited'], 4)}); "
+              f"disagree {ca['disagree']}" + (f"; example {ca['example']}" if ca["example"] else ""))
     L = res["load"]
     print(f"LOAD payments {L['payments']['attempts_per_min']}/min accepted {L['payments']['accepted']} refused "
           f"{L['payments']['refused']} {L['payments']['refusal_reasons'] or ''}")

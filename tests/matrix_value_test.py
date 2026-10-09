@@ -114,6 +114,28 @@ class Nodes(unittest.TestCase):
                          (1, 1, [("100.64.0.2", "MisbehaviorPenalty")]))
 
 
+class Credit(unittest.TestCase):
+    def test_agreement_across_flag_on_nodes(self):
+        w = [{"ev": "input", "node": "A", "t_ms": 1, "id": "b1", "credited": ["u1"]},
+             {"ev": "input", "node": "B", "t_ms": 2, "id": "b1", "credited": ["u1"]},
+             {"ev": "input", "node": "A", "t_ms": 3, "id": "b2", "credited": ["u2"]},
+             {"ev": "input", "node": "B", "t_ms": 4, "id": "b2", "credited": []},
+             {"ev": "input", "node": "A", "t_ms": 5, "id": "b3", "credited": []},
+             {"ev": "input", "node": "B", "t_ms": 6, "id": "b3", "credited": []},
+             {"ev": "input", "node": "C", "t_ms": 6, "id": "b3", "credited": "absent"},   # flag off: not compared
+             {"ev": "input", "node": "A", "t_ms": 7, "id": "b4", "credited": ["u4"]},     # one node only
+             {"ev": "input", "node": "A", "t_ms": 8, "id": "b1", "credited": []}]         # later sighting ignored
+        ca = mv.credit_agreement(w, 0, 100)
+        self.assertEqual((ca["blocks_on_2plus_nodes"], ca["identical"], ca["disagree"], ca["of_which_with_any_credit"]),
+                         (3, 2, 1, 2))
+        self.assertEqual(ca["example"], {"input_block": "b2", "credited": {"A": ["u2"], "B": []}})
+        self.assertEqual(ca["identical_share_among_credited"], 0.5)
+
+    def test_no_flag_on_node(self):
+        self.assertTrue(mv.credit_agreement([{"ev": "input", "node": "C", "t_ms": 1, "id": "x", "credited": "absent"}],
+                                            0, 10).startswith("n/a"))
+
+
 class Wire(unittest.TestCase):
     def test_frame_bytes_and_groups(self):
         self.assertEqual(mv.frame_bytes({"len": 0}), 9)

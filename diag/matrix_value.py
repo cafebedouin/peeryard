@@ -44,6 +44,12 @@ Sections (each prints what it read, and "n/a: <why>" when its source is absent):
   CREDIT    Header-level uncles: of the input blocks seen on two or more flag-on nodes' best chains, the share whose
             credited-uncle sets (txwatch "credited", read at first sighting per node) are identical; disagreements
             counted, with an example.
+  BODYREQ   Wire: input-block body requests each node sent (transaction ids: RequestModifier of type -122, answered
+            by InputBlockTxIds 102; specific transactions: InputBlockTxsRequest 105, answered by InputBlockTxs 104),
+            answered (the addressed peer's reply for the same input block, after the request; latency) or not by the
+            capture's end, by the requested block's fate (best: on a final ordering block's winning path; sibling:
+            under it, off the path; other) and the requester's uncles flag (NODE); sibling-body requests; re-requests
+            of the same body to a different peer.
   LOAD      Pool size (txwatch "pool" events), payment attempts and refusals (txload.jsonl), transactions per
             final-chain ordering block (txload_chain.jsonl), per input block (wire weak ids or txwatch), and the
             pool count each Matrix candidate was assembled from ("Assembling a block candidate ... from N
@@ -705,6 +711,95 @@ def nodes_section(logs, watch, eff, rig_log, start, end):
     return {"per_node": out, "final_tips_agree": len(tips) == 1 if tips else None}
 
 
+def block_fates(ib, final_ords):
+    """input block id -> "best" (on the winning path, the deepest chain, under a final-chain ordering block),
+    "sibling" (under such an ordering block, not on that path); ids absent here are "other"."""
+    by_ord = defaultdict(list)
+    for i, b in ib.items():
+        by_ord[b["ord"]].append(i)
+    depth = {}
+
+    def d(i):
+        if i not in depth:
+            depth[i] = 0
+            p = ib[i]["prev"]
+            depth[i] = 1 + (d(p) if p in ib and p != i else 0)
+        return depth[i]
+    fate = {}
+    for o, ids in by_ord.items():
+        if o not in final_ords:
+            continue
+        top = max(d(i) for i in ids)
+        cur = sorted((ib[i]["t_ms"], i) for i in ids if d(i) == top)[0][1]
+        path = set()
+        while cur in ib and cur not in path:
+            path.add(cur)
+            cur = ib[cur]["prev"]
+        for i in ids:
+            fate[i] = "best" if i in path else "sibling"
+    return fate
+
+
+# input-block body requests on the wire: request (code, type) -> answer code
+BODY_REQUESTS = {"txids": ((22, -122), 102),      # RequestModifier of InputBlockTransactionIds -> InputBlockTxIds
+                 "txs": ((105, None), 104)}       # InputBlockTxsRequest (weak ids) -> InputBlockTxs
+
+
+def body_requests(frames, ib, final_ords, flag, end):
+    """Per requesting node: the input-block body requests it sent on the wire (transaction ids: RequestModifier of type
+    -122; specific transactions: InputBlockTxsRequest 105), each answered within the run when the addressed peer later
+    sent the matching reply (InputBlockTxIds 102 / InputBlockTxs 104) for the same input block, with the latency, or
+    unanswered by the capture's end; split by the requested block's fate and by the requester's uncles flag
+    (flag: node -> "on" / "off" / "?"); sibling-body requests, and re-requests of the same body to a different peer."""
+    fate = block_fates(ib, final_ords)
+    answers = defaultdict(list)   # (answer code, from, to, input block) -> [t_ms]
+    for r in frames:
+        if r.get("code") in (102, 104) and r.get("input_block_id"):
+            answers[(r["code"], r.get("from"), r.get("to"), r["input_block_id"])].append(r["t_ms"])
+    for v in answers.values():
+        v.sort()
+    reqs = []
+    for r in frames:
+        for kind, ((code, tid), ans) in BODY_REQUESTS.items():
+            if r.get("code") != code or (tid is not None and r.get("type_id") != tid):
+                continue
+            ids = r.get("modifier_ids") if code == 22 else [r.get("input_block_id")]
+            for x in ids or []:
+                if x:
+                    reqs.append((r["t_ms"], kind, r.get("from"), r.get("to"), x, ans))
+    reqs.sort()
+    out = {}
+    asked = defaultdict(set)      # (requester, kind, block) -> peers asked so far
+    for t, kind, n, peer, x, ans in reqs:
+        o = out.setdefault(n, {"flag": flag.get(n, "?"), "requests": Counter(), "answered": Counter(),
+                               "unanswered": Counter(), "lat": defaultdict(list), "sibling_body_requests": 0,
+                               "re_requests_other_peer": 0, "unanswered_examples": []})
+        fx = fate.get(x, "other")
+        key = f"{kind}/{fx}"
+        o["requests"][key] += 1
+        if fx == "sibling":
+            o["sibling_body_requests"] += 1
+        prev = asked[(n, kind, x)]
+        if prev and peer not in prev:
+            o["re_requests_other_peer"] += 1
+        prev.add(peer)
+        got = [ta for ta in answers.get((ans, peer, n, x), []) if ta >= t]
+        if got:
+            o["answered"][key] += 1
+            o["lat"][kind].append(got[0] - t)
+        else:
+            o["unanswered"][key] += 1
+            if len(o["unanswered_examples"]) < 3:
+                o["unanswered_examples"].append({"t_ms": t, "kind": kind, "to": peer, "block": x[:16], "fate": fx,
+                                                 "s_before_end": round((end - t) / 1000, 1) if end else None})
+    for o in out.values():
+        o["latency_ms"] = {k: {"n": len(v), "p50": pct(v, .5), "p90": pct(v, .9), "max": max(v)} for k, v in o["lat"].items()}
+        del o["lat"]
+        for k in ("requests", "answered", "unanswered"):
+            o[k] = dict(o[k])
+    return out
+
+
 def credit_agreement(watch, start, end):
     """Header-level uncles: do the flag-on nodes credit the same uncles to the same input block? For every input block
     that txwatch saw on the best input chain of two or more nodes reporting "creditedUncles" (a list), whether the
@@ -784,6 +879,14 @@ def analyze(run, arg_from=None, arg_to=None, matrix_arg=None):
     rig_text = open_text(rl).read() if rl else ""
     res["nodes"] = nodes_section(logs, watch, eff, rig_text, start, end)
     res["credit_agreement"] = credit_agreement(watch, start, end)
+    if frames:
+        pn = res["nodes"]["per_node"]
+        flag = {n: ("off" if str(v["inputBlockUncles_conf"]).lower() == "false" or v["credited_field"] == "absent" else
+                    "on" if v["credited_field"] in ("reported", "mixed") else "?") for n, v in pn.items()}
+        cap_end = max(r["t_ms"] for r in frames)
+        res["body_requests"] = body_requests(frames, ib, final_ords, flag, cap_end)
+    else:
+        res["body_requests"] = "n/a: no messages.jsonl (run with the wire on)"
     return res
 
 
@@ -844,6 +947,16 @@ def print_report(res):
               f"{v['penalties_given'] or 0}; final full block {v['final_full'][0] if v['final_full'] else '-'}; "
               f"same chain as A {v['same_chain_as_A']}")
     print(f"NODE final best full blocks agree: {res['nodes']['final_tips_agree']}")
+    br = res["body_requests"]
+    if isinstance(br, str):
+        print(f"BODYREQ {br}")
+    else:
+        for n, v in sorted(br.items()):
+            lat = " ".join(f"{k} p50/p90/max {x['p50']}/{x['p90']}/{x['max']} ms (n={x['n']})" for k, x in v["latency_ms"].items())
+            print(f"BODYREQ {n} (flag {v['flag']}): sent {v['requests']}; answered {v['answered'] or 0}; unanswered "
+                  f"{v['unanswered'] or 0}; sibling-body requests {v['sibling_body_requests']}; re-requests to another "
+                  f"peer {v['re_requests_other_peer']}; latency {lat or '-'}"
+                  + (f"; unanswered e.g. {v['unanswered_examples'][0]}" if v["unanswered_examples"] else ""))
     ca = res["credit_agreement"]
     if isinstance(ca, str):
         print(f"CREDIT agreement {ca}")

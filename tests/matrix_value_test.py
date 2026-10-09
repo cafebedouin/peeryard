@@ -136,6 +136,32 @@ class Credit(unittest.TestCase):
                                             0, 10).startswith("n/a"))
 
 
+class BodyRequests(unittest.TestCase):
+    def test_answered_unanswered_fate_flag_and_rerequest(self):
+        ib, s = tree(True)                      # a1 <- a2 <- a3 (best path), s = sibling of a2, b1 under another O
+        a2 = "a2" * 32
+        b1 = "b1" * 32
+        F = [  # C (flag off) asks A for the sibling's tx ids: no answer; then asks B, which answers 40 ms later
+            {"code": 22, "type_id": -122, "from": "C", "to": "A", "t_ms": 100, "modifier_ids": [s]},
+            {"code": 22, "type_id": -122, "from": "C", "to": "B", "t_ms": 200, "modifier_ids": [s]},
+            {"code": 102, "from": "B", "to": "C", "t_ms": 240, "input_block_id": s},
+            # A (flag on) asks C for specific transactions of a best-chain block; C answers 10 ms later
+            {"code": 105, "from": "A", "to": "C", "t_ms": 300, "input_block_id": a2},
+            {"code": 104, "from": "C", "to": "A", "t_ms": 310, "input_block_id": a2},
+            # an answer that precedes its request does not count; b1's ordering block is not final -> "other"
+            {"code": 104, "from": "A", "to": "B", "t_ms": 390, "input_block_id": b1},
+            {"code": 105, "from": "B", "to": "A", "t_ms": 400, "input_block_id": b1}]
+        out = mv.body_requests(F, ib, {O}, {"A": "on", "B": "on", "C": "off"}, 1000)
+        c, a, b = out["C"], out["A"], out["B"]
+        self.assertEqual((c["flag"], c["requests"], c["answered"], c["unanswered"]),
+                         ("off", {"txids/sibling": 2}, {"txids/sibling": 1}, {"txids/sibling": 1}))
+        self.assertEqual((c["sibling_body_requests"], c["re_requests_other_peer"]), (2, 1))
+        self.assertEqual(c["latency_ms"]["txids"], {"n": 1, "p50": 40, "p90": 40, "max": 40})
+        self.assertEqual((a["requests"], a["answered"], a["latency_ms"]["txs"]["p50"]), ({"txs/best": 1}, {"txs/best": 1}, 10))
+        self.assertEqual((b["requests"], b["unanswered"]), ({"txs/other": 1}, {"txs/other": 1}))
+        self.assertEqual(c["unanswered_examples"][0]["to"], "A")
+
+
 class Wire(unittest.TestCase):
     def test_frame_bytes_and_groups(self):
         self.assertEqual(mv.frame_bytes({"len": 0}), 9)

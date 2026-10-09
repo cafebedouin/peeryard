@@ -351,10 +351,11 @@ def requests_log(logs, start, end):
         # a rebuilt block whose transactions section also arrived from a peer: a type-102 delivery within 1 s of the
         # rebuild line (time proximity, not an id match: the log names neither the section's block nor its id)
         gt = sorted(t for t, _ in L["got102"])
-        near, offs = 0, []
+        near, offs, done = 0, [], set()
         for t, h in L["rebuilt"]:
-            if not (start <= t < end and h in recv):
+            if not (start <= t < end and h in recv) or h in done:
                 continue
+            done.add(h)
             j = bisect_left(gt, t - 1000)
             if j < len(gt) and gt[j] <= t + 1000:
                 near += 1

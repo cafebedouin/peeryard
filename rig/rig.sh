@@ -96,6 +96,8 @@ if [[ "${RIG_INNER:-0}" != "1" ]]; then
   JAR_XP='def xp: if type == "string" then gsub("\\$\\{(?<v>[A-Za-z_][A-Za-z0-9_]*)\\}"; ($ENV[.v] // "")) else . end;'
   # A "${VAR}" that expands to nothing is an error, never a silent fall-back to the default jar.
   raw_top="$(jq -r '.jar // ""' "$CFG")"
+  # No PEERYARD_JAR and no jar in the topology: the release rig/node-release.sh last fetched, if any
+  [[ -z "${PEERYARD_JAR:-}" && -L "$HOME/.peeryard/jars/default.jar" ]] && PEERYARD_JAR="$(readlink "$HOME/.peeryard/jars/default.jar")"
   DEF_JAR="$(jq -r --arg d "${PEERYARD_JAR:-}" "$JAR_XP"' (.jar // $d) | xp' "$CFG")"
   [[ -n "$raw_top" && -z "$DEF_JAR" ]] && { echo "topology \"jar\" is '$raw_top' but expands to nothing (unset variable?)" >&2; exit 2; }
   while IFS=$'\t' read -r n kind raw j rawb b; do

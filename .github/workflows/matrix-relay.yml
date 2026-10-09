@@ -3,7 +3,8 @@
 # them). Two builds of the weak-blocks line: the base commit peeryard carries (patches/ergo-matrix/patches.json), and the
 # base plus patches/ergo-matrix/002-input-block-relay.patch alone (ergoplatform/ergo#2566). Each is run on the
 # matrix-latency example with the links at 150 +- 100 ms and at 0 ms, with the wire observer on; diag/matrix_prop.py
-# pools the input-block reach at C, the hop latency and the duplicates. Runs by hand.
+# pools the input-block reach at C, the hop latency and the duplicates. Runs by hand. A run whose rig exits 2 (setup
+# error) or leaves no node log fails its job and the pool job (ci/rig-setup-check.sh).
 name: peeryard matrix relay
 on:
   workflow_dispatch:
@@ -79,11 +80,16 @@ jobs:
           if [ "${{ matrix.delay }}" = d0 ]; then jq '.links |= map(.delay_ms = 0 | .jitter_ms = 0)' "$topo" > d0.json; topo=d0.json; fi
           run="$PWD/runs/${{ matrix.build }}-${{ matrix.delay }}-${{ matrix.repeat }}"; mkdir -p "$run"
           PEERYARD_WIRE=1 PEERYARD_DURATION=${{ inputs.duration || '180' }} PEERYARD_MATRIX_JAR="$PWD/jars/${{ matrix.build }}.jar" \
-            SCRATCH="$run/scratch" bash rig/rig.sh "$topo" rig/examples/matrix-latency.sh > "$run/rig.log" 2>&1 || echo "rig exit $?"
+            SCRATCH="$run/scratch" bash rig/rig.sh "$topo" rig/examples/matrix-latency.sh > "$run/rig.log" 2>&1 || rc=$?
+          echo "rig exit ${rc:-0}"
           cp "$run/scratch/out/messages.jsonl" "$run/" 2>/dev/null || echo "no messages.jsonl"
           # the capture's health (counts only, a few KB), never the pcaps: diag/README "Public and private"
           mkdir -p "$run/wire"; cp "$run"/scratch/out/wire/{*.stats.json,summary.json,capture.log} "$run/wire/" 2>/dev/null || true
-          cp host.txt "$run/"; grep -E '\[rig\] WIRE|=== MATRIX-LATENCY' "$run/rig.log" | tee -a "$GITHUB_STEP_SUMMARY"
+          cp host.txt "$run/"
+          # a setup error (rig exit 2) or a run without any node log fails the job (ci/rig-setup-check.sh); the scratch
+          # (pcaps) is removed first, so the uploaded artifact never carries it
+          bash ci/rig-setup-check.sh "${rc:-0}" "$run" || { rm -rf "$run/scratch"; exit 1; }
+          grep -E '\[rig\] WIRE|=== MATRIX-LATENCY' "$run/rig.log" | tee -a "$GITHUB_STEP_SUMMARY"
           rm -rf "$run/scratch"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -99,7 +105,13 @@ jobs:
         with: { path: art, pattern: 'run-*', merge-multiple: true }
       - name: Pooled reach, hop latency and duplicates
         run: |
-          { echo '```'; python3 diag/matrix_prop.py art/*/ ; echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
+          # pool only the runs that ran (a setup-error run has no messages.jsonl, which matrix_prop.py cannot read)
+          ran=(); for d in art/*/; do [ -f "$d/SETUP-ERROR" ] || ran+=("$d"); done
+          { echo '```'; if [ "${#ran[@]}" -gt 0 ]; then python3 diag/matrix_prop.py "${ran[@]}"; fi
+            # runs whose rig never ran the experiment (ci/rig-setup-check.sh): named here, and the pool job fails
+            for f in art/*/SETUP-ERROR; do [ -f "$f" ] && echo "SETUP ERROR, not a verdict: $(basename "$(dirname "$f")"): $(head -1 "$f")"; done
+            echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
           cat pooled.txt
+          ! grep -q '^SETUP ERROR' pooled.txt
       - uses: actions/upload-artifact@v4
         with: { name: matrix-relay-pooled, path: pooled.txt, retention-days: 90 }

@@ -43,6 +43,13 @@ wait_balance A 400000000000 600 >/dev/null || { fail "A's wallet never reached 4
 # 2. the proxy
 companion_start proxy --in A -- python3 "$HERE_LIB/appkit-proxy.py" --listen "127.0.0.1:$PROXY_PORT" \
   --upstream "http://127.0.0.1:${REST[A]}" --record-checks "$CHECKS"; sleep 2
+# 2b. a plain box for the key: mining rewards sit under the reward script with this chain's delay, which the client's
+# wallet code reads with the mainnet delay, so neither the deployer nor the client can spend them directly
+pay=$(wallet A /wallet/payment/send "[{\"address\":\"$(address A)\",\"value\":150000000000}]" | jq -r 'if type=="string" then . else (.detail // tojson) end')
+echo "[lb] 150 ERG paid to a plain box of the key: $pay"
+end=$((SECONDS + 300)); have=0
+while [[ $SECONDS -lt $end ]]; do have=$(rest_post /blockchain/box/unspent/byAddress "\"$(address A)\"" | jq -r '[.[]?.value] | add // 0'); [[ "$have" -ge 150000000000 ]] && break; sleep 10; done
+[[ "$have" -ge 150000000000 ]] || { fail "the plain box never confirmed ($have)"; return 0 2>/dev/null || exit 0; }
 # 3. the deployment: tokens, protocol boxes, descriptor; the LIT not placed in the emission box stays with this key
 # the stage's launcher jar carries the classpath in its manifest, so `-main` cannot see the app; run the class directly
 ( cd "$WD" && in_a env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" java -cp "$LITHOS_STAGE/lib/*" tools.DeployProtocol \

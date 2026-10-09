@@ -22,7 +22,8 @@ ap.add_argument("--record-checks", default=""); ap.add_argument("--mirror", acti
 ap.add_argument("--log-mining", action="store_true", help="log every /mining/* request with the transactions it carries")
 A = ap.parse_args(); UP = A.upstream.rstrip("/")
 
-def log(line): sys.stderr.write(line + "\n"); sys.stderr.flush()
+import time
+def log(line): sys.stderr.write(time.strftime("%H:%M:%S") + " " + line + "\n"); sys.stderr.flush()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -50,8 +51,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             n = ""
             if body:
                 try:
-                    j = json.loads(body); n = " txs=%d" % (len(j) if isinstance(j, list) else 0)
-                    if isinstance(j, list): n += " [" + ",".join((t.get("id", "?")[:8] if isinstance(t, dict) else "?") for t in j) + "]"
+                    j = json.loads(body)
+                    txs = j if isinstance(j, list) else next((v for k, v in j.items() if isinstance(v, list)), []) if isinstance(j, dict) else []
+                    n = " txs=%d [%s]" % (len(txs), ",".join((t.get("id", "?")[:8] if isinstance(t, dict) else "?") for t in txs))
                 except Exception: n = " body=%dB" % len(body)
             log("mining %s %s -> %d%s" % (self.command, path, status, n))
         if path == "/info" and status == 200:

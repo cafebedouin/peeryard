@@ -8,6 +8,7 @@
 #   appkit-proxy.py --listen 127.0.0.1:9153 --upstream http://127.0.0.1:9052 [--record-checks FILE] [--mirror]
 #
 #   --record-checks FILE  append every body POSTed to /transactions/check as one JSON line (what the client built)
+#   --log-mining          log every /mining/* request (candidate requests and the transactions they carry)
 #   --mirror              a transaction the node's check accepts is POSTed to /transactions at once, inside the same
 #                         height, so the node's own miner can mine what a block-building client would have carried
 #                         in its own candidate (the node must run with ergo.node.minimalFeeAmount = 0 for a fee-less one)
@@ -18,6 +19,7 @@ import argparse, http.server, json, sys, urllib.request, urllib.error
 ap = argparse.ArgumentParser()
 ap.add_argument("--listen", default="127.0.0.1:9153"); ap.add_argument("--upstream", default="http://127.0.0.1:9052")
 ap.add_argument("--record-checks", default=""); ap.add_argument("--mirror", action="store_true")
+ap.add_argument("--log-mining", action="store_true", help="log every /mining/* request with the transactions it carries")
 A = ap.parse_args(); UP = A.upstream.rstrip("/")
 
 def log(line): sys.stderr.write(line + "\n"); sys.stderr.flush()
@@ -44,6 +46,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     log("mirrored to mempool: " + r2.read().decode()[:80])
                 except urllib.error.HTTPError as e:
                     log("mirror refused: " + e.read().decode()[:200])
+        if A.log_mining and path.startswith("/mining/"):
+            n = ""
+            if body:
+                try:
+                    j = json.loads(body); n = " txs=%d" % (len(j) if isinstance(j, list) else 0)
+                    if isinstance(j, list): n += " [" + ",".join((t.get("id", "?")[:8] if isinstance(t, dict) else "?") for t in j) + "]"
+                except Exception: n = " body=%dB" % len(body)
+            log("mining %s %s -> %d%s" % (self.command, path, status, n))
         if path == "/info" and status == 200:
             try:
                 j = json.loads(data)

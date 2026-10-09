@@ -7,6 +7,7 @@
 # queue by itself; starts the client; then waits for a Lithos block: one whose first transaction spends a box holding
 # the deployment's collateral token, and which also carries the heartbeat successor. PASS = that block exists.
 #
+# Node A: external-miner mode, mining key = the client's key, mined by rig/lib/devnet-miner.sh (needs javac at 17).
 # Needs: LITHOS_STAGE (the staged client distribution), LITHOS_KEYSTORE and LITHOS_PASS (the client's wallet keystore
 # JSON and its password), LITHOS_MNEMONIC (the same wallet's mnemonic, restored into node A's wallet so A mines to it),
 # LITHOS_PUBKEY (that wallet's EIP-3 index 0 raw public key), JAVA_HOME at 17. Secrets stay in the environment.
@@ -41,6 +42,9 @@ launch A; wait_up A || { fail "A did not come up"; return 0 2>/dev/null || exit 
 r=$(wallet A /wallet/restore "{\"pass\":\"$LITHOS_PASS\",\"mnemonic\":\"$LITHOS_MNEMONIC\",\"usePre1627KeyDerivation\":false}")
 wallet A /wallet/unlock "{\"pass\":\"$LITHOS_PASS\"}" >/dev/null
 echo "[lb] A's wallet restored ($r); wallet $(address A); miner key $(wallet A /mining/rewardPublicKey | jq -r .rewardPubkey)"
+# A runs in external-miner mode (the internal miner would use the wallet's first secret instead of miningPubKeyHex);
+# the rig's CPU miner solves whatever candidate A holds, the client's package included.
+companion_start miner --in A -- "$HERE_LIB/devnet-miner.sh" "${NODE_JAR[A]}" --node "http://127.0.0.1:${REST[A]}" --api-key hello
 # 1. block version 4 and a matured wallet on A
 end=$((SECONDS + 600)); bv=""
 while [[ $SECONDS -lt $end ]]; do bv=$(rest A /info | jq -r '.parameters.blockVersion // empty'); [[ "$bv" == 4 ]] && break; sleep 10; done
@@ -105,4 +109,4 @@ done
 grep -E "Upkeep|genesis|Join|Activate|collateral" "$CLIENT_LOG" | grep -v "^\s*at " | tail -12 | cut -c1-200
 if [[ -n "$found" ]]; then echo "[lb] PASS: Lithos block $found carries the client's genesis and its upkeep beat"; rig_verdict=PASS
 else fail "no Lithos block carrying a beat within 30 minutes"; fi
-companion_stop client; companion_stop proxy
+companion_stop client; companion_stop proxy; companion_stop miner

@@ -13,7 +13,8 @@
       "conf": {
         "ergo.node.extraIndex": "true",
         "ergo.node.minimalFeeAmount": "0",
-        "ergo.wallet.testMnemonic": "null"
+        "ergo.wallet.testMnemonic": "null",
+        "ergo.node.useExternalMiner": "true"
       },
       "defer": true
     }

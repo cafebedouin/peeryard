@@ -5,7 +5,7 @@ runs in its own network namespace, and every link is a veth pair with per-direct
 hook script that drives the experiment. No root, no Docker.
 
 ```
-PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh
+bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh   # jar: rig/node-release.sh fetch, or PEERYARD_JAR=
 ```
 
 ## Requirements
@@ -397,3 +397,30 @@ node that follows a live miner is always a block or two behind, which is lag, no
 **In a container:** the rig needs unprivileged user namespaces, which Docker's default seccomp and AppArmor
 profiles block. Run the container with `--security-opt seccomp=unconfined --security-opt apparmor=unconfined`
 (no `--privileged` and no root inside are needed); the host must have `sch_netem` loaded.
+
+## Applications under test (first: the Lithos client)
+
+The rig was built for nodes; `rig/examples/lithos-upkeep.{json,sh}` is the first application run through it, and these
+are the pieces it needed, all reusable:
+
+- **Companion processes** (`companion_start <name> [--in <node>] -- <cmd...>`, `companion_stop`, `companion_log`): a
+  long-lived process started beside a node, inside that node's network namespace with `--in` so `127.0.0.1` is the
+  node's loopback, logged under the run's `out/`, stopped with the run. `stop_all` stops any left behind.
+- **`rig/lib/appkit-proxy.py`**: clients built on ergo-appkit refuse a node whose `/info` says `devnet`; the proxy
+  rewrites that one field. `--record-checks FILE` keeps every transaction the client puts through
+  `/transactions/check`; `--mirror` sends an accepted one straight to the mempool inside the same height.
+- **Node settings an application needs**, as topology `conf` entries: `ergo.node.extraIndex` (box lookups by script
+  and token), `ergo.node.minimalFeeAmount = 0` (fee-less transactions reach the mempool), and
+  `ergo.node.blockCandidateGenerationInterval = 1ms`, because the node regenerates a cached candidate on a mempool
+  change only once the candidate is older than that interval (default 60 s), so on a devnet a transaction valid for
+  exactly one height never enters that height's candidate otherwise.
+- **A slower block interval** (`"blockInterval": "20s"`) for anything that builds one transaction per height; the
+  2-second default is for node stress. A young devnet still mines faster until its difficulty catches up.
+- **`rig/devnet.sh post`** for wallet and mining endpoints from the host, with the rig's api key.
+- **`rig/node-release.sh`**: the latest stable node release, fetched with its sha256 as `~/.peeryard/jars/default.jar`
+  (the jar `rig.sh` uses when none is given), and `rig/patches/manifest.json`, one entry per thing the rig must do
+  differently because of the node version, with the upstream PR or issue that would clear it; `patches` reports
+  which have cleared. Current default: 6.0.7.
+
+Caveat for rent work: the 6.0.7 storage-rent distinct-outputs rule is gated by a mainnet height constant
+(`StorageRentDistinctOutputsActivationHeight = 1885000`) on every network, so a devnet never activates it.

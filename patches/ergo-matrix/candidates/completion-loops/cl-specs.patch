@@ -1,0 +1,135 @@
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
+index d103fad78..6f0d6ad04 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlockProcessorSpecification.scala
+@@ -371,6 +371,130 @@ class InputBlockProcessorSpecification extends ErgoCorePropertyTest with ErgoCom
+     }
+   }
+ 
++  // Cost recorded for input block `id` by every fork that has processed it
++  private def recordedCosts(h: ErgoHistory, id: scorex.util.ModifierId): Seq[Long] = {
++    h.inputBlocksTree().get.forks.flatMap { f =>
++      val i = f.depthOf(id)
++      if (i >= 0 && i <= f.processedIndex) Some(f.processedBlocks(i)) else None
++    }
++  }
++
++  property("shared-root completion records the block's cost in every waiting fork") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      val txs = validTransactionsFromBoxHolder(BoxHolder(Seq(eb1)), new RandomWrapper(Some(1)), 201)._1
++      txs should not be empty
++      val root = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)
++      val siblings = (0 until 2).map { _ =>
++        InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), parentOnly(idToBytes(root.id)), None)
++      }
++      (root +: siblings).foreach(h.applyInputBlock(_) shouldBe None)
++      h.inputBlocksTree().get.forks.size shouldBe 2
++
++      h.applyInputBlockTransactions(root.id, txs, us) shouldBe (Seq(root.id) -> Seq.empty)
++      val costs = recordedCosts(h, root.id)
++      costs.size shouldBe 2
++      costs.head should be > 0L
++      costs.distinct shouldBe Seq(costs.head)
++    }
++  }
++
++  property("fork-switch completion records the block's cost in every waiting fork") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      val txs = validTransactionsFromBoxHolder(BoxHolder(Seq(eb1)), new RandomWrapper(Some(1)), 201)._1
++      txs should not be empty
++      val root = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)
++      def childOf(parent: InputBlockAnnouncement): InputBlockAnnouncement =
++        InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), parentOnly(idToBytes(parent.id)), None)
++      val oldTip = childOf(root)
++      val shared = childOf(root)
++      val newTip = childOf(shared)
++      val sibling = childOf(shared)
++      Seq(root, oldTip, shared, newTip, sibling).foreach(h.applyInputBlock(_) shouldBe None)
++      h.inputBlocksTree().get.forks.map(_.chain) shouldBe Seq(Seq(root.id, oldTip.id),
++        Seq(root.id, shared.id, newTip.id), Seq(root.id, shared.id, sibling.id))
++
++      h.applyInputBlockTransactions(root.id, Seq.empty, us) shouldBe (Seq(root.id) -> Seq.empty)
++      h.applyInputBlockTransactions(oldTip.id, Seq.empty, us) shouldBe (Seq(oldTip.id) -> Seq.empty)
++      h.applyInputBlockTransactions(shared.id, txs, us) shouldBe (Seq.empty -> Seq.empty)
++      h.applyInputBlockTransactions(newTip.id, Seq.empty, us) shouldBe
++        (Seq(shared.id, newTip.id) -> Seq(oldTip.id))
++
++      val costs = recordedCosts(h, shared.id)
++      costs.size shouldBe 2
++      costs.head should be > 0L
++      costs.distinct shouldBe Seq(costs.head)
++    }
++  }
++
++  // Two forks share root -> s1 -> s2 and then diverge (a vs b). The shared blocks' transactions arrive
++  // child-first, so the root's arrival makes applicationStep process root, s1 and s2 in one call.
++  private def sharedPrefixForks(h: ErgoHistory, us: UtxoState, orderingParent: Header) = {
++    def ibOf(parent: Option[InputBlockAnnouncement]): InputBlockAnnouncement =
++      InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent),
++        parent.map(p => parentOnly(idToBytes(p.id))).getOrElse(InputBlockFields.empty), None)
++    val root = ibOf(None)
++    val s1 = ibOf(Some(root))
++    val s2 = ibOf(Some(s1))
++    val a = ibOf(Some(s2))
++    val b = ibOf(Some(s2))
++    Seq(root, s1, s2, a, b).foreach(h.applyInputBlock(_) shouldBe None)
++    h.inputBlocksTree().get.forks.map(_.chain) shouldBe
++      Seq(Seq(root.id, s1.id, s2.id, a.id), Seq(root.id, s1.id, s2.id, b.id))
++
++    h.applyInputBlockTransactions(s1.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++    h.applyInputBlockTransactions(s2.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++    h.applyInputBlockTransactions(root.id, Seq.empty, us) shouldBe (Seq(root.id, s1.id, s2.id) -> Seq.empty)
++    (root, s1, s2, a, b, ibOf _)
++  }
++
++  property("completion chain propagates every processed shared block to every waiting fork") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      sharedPrefixForks(h, us, orderingParent)
++      // both forks contain root, s1 and s2, all three processed
++      h.inputBlocksTree().get.forks.map(_.processedIndex) shouldBe Seq(2, 2)
++    }
++  }
++
++  property("switching to a fork that shared a multi-block completion rolls back only the divergent blocks") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      val (root, s1, s2, a, b, ibOf) = sharedPrefixForks(h, us, orderingParent)
++      h.applyInputBlockTransactions(a.id, Seq.empty, us) shouldBe (Seq(a.id) -> Seq.empty)
++      val b2 = ibOf(Some(b))
++      h.applyInputBlock(b2) shouldBe None
++      h.applyInputBlockTransactions(b.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++      // b's fork is now longer: switch from a to b. Only a is off the new best chain.
++      h.applyInputBlockTransactions(b2.id, Seq.empty, us) shouldBe (Seq(b.id, b2.id) -> Seq(a.id))
++      h.bestInputBlocksChain() shouldBe Seq(b2.id, b.id, s2.id, s1.id, root.id)
++    }
++  }
++
++  property("fork-switch completion propagates every processed shared block to every waiting fork") {
++    withInputBlockFixture { (us, h, orderingParent, _) =>
++      def ibOf(parent: InputBlockAnnouncement): InputBlockAnnouncement =
++        InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), parentOnly(idToBytes(parent.id)), None)
++      val root = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)
++      val x = ibOf(root)
++      Seq(root, x).foreach(h.applyInputBlock(_) shouldBe None)
++      h.applyInputBlockTransactions(root.id, Seq.empty, us) shouldBe (Seq(root.id) -> Seq.empty)
++      h.applyInputBlockTransactions(x.id, Seq.empty, us) shouldBe (Seq(x.id) -> Seq.empty)
++
++      val s1 = ibOf(root)
++      val s2 = ibOf(s1)
++      val c = ibOf(s2)
++      val c2 = ibOf(c)
++      val d = ibOf(s2)
++      Seq(s1, s2, c, c2, d).foreach(h.applyInputBlock(_) shouldBe None)
++      h.inputBlocksTree().get.forks.map(_.chain) shouldBe
++        Seq(Seq(root.id, x.id), Seq(root.id, s1.id, s2.id, c.id, c2.id), Seq(root.id, s1.id, s2.id, d.id))
++
++      h.applyInputBlockTransactions(c.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++      h.applyInputBlockTransactions(s1.id, Seq.empty, us) shouldBe (Seq.empty -> Seq.empty)
++      // switch to the longer fork: applicationStep processes s1, s2 and c; d's fork shares s1 and s2
++      h.applyInputBlockTransactions(s2.id, Seq.empty, us) shouldBe (Seq(s1.id, s2.id, c.id) -> Seq(x.id))
++      h.inputBlocksTree().get.forks.map(_.processedIndex) shouldBe Seq(1, 3, 2)
++    }
++  }
++
+   property("create separate sibling forks for descendants of the same parent") {
+     withInputBlockFixture { (us, h, orderingParent, _) =>
+     val rootIb = InputBlockAnnouncement(1, nextInputHeader(h, us, orderingParent), InputBlockFields.empty, None)

@@ -1,0 +1,12 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": {
+    "path": "patches/ergo-matrix/candidates/abl-v2-uncles-header-r4-on-b2a9e7b00.patch",
+    "sha256": "2e7c2f65e9d46922e06b6362ae62b1547317f2ad75e4fee71ba7377da215341a"
+  },
+  "file": "src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala",
+  "removed": "        if (repeats) {",
+  "inserted": "        if (repeats && false) {",
+  "occurrences": 1,
+  "mutant_sha256": "c9d418a2c6bc72a570dbc9eb591e94832a0b6552d36d426e2955c2ac3e1edd36"
+}

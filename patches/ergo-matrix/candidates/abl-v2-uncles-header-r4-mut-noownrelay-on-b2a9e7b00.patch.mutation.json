@@ -1,0 +1,12 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": {
+    "path": "patches/ergo-matrix/candidates/abl-v2-uncles-header-r4-on-b2a9e7b00.patch",
+    "sha256": "2e7c2f65e9d46922e06b6362ae62b1547317f2ad75e4fee71ba7377da215341a"
+  },
+  "file": "src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala",
+  "removed": "      if (settings.nodeSettings.inputBlockUncles && !sibling && history().getInputBlock(subblockInfo.id).isDefined &&",
+  "inserted": "      if (false && settings.nodeSettings.inputBlockUncles && !sibling && history().getInputBlock(subblockInfo.id).isDefined &&",
+  "occurrences": 1,
+  "mutant_sha256": "587d2ad19ee5cac1fc7e70c2244ef5c7b14046f8e5d9ba94147a5b13dad994a9"
+}

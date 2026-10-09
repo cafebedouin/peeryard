@@ -1,0 +1,12 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": {
+    "path": "patches/ergo-matrix/candidates/abl-v2-uncles-header-r4-on-b2a9e7b00.patch",
+    "sha256": "2e7c2f65e9d46922e06b6362ae62b1547317f2ad75e4fee71ba7377da215341a"
+  },
+  "file": "src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala",
+  "removed": "    !inputBlockUnclesEnabled || !bestOrderingBlock().map(_.id).contains(ib.header.parentId) || {",
+  "inserted": "    true || !inputBlockUnclesEnabled || !bestOrderingBlock().map(_.id).contains(ib.header.parentId) || {",
+  "occurrences": 1,
+  "mutant_sha256": "6fac677c0cd288c4ae44c37724c1a554c8f94aaf9678629b368892ded51a3423"
+}

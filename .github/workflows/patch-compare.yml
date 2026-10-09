@@ -17,7 +17,8 @@
 # Opt-in measurement inputs (off by default, the run as before): wire (the rig's passive P2P capture, PEERYARD_WIRE=1;
 # each run keeps the decoded messages.jsonl gzipped and the capture's health files, never the pcaps), versions (the
 # block versions to run, default both), base_runs (false: build the base but run only the patches), txload_fund_split
-# (each funded wallet gets that many boxes, rig/lib/txload.sh TXLOAD_FUND_SPLIT). Every run also gets
+# (each funded wallet gets that many boxes, rig/lib/txload.sh TXLOAD_FUND_SPLIT), txload_nodes (all, or matrix: only
+# the Matrix nodes pay and are paid) and txload_per_node (one sender per paying node). Every run also gets
 # diag/matrix_value.py's report (value.txt, value.json) when the example is a matrix-compat one; a report, no verdict.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})${{ inputs.matrix_base && format(' on {0}', inputs.matrix_base) || '' }}"
@@ -40,6 +41,8 @@ on:
       versions: { description: 'block versions to run: v3, v4 or both (space-separated)', default: 'v3 v4' }
       base_runs: { description: 'run the base jar too (false: build it, run only the patches)', type: boolean, default: true }
       txload_fund_split: { description: 'each wallet txload funds gets this many boxes (1-100; TXLOAD_FUND_SPLIT)', default: '1' }
+      txload_nodes: { description: 'matrix-compat load among all nodes (all) or the Matrix nodes only (matrix; MATRIX_COMPAT_TXLOAD_NODES)', default: 'all' }
+      txload_per_node: { description: 'one payment sender per paying node instead of one shared sender (TXLOAD_PER_NODE)', type: boolean, default: false }
 permissions:
   contents: read
 jobs:
@@ -56,10 +59,11 @@ jobs:
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
       - name: Check the inputs
-        env: { PATCHES: '${{ inputs.patches }}', EXAMPLE: '${{ inputs.example }}', REPEATS: '${{ inputs.repeats }}', COMPAT_S: '${{ inputs.compat_s }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', MATRIX_BASE: '${{ inputs.matrix_base }}', VERSIONS: '${{ inputs.versions }}', SPLIT: '${{ inputs.txload_fund_split }}' }
+        env: { PATCHES: '${{ inputs.patches }}', EXAMPLE: '${{ inputs.example }}', REPEATS: '${{ inputs.repeats }}', COMPAT_S: '${{ inputs.compat_s }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', MATRIX_BASE: '${{ inputs.matrix_base }}', VERSIONS: '${{ inputs.versions }}', SPLIT: '${{ inputs.txload_fund_split }}', TXNODES: '${{ inputs.txload_nodes }}' }
         run: |
           [[ "$VERSIONS" =~ ^(v3|v4)( (v3|v4))?$ ]] || { echo "versions: v3, v4 or 'v3 v4'"; exit 1; }
           [[ "$SPLIT" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || { echo "txload_fund_split: 1-100"; exit 1; }
+          [[ "$TXNODES" =~ ^(all|matrix)$ ]] || { echo "txload_nodes: all or matrix"; exit 1; }
           [[ -z "$MATRIX_BASE" || "$MATRIX_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "matrix_base: empty, or a full 40-hex commit"; exit 1; }
           [[ "$TXLOAD" =~ ^([0-9]|[1-4][0-9]|50)$ ]] || { echo "txload: 0-50 payments per 10 s"; exit 1; }
           [[ -z "$EXTMINE" || "$EXTMINE" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "extmine_poll: empty, or e.g. 1s or 4s"; exit 1; }
@@ -145,7 +149,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: compare-jars, path: jars }
       - name: Run the example
-        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', EXTSTRICT: "${{ inputs.extmine_strict && '1' || '0' }}", STEADY_H: '${{ inputs.steady_from_h }}', WIRE: "${{ inputs.wire && '1' || '0' }}", SPLIT: '${{ inputs.txload_fund_split }}' }
+        env: { EXAMPLE: '${{ inputs.example }}', COMPAT_S: '${{ inputs.compat_s }}', COMPAT_POLL: '${{ inputs.compat_poll }}', TXLOAD: '${{ inputs.txload }}', EXTMINE: '${{ inputs.extmine_poll }}', EXTSTRICT: "${{ inputs.extmine_strict && '1' || '0' }}", STEADY_H: '${{ inputs.steady_from_h }}', WIRE: "${{ inputs.wire && '1' || '0' }}", SPLIT: '${{ inputs.txload_fund_split }}', TXNODES: '${{ inputs.txload_nodes }}', PERNODE: "${{ inputs.txload_per_node && '1' || '0' }}" }
         run: |
           [[ "$COMPAT_POLL" =~ ^[0-9]{1,5}(ms|s)$ ]] || { echo "compat_poll: e.g. 500ms or 4s"; exit 1; }
           [[ "$STEADY_H" =~ ^[0-9]{1,4}$ ]] || { echo "steady_from_h: a height, 0 = off"; exit 1; }
@@ -156,6 +160,7 @@ jobs:
             MATRIX_COMPAT_S="$COMPAT_S" PEERYARD_MINE_POLL="$COMPAT_POLL" MATRIX_COMPAT_POLL="$COMPAT_POLL" SCRATCH="$run/scratch" \
             MATRIX_COMPAT_TXLOAD="$TXLOAD" PEERYARD_EXTMINE_POLL="$EXTMINE" PEERYARD_EXTMINE_STRICT="$EXTSTRICT" \
             MATRIX_COMPAT_WARMUP_H="$STEADY_H" PEERYARD_NO_DIFF_RESET="$ndr" PEERYARD_WIRE="$WIRE" TXLOAD_FUND_SPLIT="$SPLIT" \
+            MATRIX_COMPAT_TXLOAD_NODES="$TXNODES" TXLOAD_PER_NODE="$PERNODE" \
             bash rig/rig.sh "rig/examples/$EXAMPLE.json" "rig/examples/$EXAMPLE.sh" > "$run/rig.log" 2>&1 || echo "rig exit $?"
           for f in "$run"/scratch/out/node_*.log; do [ -f "$f" ] || continue
             n=$(basename "$f" .log); grep -h ' ERROR ' "$f" | sed -E 's/^[0-9:.]+ ERROR +\[[^]]*\] //' | cut -c1-160 | sort | uniq -c > "$run/errors-$n.txt" || true; done

@@ -57,7 +57,8 @@ def pct(xs, q):
 
 
 def build(run):
-    sends = _jsonl(run, "txload.jsonl")
+    # parallel senders (TXLOAD_PER_NODE) append to one file; read the attempts in time order
+    sends = sorted(_jsonl(run, "txload.jsonl"), key=lambda r: r.get("t_ms", 0))
     watch = _jsonl(run, "txwatch.jsonl")
     chain = _jsonl(run, "txload_chain.jsonl")
     pp = _path(run, "txload_pools.json")

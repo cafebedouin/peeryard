@@ -146,7 +146,8 @@ Listed at the top of `rig.sh`. The main ones:
   `OrderingSolutionFound` / `InputSolutionFound`; each request times out after 5 s), so Matrix nodes mine nothing
   this way until that is fixed; release jars accept external solutions. Log per node: `out/extminer_<node>.log` (candidates
   read, each submission and the node's reply, a summary on stop)
-- payment load (`lib/txload.sh`): `txload_fund <from> <nanoerg> <to>...` (`TXLOAD_FUND_SPLIT=<k>`: in k boxes), `txload_start <per 10 s> <node>...` /
+- payment load (`lib/txload.sh`): `txload_fund <from> <nanoerg> <to>...` (`TXLOAD_FUND_SPLIT=<k>`: in k boxes), `txload_start <per 10 s> <node>...`
+  (`TXLOAD_PER_NODE=1`: one sender per node) /
   `txload_stop` (honest wallets paying each other at random; `TXLOAD_CHAIN_PCT` (30) of ticks send
   `TXLOAD_CHAIN_LEN` (3) payments back to back from one wallet, so later ones may spend unconfirmed change),
   `txwatch_start <node>...` / `txwatch_stop` (each node's best full block and, on the Matrix line, every input block

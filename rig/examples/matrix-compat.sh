@@ -18,6 +18,8 @@
 #     and diag/txload_report.py prints MATRIX-TXLOAD (per payment: submit time, node, id, first input block seen,
 #     holding ordering block, lost or not; txrecords.jsonl). Reported, not judged. TXLOAD_FUND_SPLIT=<k> funds each
 #     wallet in k boxes (rig/lib/txload.sh), for loads above what one funded box's change chain carries.
+#     MATRIX_COMPAT_TXLOAD_NODES=matrix: load among the Matrix nodes only (A must be one); TXLOAD_PER_NODE=1: one
+#     sender per paying node (rig/lib/txload.sh).
 #   PEERYARD_EXTMINE_POLL=<1s|4s|...>  (rig.sh) every miner is an external miner polling /mining/candidate at that
 #     interval instead of the node's internal CPU miner; MATRIX-EXTMINE sums each miner's submissions.
 #     PEERYARD_EXTMINE_STRICT=1: those miners read the candidate only on the poll schedule (extminer.py --strict).
@@ -51,8 +53,15 @@ fi
 MARK=$(date +%H:%M:%S); echo "[matrix-compat] all miners mining from $MARK"
 echo "[matrix-compat] window from A.h=$(full_height A)"
 if (( TXL > 0 )); then
-  others=(); for x in "${NODES[@]}"; do [[ "$x" == A ]] || others+=("$x"); done
-  txwatch_start "${NODES[@]}"; txload_fund A "$TXL_FUND" "${others[@]}"; txload_start "$TXL" "${NODES[@]}"
+  # MATRIX_COMPAT_TXLOAD_NODES=matrix: only the Matrix nodes (compat_kinds "M") pay and are paid; default all, as before.
+  # Why: a reference node's wallet chains its payments on its own unconfirmed change, the Matrix nodes do not keep those
+  # transactions, and the Matrix wallets it pays then try to spend outputs their node does not hold ("Missing inputs").
+  payers=("${NODES[@]}")
+  if [[ "${MATRIX_COMPAT_TXLOAD_NODES:-all}" == matrix ]]; then
+    payers=(); for x in "${NODES[@]}"; do [[ "$(jq -r --arg n "$x" '.compat_kinds[$n] // "M"' "$CFG")" == M ]] && payers+=("$x"); done
+  fi
+  others=(); for x in "${payers[@]}"; do [[ "$x" == A ]] || others+=("$x"); done
+  txwatch_start "${NODES[@]}"; txload_fund A "$TXL_FUND" "${others[@]}"; txload_start "$TXL" "${payers[@]}"
 fi
 for i in $(seq 1 $((DUR / 20))); do sleep 20
   (( TXL > 0 && i * 20 >= DUR - TXL_DRAIN )) && txload_stop

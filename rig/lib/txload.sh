@@ -5,7 +5,10 @@
 #                                          TXLOAD_FUND_SPLIT=<k> (default 1) splits each into k boxes of nanoerg/k, so a
 #                                          wallet holds k confirmed boxes and a heavy load is not held to one box's chain
 #   txload_start <rate> <node>...          background load: <rate> payments per 10 s on average (1-50), each from a
-#                                          random listed node whose confirmed balance covers it, to another listed node
+#                                          random listed node whose confirmed balance covers it, to another listed node;
+#                                          TXLOAD_PER_NODE=1: one sender process per listed node, each paying only from
+#                                          that node at rate/N (one sender's REST round trips cap a single loop near 2
+#                                          ticks/s; parallel senders lift that ceiling)
 #   txload_stop
 #   txwatch_start <node>...                background observer, every TXWATCH_POLL_S (1) s per node: the best full block
 #                                          (/info) and, on a node with input blocks (Matrix line), every input block id
@@ -60,15 +63,17 @@ txload_fund(){ local from="$1" amt="$2" to ok=0 n=0 k="${TXLOAD_FUND_SPLIT:-1}";
   [[ "$k" =~ ^[0-9]+$ && $k -ge 1 && $k -le 100 ]] || { echo "[txload] TXLOAD_FUND_SPLIT '$k': 1-100"; return 1; }
   for to in "$@"; do n=$((n + 1)); _txl_send fund "$from" "$to" "$amt" 0 "$n" "$#" "$k" && ok=$((ok + 1)); sleep 0.3; done
   echo "[txload] funded $ok of $# wallets from $from ($amt nanoERG each, in $k box(es))"; }
-_txl_loop(){ local rate="$1"; shift; local nodes=("$@") amt="${TXLOAD_NANOERG:-100000000}" cpct="${TXLOAD_CHAIN_PCT:-30}" clen="${TXLOAD_CHAIN_LEN:-3}"
-  local gap_ms=$((10000 / rate)) seq=0 next from to len k i cand need bal
-  RANDOM="${TXLOAD_SEED:-1}"; next=$(date +%s%3N)
+# _txl_loop <rate per 10 s> <payer|-> <node>...: payer "-" = any listed node with the balance, else only that one
+_txl_loop(){ local rate="$1" payer="$2"; shift 2; local nodes=("$@") amt="${TXLOAD_NANOERG:-100000000}" cpct="${TXLOAD_CHAIN_PCT:-30}" clen="${TXLOAD_CHAIN_LEN:-3}"
+  local gap_ms=$((10000 / rate)) seq=0 next from to len k i cand need bal base="${TXL_SEQ_BASE:-0}"
+  RANDOM="$(( ${TXLOAD_SEED:-1} + base / 1000000 ))"; next=$(date +%s%3N); seq=$base
   while :; do
     seq=$((seq + 1)); len=1; (( RANDOM % 100 < cpct )) && len=$clen
     need=$(( (amt + 2000000) * len * 2 ))
     # payer: the listed nodes in a random rotation, the first whose confirmed balance covers the tick
     from=""; k=$((RANDOM % ${#nodes[@]}))
     for ((i = 0; i < ${#nodes[@]}; i++)); do cand="${nodes[$(( (k + i) % ${#nodes[@]} ))]}"
+      [[ "$payer" != - && "$cand" != "$payer" ]] && continue
       bal="$(balance "$cand" 2>/dev/null)"; [[ "$bal" =~ ^[0-9]+$ && $bal -ge $need ]] && { from="$cand"; break; }; done
     if [[ -n "$from" ]]; then
       to="$from"; while [[ "$to" == "$from" ]]; do to="${nodes[$((RANDOM % ${#nodes[@]}))]}"; done
@@ -79,13 +84,22 @@ _txl_loop(){ local rate="$1"; shift; local nodes=("$@") amt="${TXLOAD_NANOERG:-1
     # Poisson-ish spacing around the mean gap (uniform 0.5-1.5 x), kept on schedule
     next=$((next + gap_ms / 2 + RANDOM % (gap_ms + 1))); _sleep_until "$next"
   done; }
-txload_start(){ local rate="$1"; shift
+txload_start(){ local rate="$1" n i r; shift
   [[ "$rate" =~ ^[0-9]+$ && $rate -ge 1 && $rate -le 50 ]] || { echo "[txload] rate '$rate': 1-50 payments per 10 s"; return 1; }
   [[ $# -ge 2 ]] || { echo "[txload] needs at least two nodes"; return 1; }
   for n in "$@"; do _txl_addr "$n" >/dev/null; done
-  _txl_loop "$rate" "$@" >> "$RIG_LOG_DIR/txload.err" 2>&1 & TXLOAD_PID=$!; BG_PIDS+=("$TXLOAD_PID")
-  mark txload-start; echo "[txload] started: $rate per 10 s among $* (chains of ${TXLOAD_CHAIN_LEN:-3} in ${TXLOAD_CHAIN_PCT:-30}% of ticks; pid $TXLOAD_PID)"; }
-txload_stop(){ [[ -n "$TXLOAD_PID" ]] || return 0; kill "$TXLOAD_PID" 2>/dev/null; wait "$TXLOAD_PID" 2>/dev/null; TXLOAD_PID=""
+  TXLOAD_PID=""
+  if [[ "${TXLOAD_PER_NODE:-0}" == 1 ]]; then
+    # one sender per payer, rate/N each (at least 1); seq numbers kept apart per sender (base i * 1000000)
+    i=0; r=$(( rate / $# )); (( r >= 1 )) || r=1
+    for n in "$@"; do i=$((i + 1))
+      TXL_SEQ_BASE=$((i * 1000000)) _txl_loop "$r" "$n" "$@" >> "$RIG_LOG_DIR/txload.err" 2>&1 &
+      TXLOAD_PID+="${TXLOAD_PID:+ }$!"; BG_PIDS+=("$!"); done
+  else
+    _txl_loop "$rate" - "$@" >> "$RIG_LOG_DIR/txload.err" 2>&1 & TXLOAD_PID=$!; BG_PIDS+=("$TXLOAD_PID")
+  fi
+  mark txload-start; echo "[txload] started: $rate per 10 s among $* ($([[ "${TXLOAD_PER_NODE:-0}" == 1 ]] && echo "one sender per node, $r each" || echo "one sender"); chains of ${TXLOAD_CHAIN_LEN:-3} in ${TXLOAD_CHAIN_PCT:-30}% of ticks; pid $TXLOAD_PID)"; }
+txload_stop(){ [[ -n "$TXLOAD_PID" ]] || return 0; local p; for p in $TXLOAD_PID; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; TXLOAD_PID=""
   mark txload-stop; echo "[txload] stopped: $(grep -c '"kind":"pay"' "$RIG_LOG_DIR/txload.jsonl" 2>/dev/null) payment attempts"; }
 _txw_loop(){ local nodes=("$@") x info full ic ord id txs t pool lastpool=0 pool_ms=$(( ${TXWATCH_POOL_S:-5} * 1000 )) logf sz k
   declare -A LASTF SEEN NOIB LOGOFF PEND

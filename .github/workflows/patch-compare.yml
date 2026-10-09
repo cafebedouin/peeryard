@@ -22,6 +22,8 @@
 # payment spends one confirmed box, no unconfirmed chains), node_conf (per-node config lines, e.g. a Matrix node with
 # a build's setting turned off: a mixed arm in one network). Every run also gets
 # diag/matrix_value.py's report (value.txt, value.json) when the example is a matrix-compat one; a report, no verdict.
+# A run whose rig exits 2 (setup error) or leaves no node log fails its job and the pool job (ci/rig-setup-check.sh);
+# PASS, FAIL and INCONCLUSIVE runs stay as before.
 name: peeryard patch compare
 run-name: "patch compare: ${{ inputs.example }} x${{ inputs.repeats }} (${{ inputs.patches }})${{ inputs.matrix_base && format(' on {0}', inputs.matrix_base) || '' }}"
 on:
@@ -166,7 +168,8 @@ jobs:
             MATRIX_COMPAT_TXLOAD="$TXLOAD" PEERYARD_EXTMINE_POLL="$EXTMINE" PEERYARD_EXTMINE_STRICT="$EXTSTRICT" \
             MATRIX_COMPAT_WARMUP_H="$STEADY_H" PEERYARD_NO_DIFF_RESET="$ndr" PEERYARD_WIRE="$WIRE" TXLOAD_FUND_SPLIT="$SPLIT" \
             MATRIX_COMPAT_TXLOAD_NODES="$TXNODES" TXLOAD_PER_NODE="$PERNODE" TXLOAD_CONFIRMED_ONLY="$CONFONLY" PEERYARD_NODE_CONF="$NODECONF" \
-            bash rig/rig.sh "rig/examples/$EXAMPLE.json" "rig/examples/$EXAMPLE.sh" > "$run/rig.log" 2>&1 || echo "rig exit $?"
+            bash rig/rig.sh "rig/examples/$EXAMPLE.json" "rig/examples/$EXAMPLE.sh" > "$run/rig.log" 2>&1 || rc=$?
+          echo "rig exit ${rc:-0}"
           for f in "$run"/scratch/out/node_*.log; do [ -f "$f" ] || continue
             n=$(basename "$f" .log); grep -h ' ERROR ' "$f" | sed -E 's/^[0-9:.]+ ERROR +\[[^]]*\] //' | cut -c1-160 | sort | uniq -c > "$run/errors-$n.txt" || true; done
           cp host.txt jars/builds.txt "$run/"; grep -E '^(MATRIX-[A-Z]+|\[matrix-compat\] relay)' "$run/rig.log" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -187,6 +190,8 @@ jobs:
             grep -E '^(BYTES|REQUESTS|VALUE|LOAD|WIRE)' "$run/value.txt" | cut -c1-400 | tee -a "$GITHUB_STEP_SUMMARY" || true
           fi
           rm -rf "$run/scratch"
+          # a setup error (rig exit 2) or a run without any node log fails the job (the artifact still uploads)
+          bash ci/rig-setup-check.sh "${rc:-0}" "$run"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: 'run-${{ matrix.build }}-${{ matrix.version }}-${{ matrix.repeat }}', path: runs/, retention-days: 30 }
@@ -201,7 +206,11 @@ jobs:
         with: { path: art, pattern: 'run-*', merge-multiple: true }
       - name: Pooled per build and block version
         run: |
-          { echo '```'; python3 diag/compare_pool.py art/; echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; python3 diag/compare_pool.py art/
+            # runs whose rig never ran the experiment (ci/rig-setup-check.sh): named here, and the pool job fails
+            for f in art/*/SETUP-ERROR; do [ -f "$f" ] && echo "SETUP ERROR, not a verdict: $(basename "$(dirname "$f")"): $(head -1 "$f")"; done
+            echo '```'; } | tee pooled.txt >> "$GITHUB_STEP_SUMMARY"
           cat pooled.txt
+          ! grep -q '^SETUP ERROR' pooled.txt
       - uses: actions/upload-artifact@v4
         with: { name: patch-compare-pooled, path: pooled.txt, retention-days: 90 }

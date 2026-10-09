@@ -41,7 +41,8 @@ Sections (each prints what it read, and "n/a: <why>" when its source is absent):
             pool count each Matrix candidate was assembled from ("Assembling a block candidate ... from N
             transactions available"). A window is called saturated (proposed reading) when the pool right after
             ordering blocks is at least the 90th percentile of what an ordering block carried: the interval did
-            not take what was waiting.
+            not take what was waiting. Also per block: "full" = at >= 90 % of the most any block carried, with a
+            node's pool right after it at least as large as what the block took.
 """
 import glob
 import gzip
@@ -570,6 +571,15 @@ def load_section(txload, watch, chain, logs, ib, start, end):
     out["pool_after_ordering_block"] = {"samples": len(after), "p50": pct(after, .5), "p90": pct(after, .9)}
     p90 = out["ordering_block_txs"]["p90"]
     out["saturated"] = (None if not after or p90 is None else pct(after, .5) >= p90)
+    # per ordering block: at the window's plateau (>= 90 % of the most any block carried) with a pool still waiting
+    # after it (some node's first sample within 5 s holds at least as many transactions as the block took)
+    mx = out["ordering_block_txs"]["max"]
+    full = 0
+    for ts, k in blk:
+        nxt = [v2[0] for v2 in ([kk for t, kk in v if ts <= t < ts + 5000] for v in pool.values()) if v2]
+        if mx and k >= 0.9 * mx and nxt and max(nxt) >= k:
+            full += 1
+    out["full_ordering_blocks"] = {"blocks": full, "of": len(blk), "share": round(full / len(blk), 3) if blk else None}
     # transactions per input block (wire weak ids, else txwatch input/mined events)
     per_ib = [len(b["weak"]) for b in ib.values() if b["weak"] is not None and start <= b["t_ms"] < end]
     src = "wire"
@@ -704,7 +714,7 @@ def print_report(res):
           f"{L['payments']['refused']} {L['payments']['refusal_reasons'] or ''}")
     print(f"LOAD pool {L['pool'] or '-'}")
     print(f"LOAD ordering-block txs {L['ordering_block_txs']}; pool after ordering block {L['pool_after_ordering_block']}; "
-          f"saturated {L['saturated']}")
+          f"saturated {L['saturated']}; full ordering blocks {L['full_ordering_blocks']}")
     print(f"LOAD input-block txs {L['input_block_txs']}")
     print(f"LOAD candidate available (pool txs per candidate) {L['candidate_available'] or '-'}")
 

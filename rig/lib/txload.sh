@@ -8,7 +8,9 @@
 #                                          random listed node whose confirmed balance covers it, to another listed node;
 #                                          TXLOAD_PER_NODE=1: one sender process per listed node, each paying only from
 #                                          that node at rate/N (one sender's REST round trips cap a single loop near 2
-#                                          ticks/s; parallel senders lift that ceiling)
+#                                          ticks/s; parallel senders lift that ceiling); TXLOAD_CONFIRMED_ONLY=1:
+#                                          each payment spends one confirmed box not spent before (no chains, no
+#                                          unconfirmed change; amount TXLOAD_NANOERG, default 0.01 ERG in this mode)
 #   txload_stop
 #   txwatch_start <node>...                background observer, every TXWATCH_POLL_S (1) s per node: the best full block
 #                                          (/info) and, on a node with input blocks (Matrix line), every input block id
@@ -40,13 +42,20 @@ declare -A TXL_ADDR
 TXLOAD_PID=""; TXWATCH_PID=""
 _txl_addr(){ [[ -n "${TXL_ADDR[$1]:-}" ]] || TXL_ADDR[$1]="$(address "$1")"; echo "${TXL_ADDR[$1]}"; }
 # _txl_send <kind> <from> <to> <nanoerg> <seq> <pos> <len>: one payment, one line in txload.jsonl
-_txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$7" split="${8:-1}" t out id="" err="" tx ins=null outs=null addr req
+_txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$7" split="${8:-1}" box="${9:-}" t out id="" err="" tx ins=null outs=null addr req raw
   addr="$(_txl_addr "$to")"; t=$(date +%s%3N)
   if [[ -z "$addr" ]]; then err="no address for $to"
+  elif [[ -n "$box" ]]; then
+    # spend exactly this confirmed box (inputsRaw from the payer's UTXO set), change back to the payer
+    raw="$(rest "$from" "/utxo/byIdBinary/$box" | jq -r '.bytes // empty' 2>/dev/null)"
+    if [[ -z "$raw" ]]; then out='{"detail":"box not in the payer'"'"'s UTXO set"}'
+    else out="$(wallet "$from" /wallet/transaction/send "{\"requests\":[{\"address\":\"$addr\",\"value\":$amt}],\"inputsRaw\":[\"$raw\"],\"fee\":${TXLOAD_FEE:-1000000}}")"; fi
   else
     # split > 1: one transaction with that many outputs of amt/split each to the same address (separate boxes)
     req="$(jq -cn --arg a "$addr" --argjson v "$((amt / split))" --argjson k "$split" '[range($k) | {address: $a, value: $v}]')"
     out="$(wallet "$from" /wallet/payment/send "$req")"
+  fi
+  if [[ -n "$addr" ]]; then
     id="$(jq -r 'if type == "string" then . else empty end' <<< "$out" 2>/dev/null)"
     if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then
       tx="$(rest "$from" "/transactions/unconfirmed/byTransactionId/$id")"
@@ -60,15 +69,43 @@ _txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$
     >> "$RIG_LOG_DIR/txload.jsonl"
   [[ -n "$id" ]]; }
 txload_fund(){ local from="$1" amt="$2" to ok=0 n=0 k="${TXLOAD_FUND_SPLIT:-1}"; shift 2
-  [[ "$k" =~ ^[0-9]+$ && $k -ge 1 && $k -le 100 ]] || { echo "[txload] TXLOAD_FUND_SPLIT '$k': 1-100"; return 1; }
+  [[ "$k" =~ ^[0-9]+$ && $k -ge 1 && $k -le 300 ]] || { echo "[txload] TXLOAD_FUND_SPLIT '$k': 1-300"; return 1; }
   for to in "$@"; do n=$((n + 1)); _txl_send fund "$from" "$to" "$amt" 0 "$n" "$#" "$k" && ok=$((ok + 1)); sleep 0.3; done
   echo "[txload] funded $ok of $# wallets from $from ($amt nanoERG each, in $k box(es))"; }
 # _txl_loop <rate per 10 s> <payer|-> <node>...: payer "-" = any listed node with the balance, else only that one
 _txl_loop(){ local rate="$1" payer="$2"; shift 2; local nodes=("$@") amt="${TXLOAD_NANOERG:-100000000}" cpct="${TXLOAD_CHAIN_PCT:-30}" clen="${TXLOAD_CHAIN_LEN:-3}"
-  local gap_ms=$((10000 / rate)) seq=0 next from to len k i cand need bal base="${TXL_SEQ_BASE:-0}"
+  local gap_ms=$((10000 / rate)) seq=0 next from to len k i cand need bal base="${TXL_SEQ_BASE:-0}" conf="${TXLOAD_CONFIRMED_ONLY:-0}" box
+  local -A USED QUEUE LASTFILL
+  # TXLOAD_CONFIRMED_ONLY=1: every payment spends one confirmed wallet box the sender has not spent before (inputsRaw),
+  # never unconfirmed change, so no payment depends on another; no chains; default amount 0.01 ERG, so a box's
+  # change is spendable again once confirmed
+  [[ "$conf" == 1 ]] && { cpct=0; amt="${TXLOAD_NANOERG:-10000000}"; }
   RANDOM="$(( ${TXLOAD_SEED:-1} + base / 1000000 ))"; next=$(date +%s%3N); seq=$base
   while :; do
     seq=$((seq + 1)); len=1; (( RANDOM % 100 < cpct )) && len=$clen
+    if [[ "$conf" == 1 ]]; then
+      # payer: the listed nodes in a random rotation (or the fixed one), the first holding an unspent confirmed box
+      from=""; box=""; k=$((RANDOM % ${#nodes[@]}))
+      for ((i = 0; i < ${#nodes[@]}; i++)); do cand="${nodes[$(( (k + i) % ${#nodes[@]} ))]}"
+        [[ "$payer" != - && "$cand" != "$payer" ]] && continue
+        # refill from the wallet's confirmed unspent P2PK boxes (mining rewards excluded: their script is not P2PK)
+        if [[ -z "${QUEUE[$cand]:-}" && $(( $(date +%s%3N) - ${LASTFILL[$cand]:-0} )) -ge 1000 ]]; then
+          LASTFILL[$cand]=$(date +%s%3N)
+          for box in $(wallet "$cand" "/wallet/boxes/unspent?minConfirmations=1&limit=1000" 2>/dev/null \
+                       | jq -r --argjson need "$(( amt + ${TXLOAD_FEE:-1000000} ))" '.[]? | select(.box.value >= $need and (.box.ergoTree | startswith("0008cd"))) | .box.boxId' 2>/dev/null); do
+            [[ -n "${USED[$box]:-}" ]] || QUEUE[$cand]+="$box "; done
+        fi
+        if [[ -n "${QUEUE[$cand]:-}" ]]; then box="${QUEUE[$cand]%% *}"; QUEUE[$cand]="${QUEUE[$cand]#* }"; USED[$box]=1; from="$cand"; break; fi
+      done
+      if [[ -n "$from" ]]; then
+        to="$from"; while [[ "$to" == "$from" ]]; do to="${nodes[$((RANDOM % ${#nodes[@]}))]}"; done
+        _txl_send pay "$from" "$to" "$amt" "$seq" 1 1 1 "$box"
+      else
+        jq -cn --argjson t "$(date +%s%3N)" --argjson seq "$seq" '{t_ms: $t, kind: "skip", seq: $seq, error: "no unspent confirmed box"}' >> "$RIG_LOG_DIR/txload.jsonl"
+      fi
+      next=$((next + gap_ms / 2 + RANDOM % (gap_ms + 1))); _sleep_until "$next"
+      continue
+    fi
     need=$(( (amt + 2000000) * len * 2 ))
     # payer: the listed nodes in a random rotation, the first whose confirmed balance covers the tick
     from=""; k=$((RANDOM % ${#nodes[@]}))
@@ -98,7 +135,7 @@ txload_start(){ local rate="$1" n i r; shift
   else
     _txl_loop "$rate" - "$@" >> "$RIG_LOG_DIR/txload.err" 2>&1 & TXLOAD_PID=$!; BG_PIDS+=("$TXLOAD_PID")
   fi
-  mark txload-start; echo "[txload] started: $rate per 10 s among $* ($([[ "${TXLOAD_PER_NODE:-0}" == 1 ]] && echo "one sender per node, $r each" || echo "one sender"); chains of ${TXLOAD_CHAIN_LEN:-3} in ${TXLOAD_CHAIN_PCT:-30}% of ticks; pid $TXLOAD_PID)"; }
+  mark txload-start; echo "[txload] started: $rate per 10 s among $* ($([[ "${TXLOAD_PER_NODE:-0}" == 1 ]] && echo "one sender per node, $r each" || echo "one sender"); $([[ "${TXLOAD_CONFIRMED_ONLY:-0}" == 1 ]] && echo "confirmed boxes only, no chains" || echo "chains of ${TXLOAD_CHAIN_LEN:-3} in ${TXLOAD_CHAIN_PCT:-30}% of ticks"); pid $TXLOAD_PID)"; }
 txload_stop(){ [[ -n "$TXLOAD_PID" ]] || return 0; local p; for p in $TXLOAD_PID; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; TXLOAD_PID=""
   mark txload-stop; echo "[txload] stopped: $(grep -c '"kind":"pay"' "$RIG_LOG_DIR/txload.jsonl" 2>/dev/null) payment attempts"; }
 _txw_loop(){ local nodes=("$@") x info full ic ord id txs t pool lastpool=0 pool_ms=$(( ${TXWATCH_POOL_S:-5} * 1000 )) logf sz k

@@ -136,7 +136,7 @@ jobs:
     needs: build
     name: ${{ matrix.build }}-${{ matrix.version }}-${{ matrix.repeat }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 110
+    timeout-minutes: 240  # 120 s examples: warm-up + a 3600 s window + analysis run past 110 min (GitHub job limit 360)
     strategy:
       fail-fast: false
       matrix:

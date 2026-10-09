@@ -429,6 +429,34 @@ class Parsers(unittest.TestCase):
         self.assertEqual((r["height"], r["prev_input_block_id"], r["weak_tx_ids"]), (51, None, None))
         self.assertNotIn("weak_ids", r)
 
+    def test_matrix_input_block_v2_uncles(self):
+        # announcement version 2 (the uncles prototype): after the weak ids, a length byte and the new fields, which
+        # read as a count and 32-byte uncle ids
+        hb = header(52)
+        uf = bytes([2]) + b"\x0e" * 32 + b"\x0f" * 32
+        body = (bytes([2]) + hb + b"\x01" + b"\x0a" * 32 + b"\x0b" * 32 + b"\x0c" * 32 + vlq(3) + b"abc"
+                + b"\x01" + vlq(1) + b"\x0d" * 6 + bytes([len(uf)]) + uf)
+        r = self.one(frame(100, body))
+        self.assertEqual((r["version"], r["weak_tx_ids"], r["unparsed_len"], r["uncle_ids"]),
+                         (2, 1, 65, ["0e" * 32, "0f" * 32]))
+        self.assertEqual(r["ordering_parent_id"], "11" * 32)
+
+    def test_matrix_input_block_v2_without_uncles_field(self):
+        body = (bytes([2]) + header(53) + b"\x00" + b"\x0b" * 32 + b"\x0c" * 32 + vlq(0) + b"\x00" + b"\x00")
+        r = self.one(frame(100, body))
+        self.assertEqual((r["unparsed_len"], "uncle_ids" in r), (0, False))
+
+    def test_transactions_section_id_matches_the_type_102_ids_of_a_real_capture(self):
+        # every header delivered in the golden capture: its computed BlockTransactions id is one the nodes named
+        fx = os.path.join(os.path.dirname(__file__), "fixtures")
+        with open(os.path.join(fx, "wire-bringup.json")) as fh:
+            meta = json.load(fh)
+        recs, _ = wire.decode_pcap(os.path.join(fx, "wire-bringup.pcap"), "A-B", bytes(meta["magic"]), meta["names"])
+        computed = [s for r in recs if r.get("code") == 33 and r.get("type_id") == 101 for s in r["tx_section_ids"]]
+        named = {i for r in recs if r.get("code") in (22, 33, 55) and r.get("type_id") == 102 for i in r["modifier_ids"]}
+        self.assertTrue(computed)
+        self.assertTrue(set(computed) <= named)
+
     def test_matrix_tx_ids_and_request(self):
         for code, name in ((102, "InputBlockTxIds"), (105, "InputBlockTxsRequest")):
             r = self.one(frame(code, b"\x09" * 32 + vlq(2) + b"\x01" * 6 + b"\x02" * 6))
@@ -442,8 +470,11 @@ class Parsers(unittest.TestCase):
     def test_matrix_ordering_block(self):
         hb = header(60)
         r = self.one(frame(106, bytes([1]) + hb + vlq(4) + b"(transactions, not parsed)"))
+        hid = hashlib.blake2b(hb, digest_size=32).hexdigest()
         self.assertEqual((r["name"], r["height"], r["non_broadcast_txs"], r["ordering_block_id"]),
-                         ("OrderingBlock", 60, 4, hashlib.blake2b(hb, digest_size=32).hexdigest()))
+                         ("OrderingBlock", 60, 4, hid))
+        self.assertEqual(r["tx_section_id"],
+                         hashlib.blake2b(bytes([102]) + bytes.fromhex(hid) + b"\x33" * 32, digest_size=32).hexdigest())
 
     def test_get_peers(self):
         r = self.one(frame(1, b""))

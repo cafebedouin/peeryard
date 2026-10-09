@@ -71,7 +71,12 @@ a packet.
   input- and ordering-block ids (the Blake2b-256 of the header, as the node computes them), heights, the parent input
   block, and the weak (6-byte) transaction ids. Checked on a `matrix-latency` capture: 309 Matrix frames, no parse
   error, every input block's parent id is one this decoder computed from another announcement, and all 271 ids
-  appear in the nodes' own logs.
+  appear in the nodes' own logs. Also parsed: an input block's ordering parent (the header's parentId); from announcement
+  version 2, the length of the new fields and, when they read as the uncles prototype's field (a count of at most 2,
+  then 32-byte ids), `uncle_ids`; and per ordering block (106) and per delivered header (Modifiers 101) the id of its
+  BlockTransactions section (`tx_section_id(s)`: Blake2b-256 of 102, the header id and its transactionsRoot), so a
+  type-102 RequestModifier can be tied to the block it fetches. On the golden capture every delivered header's computed
+  section id is one the nodes named on the wire (tests/wire_test.py).
 - **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. A
   direction the capture never saw at all (no SYN and no payload) is found the same way, from the other side's acks, and
   is a `gap` with `"unseen": true`; `matrix_prop.py` leaves a run with a gap on a counted direction out of the pool. Every

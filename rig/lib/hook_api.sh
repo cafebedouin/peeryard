@@ -88,20 +88,22 @@ settle_height_back(){ local end=$((SECONDS + ${2:-60})); while [[ $SECONDS -lt $
 # must be started, tracked and stopped with the run. `companion_start <name> [--in <node>] -- <cmd...>` starts <cmd>
 # in the background (inside <node>'s network namespace with --in, so 127.0.0.1 is that node's loopback), logs it to
 # $RIG_LOG_DIR/companion_<name>.log, records its pid, and records a `companion` event. `companion_stop <name>` stops
-# it (TERM, then KILL after RIG_STOP_GRACE_S), `companion_log <name>` prints its log path, `companion_pid <name>` its
-# pid. stop_all stops every companion still running, so a failed hook leaves no JVM behind.
+# it and its whole process group (TERM, then KILL after RIG_STOP_GRACE_S; a launcher script's JVM goes with it),
+# `companion_log <name>` prints its log path, `companion_pid <name>` its pid. stop_all stops every companion still
+# running, so a failed hook leaves no JVM behind.
 companion_start(){ local name="$1"; shift; local ns=""
   if [[ "${1:-}" == "--in" ]]; then ns="$2"; shift 2; fi; [[ "${1:-}" == "--" ]] && shift
   mkdir -p "$SCRATCH/companions"; local log="$RIG_LOG_DIR/companion_$name.log"
-  if [[ -n "$ns" ]]; then ip netns exec "${NS[$ns]}" "$@" > "$log" 2>&1 & else "$@" > "$log" 2>&1 & fi
+  # setsid: the pid recorded is a process-group leader, so a launcher script's JVM children die with it on stop
+  if [[ -n "$ns" ]]; then setsid ip netns exec "${NS[$ns]}" "$@" > "$log" 2>&1 & else setsid "$@" > "$log" 2>&1 & fi
   echo $! > "$SCRATCH/companions/$name.pid"
   declare -F rig_event >/dev/null && rig_event companion "" "" "${ns:-host}" "start $name pid=$!" || true
   echo "[rig] companion $name started (pid $!, ${ns:+in $ns, }log $log)"; }
 companion_pid(){ cat "$SCRATCH/companions/$1.pid" 2>/dev/null; }
 companion_log(){ echo "$RIG_LOG_DIR/companion_$1.log"; }
 companion_stop(){ local name="$1" pid; pid="$(companion_pid "$name")"; [[ -n "$pid" ]] || return 0
-  kill "$pid" 2>/dev/null; local end=$((SECONDS + ${RIG_STOP_GRACE_S:-30}))
+  kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null; local end=$((SECONDS + ${RIG_STOP_GRACE_S:-30}))
   while kill -0 "$pid" 2>/dev/null && [[ $SECONDS -lt $end ]]; do sleep 1; done
-  kill -9 "$pid" 2>/dev/null || true; rm -f "$SCRATCH/companions/$name.pid"
+  kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true; rm -f "$SCRATCH/companions/$name.pid"
   declare -F rig_event >/dev/null && rig_event companion "" "" "" "stop $name" || true; echo "[rig] companion $name stopped"; }
 companions_stop_all(){ local f; for f in "$SCRATCH"/companions/*.pid; do [[ -f "$f" ]] && companion_stop "$(basename "$f" .pid)"; done; }

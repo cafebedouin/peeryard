@@ -1,0 +1,17 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": {
+    "path": "patches/ergo-matrix/candidates/abl-v2-uncles-header-r5-on-b2a9e7b00.patch (+ InputBlocksProcessor.bodilessAncestors: walk stops at the first ancestor with a body, i.e. r4)",
+    "sha256": "1eef6f4ee268b66f0dc505c8d937cefc4a514b0b4f4264781a930eaf0becc464"
+  },
+  "file": "src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala",
+  "removed": "  val MaxInputBlockBodyRequests: Int = 3",
+  "inserted": "  val MaxInputBlockBodyRequests: Int = 1",
+  "occurrences": 1,
+  "mutant_sha256": "7ea3517f5286f7c7810eac4672cd4f0ae39b966ed36b9f41198141c00d1c49b5",
+  "first_mutation": {
+    "file": "src/main/scala/org/ergoplatform/nodeView/history/modifierprocessors/InputBlocksProcessor.scala",
+    "removed": "val withParent = if (inputBlockTransactions.contains(parent.id)) acc else parent :: acc",
+    "inserted": "val withParent = if (inputBlockTransactions.contains(parent.id)) return acc.reverse else parent :: acc"
+  }
+}

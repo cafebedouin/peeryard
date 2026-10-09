@@ -1,0 +1,12 @@
+{
+  "base": "b2a9e7b00fd0ff76b0080d1c030b9df30ce768f6",
+  "candidate_patch": {
+    "path": "patches/ergo-matrix/candidates/abl-v2-uncles-header-r5-on-b2a9e7b00.patch",
+    "sha256": "60e9669c5a5d6ed7dce4a42416ef8c656640e88251d2210734c324f3df4f9210"
+  },
+  "file": "src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala",
+  "removed": "        val applies = Try(minimalState().applyInputBlock(inputBlockTxs, prefix, subblockInfo.header)).flatten",
+  "inserted": "        val applies = Try(minimalState().applyInputBlock(inputBlockTxs, prefix, subblockInfo.header)).flatten.orElse(Success(0L))",
+  "occurrences": 1,
+  "mutant_sha256": "7a8def471be2429478ca528ef75c1cdda2851cfeae750ae87847e37fa898e16a"
+}

@@ -11,7 +11,7 @@
     "what": "A cached block candidate is regenerated on a mempool change only once it is older than ergo.node.blockCandidateGenerationInterval (default 60s), so a transaction valid for exactly one height never enters that height's candidate on a fast devnet.",
     "applies_from": "v6.0.0",
     "upstream": "",
-    "workaround": "topology conf: \"ergo.node.blockCandidateGenerationInterval\": \"1s\" (rig/examples/lithos-upkeep.json)"
+    "workaround": "for a mempool-fed test only (rig/examples/lithos-upkeep.json): \"ergo.node.blockCandidateGenerationInterval\": \"1ms\". NOT for a client that submits its own candidates (rig/examples/lithos-block.json keeps the default): every mempool change then regenerates a mempool-only candidate that replaces the client's before the miner polls."
   },
   {
     "id": "appkit-devnet-network",

@@ -8,8 +8,8 @@
 # the deployment's collateral token, and which also carries the heartbeat successor. PASS = that block exists.
 #
 # Needs: LITHOS_STAGE (the staged client distribution), LITHOS_KEYSTORE and LITHOS_PASS (the client's wallet keystore
-# JSON and its password), LITHOS_MNEMONIC (the same wallet's mnemonic, which node A mines to: A is declared "defer"
-# and launched here with it), JAVA_HOME at 17. The mnemonic and password stay in the environment, never in a file here.
+# JSON and its password), LITHOS_MNEMONIC (the same wallet's mnemonic, restored into node A's wallet so A mines to it),
+# JAVA_HOME at 17. The mnemonic and password stay in the environment, never in a file here.
 : "${LITHOS_STAGE:?the staged client distribution directory}"; : "${LITHOS_KEYSTORE:?the client keystore json}"; : "${LITHOS_PASS:?the keystore password}"; : "${LITHOS_MNEMONIC:?the client wallet mnemonic}"
 JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"; HERE_LIB="$(cd "$(dirname "$RIG_HOOK")/../lib" && pwd)"
 PROXY_PORT=${PROXY_PORT:-9153}; WD="$SCRATCH/lithos"; mkdir -p "$WD"; CHECKS="$WD/checks.jsonl"; : > "$CHECKS"
@@ -29,10 +29,12 @@ boxes_at_tree(){ rest_post /blockchain/box/unspent/byErgoTree "\"$TREE\""; }
 block_txs(){ local hid; hid=$(header_at A "$1"); [[ -n "$hid" ]] && rest A "/blocks/$hid/transactions" | jq -c '.transactions'; }
 fail(){ echo "[lb] FAIL: $*"; rig_verdict=FAIL; }
 rig_verdict=FAIL
-# 0. node A, mining to the client's key: its wallet is the keystore's key set, so the client sees its own boxes
-CONF_OVR[A]="ergo.wallet.testMnemonic=\"$LITHOS_MNEMONIC\""
-launch A; wait_up A || { fail "A did not come up"; return 0 2>/dev/null || exit 0; }
-echo "[lb] A mines to $(address A)"
+# 0. node A's wallet is the client's keystore key set, restored over the API from the mnemonic: a node started with a
+# test mnemonic would use the root key and its direct children, not the EIP-3 path the keystore derives, so the
+# topology sets ergo.wallet.testMnemonic = null and the wallet is restored here before A can mine.
+r=$(wallet A /wallet/restore "{\"pass\":\"$LITHOS_PASS\",\"mnemonic\":\"$LITHOS_MNEMONIC\",\"usePre1627KeyDerivation\":false}")
+wallet A /wallet/unlock "{\"pass\":\"$LITHOS_PASS\"}" >/dev/null
+echo "[lb] A's wallet restored ($r), mines to $(address A)"
 # 1. block version 4 and a matured wallet on A
 end=$((SECONDS + 600)); bv=""
 while [[ $SECONDS -lt $end ]]; do bv=$(rest A /info | jq -r '.parameters.blockVersion // empty'); [[ "$bv" == 4 ]] && break; sleep 10; done

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "devnet-rent-distinct-outputs",
+    "what": "The storage-rent distinct-outputs rule (6.0.7 security soft fork) activates at the mainnet height constant StorageRentDistinctOutputsActivationHeight = 1885000 on every network (ergo-core ValidationRules.scala:275, checked in ErgoTransaction.validateStateful), so a devnet never activates it; a rent scenario on the rig runs the pre-fork rule.",
+    "applies_from": "v6.0.7",
+    "upstream": "",
+    "workaround": "none in config; needs a devnet-aware activation height in the node or a patched jar"
+  },
+  {
+    "id": "devnet-candidate-refresh",
+    "what": "A cached block candidate is regenerated on a mempool change only once it is older than ergo.node.blockCandidateGenerationInterval (default 60s), so a transaction valid for exactly one height never enters that height's candidate on a fast devnet.",
+    "applies_from": "v6.0.0",
+    "upstream": "",
+    "workaround": "topology conf: \"ergo.node.blockCandidateGenerationInterval\": \"1s\" (rig/examples/lithos-upkeep.json)"
+  },
+  {
+    "id": "appkit-devnet-network",
+    "what": "ergo-appkit's NetworkType has no DEVNET, so a client built on it refuses a node whose /info reports network devnet.",
+    "applies_from": "v6.0.0",
+    "upstream": "",
+    "workaround": "rig/lib/appkit-proxy.py rewrites the /info field to testnet; the devnet uses testnet address prefixes"
+  }
+]

@@ -42,8 +42,9 @@ end=$((SECONDS + 180)); have=0
 while [[ $SECONDS -lt $end ]]; do have=$(rest_post /blockchain/box/unspent/byAddress "\"$LITHOS_ADDRESS\"" | jq -r '[.[]?.value] | add // 0'); [[ "$have" -ge 300000000000 ]] && break; sleep 10; done
 [[ "$have" -ge 300000000000 ]] || { fail "the client key never received its ERG ($have)"; return 0 2>/dev/null || exit 0; }
 # 3. the deployment: tokens, protocol boxes, descriptor, and the client funded with ERG and LIT for its own joins
-( cd "$WD" && in_a env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" "$LITHOS_STAGE/bin/lithos-client" -main tools.DeployProtocol \
-    -- --node "http://127.0.0.1:$PROXY_PORT" --api-key hello --keystore "$LITHOS_KEYSTORE" --pass "$LITHOS_PASS" --network TESTNET \
+# the stage's launcher jar carries the classpath in its manifest, so `-main` cannot see the app; run the class directly
+( cd "$WD" && in_a env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" java -cp "$LITHOS_STAGE/lib/*" tools.DeployProtocol \
+    --node "http://127.0.0.1:$PROXY_PORT" --api-key hello --keystore "$LITHOS_KEYSTORE" --pass "$LITHOS_PASS" --network TESTNET \
     --out "$DESC" --fund "$LITHOS_ADDRESS:20000000000:20000000000000" --timeout-seconds 1500 ) > "$WD/deploy.log" 2>&1
 rc=$?; tail -5 "$WD/deploy.log" | cut -c1-200
 [[ $rc == 0 && -s "$DESC" ]] || { fail "the deployer exited $rc (see $WD/deploy.log)"; return 0 2>/dev/null || exit 0; }

@@ -30,26 +30,27 @@ boxes_at_tree(){ rest_post /blockchain/box/unspent/byErgoTree "\"$TREE\""; }
 block_txs(){ local hid; hid=$(header_at A "$1"); [[ -n "$hid" ]] && rest A "/blocks/$hid/transactions" | jq -c '.transactions'; }
 fail(){ echo "[lb] FAIL: $*"; rig_verdict=FAIL; }
 rig_verdict=FAIL
-# 0. node A mines with the client's key. Two node facts make this two steps: a wallet from a test mnemonic uses the
-# root key and its children, not the EIP-3 path a keystore derives (so testMnemonic = null and the wallet is restored
-# over the API); and the internal miner mines with its own reward key unless ergo.node.miningPubKeyHex names one, while
-# the client's candidates name the collateral lender's key, and the node serves a cached candidate only to a requester
-# with the same key. So A is launched with miningPubKeyHex = the client's EIP-3 index 0 key (LITHOS_PUBKEY, the raw
-# hex public key: any node's /utils/addressToRaw/<address>), and the client holds that one key (numAddresses = 1).
+# 0. node A's wallet is the client's keystore key set, restored over the API from the mnemonic (a wallet from a test
+# mnemonic would use the root key and its children, not the EIP-3 path a keystore derives). A mines internally first:
+# the first blocks are Autolykos v1 work (no height in the work message), which only the node's own miner can solve.
 : "${LITHOS_PUBKEY:?the raw hex public key of the keystore EIP-3 index 0 address}"
-CONF_OVR[A]="ergo.node.miningPubKeyHex=\"$LITHOS_PUBKEY\""
 launch A; wait_up A || { fail "A did not come up"; return 0 2>/dev/null || exit 0; }
 r=$(wallet A /wallet/restore "{\"pass\":\"$LITHOS_PASS\",\"mnemonic\":\"$LITHOS_MNEMONIC\",\"usePre1627KeyDerivation\":false}")
 wallet A /wallet/unlock "{\"pass\":\"$LITHOS_PASS\"}" >/dev/null
-echo "[lb] A's wallet restored ($r); wallet $(address A); miner key $(wallet A /mining/rewardPublicKey | jq -r .rewardPubkey)"
-# A runs in external-miner mode (the internal miner would use the wallet's first secret instead of miningPubKeyHex);
-# the rig's CPU miner solves whatever candidate A holds, the client's package included.
-companion_start miner --in A -- "$HERE_LIB/devnet-miner.sh" "${NODE_JAR[A]}" --node "http://127.0.0.1:${REST[A]}" --api-key hello
+echo "[lb] A's wallet restored ($r); wallet $(address A)"
 # 1. block version 4 and a matured wallet on A
 end=$((SECONDS + 600)); bv=""
 while [[ $SECONDS -lt $end ]]; do bv=$(rest A /info | jq -r '.parameters.blockVersion // empty'); [[ "$bv" == 4 ]] && break; sleep 10; done
 [[ "$bv" == 4 ]] || { fail "block version 4 did not activate"; return 0 2>/dev/null || exit 0; }
 wait_balance A 400000000000 600 >/dev/null || { fail "A's wallet never reached 400 ERG"; return 0 2>/dev/null || exit 0; }
+# 1b. from here A mines with the client's key, externally: the internal miner takes the wallet's first secret and
+# ignores miningPubKeyHex, and the node serves a cached candidate only to a requester with the same key as the
+# candidate names, which for the client's packages is its collateral lender. The rig's CPU miner solves A's candidates.
+CONF_OVR[A]=$'ergo.node.useExternalMiner=true\nergo.node.miningPubKeyHex="'"$LITHOS_PUBKEY"'"'
+relaunch A || { fail "A did not come back in external-miner mode"; return 0 2>/dev/null || exit 0; }
+wallet A /wallet/unlock "{\"pass\":\"$LITHOS_PASS\"}" >/dev/null
+echo "[lb] A relaunched; miner key $(wallet A /mining/rewardPublicKey | jq -r .rewardPubkey)"
+companion_start miner --in A -- "$HERE_LIB/devnet-miner.sh" "${NODE_JAR[A]}" --node "http://127.0.0.1:${REST[A]}" --api-key hello
 # 2. the proxy
 companion_start proxy --in A -- python3 "$HERE_LIB/appkit-proxy.py" --listen "127.0.0.1:$PROXY_PORT" \
   --upstream "http://127.0.0.1:${REST[A]}" --record-checks "$CHECKS"; sleep 2

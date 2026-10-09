@@ -58,7 +58,7 @@ cat > "$CONF" <<EOC
 include "application"
 node { url = "http://127.0.0.1:$PROXY_PORT", key = "hello", storagePath = "$LITHOS_KEYSTORE", pass = "$LITHOS_PASS", networkType = "TESTNET"
        deployment { file = "$DESC" } }
-sync.startHeight = 1
+sync.startHeight = 2
 stats.enabled = false
 batching.ergodex.enabled = false
 batching.lithosdex.enabled = false

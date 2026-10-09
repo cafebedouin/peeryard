@@ -88,8 +88,10 @@ stratum.candidate.sources.lithosdex.enabled = false
 emission { maxLenderKeys = 1, autoCollateralize = true, collateralizeInterval = 30000, queueInterval = 30000 }
 stratum.candidate.sources.upkeep { enabled = true, mode = "candidate", verifyWithNode = true, scanIntervalMs = 10000, jobs.heartbeat { enabled = true } }
 EOC
+# by classpath from this run's directory, not the stage launcher: the launcher pins user.dir to the stage, so every
+# client run would share one .lithos store there (the NISP and dictionary stores are hard-coded under .lithos)
 cd "$WD"; companion_start client --in A -- env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" \
-  "$LITHOS_STAGE/bin/lithos-client" -Dconfig.file="$CONF" -Dhttp.port=9100 -Dpidfile.path=/dev/null; cd - >/dev/null
+  java -cp "$LITHOS_STAGE/lib/*" -Dconfig.file="$CONF" -Dhttp.port=9100 -Dpidfile.path=/dev/null play.core.server.ProdServerStart; cd - >/dev/null
 CLIENT_LOG="$(companion_log client)"
 # 6. a Lithos block carrying the beat: first transaction spends a box holding the collateral token; the beat is in it
 start=$(full_height A); end=$((SECONDS + 1800)); found=""

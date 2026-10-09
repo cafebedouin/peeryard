@@ -711,6 +711,7 @@ stop_all(){ local n p end
     [[ $p == 0 ]] && break; sleep 1
   done
   for n in "${NODES[@]}"; do pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true; done
+  declare -F companions_stop_all >/dev/null && companions_stop_all   # application processes a hook started
   declare -F wire_stop >/dev/null && wire_stop   # not yet defined when an early exit (the probe failing) fires the trap
   wait 2>/dev/null; echo "[rig] all nodes stopped$([[ $p == 1 ]] && echo ' (some killed after the grace period)')"; }
 trap stop_all EXIT

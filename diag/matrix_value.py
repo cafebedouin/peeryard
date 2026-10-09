@@ -407,9 +407,22 @@ def input_blocks(frames):
     return ib
 
 
-def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
+def uncles_kind(ib, watch):
+    """What an uncle reference means in this run: "merging" (the reference carries the uncle's transactions into L:
+    uncle ids on the wire, and no node's REST reports credited uncles), "header" (credit only, transactions not
+    executed: some node reports "creditedUncles"), or "none" (no uncle reference on the wire)."""
+    if any(isinstance(r.get("credited"), list) for r in watch if r.get("ev") == "input"):
+        return "header"
+    return "merging" if any(b["uncles"] for b in ib.values()) else "none"
+
+
+def value_section(ib, mined_full, payments, final_txs, final_ords, start, end, kind="merging"):
     """ib: input block id -> record (wire); mined_full: id -> full tx ids (txwatch); payments: set of payment tx ids;
-    final_txs: set of tx ids on the final chain; final_ords: set of final-chain ordering block ids."""
+    final_txs: set of tx ids on the final chain; final_ords: set of final-chain ordering block ids; kind: uncles_kind.
+    Under "header" an uncle's transactions are not collected: L is the chain's own transactions, the references are
+    reported as credit (how many, and whether the uncle's transactions were already on the referencing chain), and
+    a sibling's transactions are never "recovered by merge"."""
+    merging = kind != "header"
     pay3 = Counter(p[:6] for p in payments)
     fin3 = Counter(t[:6] for t in final_txs)
 
@@ -443,7 +456,7 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
                 memo[i] = None
                 return None
             base = set(p)
-        for u in b["uncles"]:
+        for u in (b["uncles"] if merging else []):
             ou = own(u)
             if ou is None:
                 memo[i] = None
@@ -472,18 +485,27 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
                 continue
             dup = [w for w in ou if w in seen]
             uniq = [w for w in ou if w not in seen]
-            seen |= set(ou)
+            if merging:
+                seen |= set(ou)
             merges.append({"by": x, "uncle": u, "txs": len(ou), "dup": len(dup), "unique": len(uniq),
                            "unique_payments": sum(1 for w in uniq if pay3.get(w[:6])),
                            "unique_final": sum(1 for w in uniq if fin3.get(w[:6]))})
     tot = sum(m["txs"] for m in merges)
     dup = sum(m["dup"] for m in merges)
-    merged = {"merges": len(merges), "merges_with_txs": sum(1 for m in merges if m["txs"]),
-              "uncle_txs": tot, "duplicates": dup, "unique": tot - dup,
-              "duplicate_share": round(dup / tot, 3) if tot else None,
-              "unique_payments": sum(m["unique_payments"] for m in merges),
-              "unique_on_final_chain": sum(m["unique_final"] for m in merges),
-              "uncles_without_known_txs": unknown}
+    if merging:
+        merged = {"merges": len(merges), "merges_with_txs": sum(1 for m in merges if m["txs"]),
+                  "uncle_txs": tot, "duplicates": dup, "unique": tot - dup,
+                  "duplicate_share": round(dup / tot, 3) if tot else None,
+                  "unique_payments": sum(m["unique_payments"] for m in merges),
+                  "unique_on_final_chain": sum(m["unique_final"] for m in merges),
+                  "uncles_without_known_txs": unknown}
+    else:
+        # credit only: the referenced uncle's transactions stay where they are; "already carried" = on the referencing
+        # block's own chain (its ancestors' and its own transactions)
+        merged = {"references": len(merges), "references_with_txs": sum(1 for m in merges if m["txs"]),
+                  "uncle_txs": tot, "already_on_referencing_chain": dup, "not_on_referencing_chain": tot - dup,
+                  "not_on_referencing_chain_but_on_final_chain": sum(m["unique_final"] for m in merges),
+                  "uncles_without_known_txs": unknown}
 
     # siblings: per final-chain ordering block O, the winning path is the deepest input-block chain under O
     children = defaultdict(list)
@@ -505,6 +527,7 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
             later_weak[w].append(b["t_ms"])
     sib = Counter()
     sib_blocks = Counter()
+    delays = []      # ms from a sibling to the first later input block carrying the same transaction
     ties = 0
     for o, ids in by_ord.items():
         if o not in final_ords:
@@ -521,10 +544,11 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
             cur = ib[cur]["prev"]
         path_own = set()
         path_merged = set()
+        path_credited = set()
         for p in path:
             path_own |= set(own(p) or [])
             for u in ib[p]["uncles"]:
-                path_merged.add(u)
+                (path_merged if merging else path_credited).add(u)
         for s in ids_w:
             if s in path:
                 continue
@@ -533,7 +557,8 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
             if ws is None:
                 sib_blocks["txs_unknown"] += 1
                 continue
-            sib_blocks["merged" if s in path_merged else "not_merged"] += 1
+            sib_blocks["merged" if s in path_merged else "credited" if s in path_credited else
+                       "not_referenced"] += 1
             for w in ws:
                 sib["txs"] += 1
                 if w in path_own:
@@ -542,6 +567,7 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
                     sib["recovered_by_merge"] += 1
                 elif any(t > ib[s]["t_ms"] for t in later_weak[w]):
                     sib["re_included_later"] += 1
+                    delays.append(min(t for t in later_weak[w] if t > ib[s]["t_ms"]) - ib[s]["t_ms"])
                 else:
                     sib["in_no_other_input_block"] += 1
                 # a sibling transaction neither on the winning path nor merged that the final chain holds anyway
@@ -549,7 +575,9 @@ def value_section(ib, mined_full, payments, final_txs, final_ords, start, end):
                 if w not in path_own and s not in path_merged and fin3.get(w[:6]):
                     sib["not_merged_but_on_final_chain"] += 1
     return {"weak_vs_full_ids": dict(check), "merged_uncles": merged,
-            "siblings": {"blocks": dict(sib_blocks), "transactions": dict(sib), "winning_path_ties": ties},
+            "kind": kind,
+            "siblings": {"blocks": dict(sib_blocks), "transactions": dict(sib), "winning_path_ties": ties,
+                         "re_inclusion_delay_ms": {"n": len(delays), "p50": pct(delays, .5), "p90": pct(delays, .9)}},
             "merges": merges}
 
 
@@ -710,8 +738,9 @@ def analyze(run, arg_from=None, arg_to=None, matrix_arg=None):
     final_txs = {t for r in chain for t in (r.get("txs") or [])}
     final_ords = {r["id"] for r in chain if r.get("id")}
     if ib:
-        v = value_section(ib, mined_full, payments, final_txs, final_ords, start, end)
-        res["value"] = {k: v[k] for k in ("weak_vs_full_ids", "merged_uncles", "siblings")}
+        kind = uncles_kind(ib, watch)
+        v = value_section(ib, mined_full, payments, final_txs, final_ords, start, end, kind)
+        res["value"] = {k: v[k] for k in ("kind", "weak_vs_full_ids", "merged_uncles", "siblings")}
         res["value_merges"] = v["merges"]
         res["input_blocks_on_wire"] = len(ib)
         res["input_blocks_mined_logged"] = sum(len([1 for t, _ in L["input_mined"] if start <= t < end]) for L in logs.values())
@@ -763,11 +792,21 @@ def print_report(res):
         print(f"VALUE input blocks on the wire {res['input_blocks_on_wire']} (mined lines in window "
               f"{res['input_blocks_mined_logged']}); weak vs full ids {v['weak_vs_full_ids'] or '-'}")
         m = v["merged_uncles"]
-        print(f"VALUE merged uncles {m['merges']} ({m['merges_with_txs']} with txs): uncle txs {m['uncle_txs']}, duplicates "
-              f"{m['duplicates']} ({fmt(m['duplicate_share'], 3)}), unique {m['unique']} (payments {m['unique_payments']}, "
-              f"on final chain {m['unique_on_final_chain']}); uncles without known txs {m['uncles_without_known_txs']}")
+        print(f"VALUE uncle references are {v['kind']}"
+              + (" (credit only: an uncle's transactions are not collected)" if v["kind"] == "header" else ""))
+        if v["kind"] == "header":
+            print(f"VALUE credited uncle references {m['references']} ({m['references_with_txs']} with txs): uncle txs "
+                  f"{m['uncle_txs']}, already on the referencing chain {m['already_on_referencing_chain']}, not on it "
+                  f"{m['not_on_referencing_chain']} (on the final chain anyway "
+                  f"{m['not_on_referencing_chain_but_on_final_chain']}); uncles without known txs {m['uncles_without_known_txs']}")
+        else:
+            print(f"VALUE merged uncles {m['merges']} ({m['merges_with_txs']} with txs): uncle txs {m['uncle_txs']}, "
+                  f"duplicates {m['duplicates']} ({fmt(m['duplicate_share'], 3)}), unique {m['unique']} (payments "
+                  f"{m['unique_payments']}, on final chain {m['unique_on_final_chain']}); uncles without known txs "
+                  f"{m['uncles_without_known_txs']}")
         s = v["siblings"]
-        print(f"VALUE siblings {s['blocks'] or 0}; their txs {s['transactions'] or 0}; winning-path ties {s['winning_path_ties']}")
+        print(f"VALUE siblings {s['blocks'] or 0}; their txs {s['transactions'] or 0}; winning-path ties "
+              f"{s['winning_path_ties']}; delay to re-inclusion {s['re_inclusion_delay_ms']}")
     for n, v in res["nodes"]["per_node"].items():
         print(f"NODE {n}: uncles setting {v['inputBlockUncles_conf']}; credited field {v['credited_field']} "
               f"({v['blocks_with_credit']}/{v['input_blocks_seen']} best-chain input blocks with credit, "

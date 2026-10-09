@@ -45,6 +45,28 @@ class Value(unittest.TestCase):
                          {"txs": 3, "on_winning_path": 1, "re_included_later": 1, "in_no_other_input_block": 1,
                           "not_merged_but_on_final_chain": 1})
 
+    def test_header_kind_credits_and_never_recovers(self):
+        # the same tree under header semantics: the reference is credit only, the sibling's txs are not collected
+        ib, s = tree(True)
+        v = mv.value_section(ib, {}, set(), {"cc0000" + "2" * 58}, {O}, 0, 100, kind="header")
+        m = v["merged_uncles"]
+        self.assertEqual((m["references"], m["uncle_txs"], m["already_on_referencing_chain"], m["not_on_referencing_chain"]),
+                         (1, 3, 1, 2))
+        self.assertNotIn("unique", m)
+        t = v["siblings"]["transactions"]
+        self.assertEqual(t, {"txs": 3, "on_winning_path": 1, "re_included_later": 1, "in_no_other_input_block": 1,
+                             "not_merged_but_on_final_chain": 1})
+        self.assertEqual(v["siblings"]["blocks"], {"siblings": 1, "credited": 1})
+        self.assertEqual(v["siblings"]["re_inclusion_delay_ms"], {"n": 1, "p50": 19, "p90": 19})
+
+    def test_kind_detection(self):
+        ib, _ = tree(True)
+        self.assertEqual(mv.uncles_kind(ib, [{"ev": "input", "credited": ["x"]}]), "header")
+        self.assertEqual(mv.uncles_kind(ib, [{"ev": "input", "credited": "absent"}]), "merging")
+        self.assertEqual(mv.uncles_kind(ib, [{"ev": "input"}]), "merging")
+        ib2, _ = tree(False)
+        self.assertEqual(mv.uncles_kind(ib2, []), "none")
+
     def test_uncle_with_unknown_transactions_is_counted_not_guessed(self):
         ib, s = tree(True)
         ib[s]["weak"] = None

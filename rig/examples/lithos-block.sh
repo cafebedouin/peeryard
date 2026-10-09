@@ -80,7 +80,7 @@ batching.lithosdex.enabled = false
 stratum.candidate.sources.rent.enabled = false
 stratum.candidate.sources.ergodex.enabled = false
 stratum.candidate.sources.lithosdex.enabled = false
-emission { autoCollateralize = true, collateralizeInterval = 30000, queueInterval = 30000 }
+emission { maxLenderKeys = 1, autoCollateralize = true, collateralizeInterval = 30000, queueInterval = 30000 }
 stratum.candidate.sources.upkeep { enabled = true, mode = "candidate", verifyWithNode = true, scanIntervalMs = 10000, jobs.heartbeat { enabled = true } }
 EOC
 cd "$WD"; companion_start client --in A -- env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" \

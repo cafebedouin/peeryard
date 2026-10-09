@@ -13,7 +13,7 @@
       "conf": {
         "ergo.node.extraIndex": "true",
         "ergo.node.minimalFeeAmount": "0",
-        "ergo.node.blockCandidateGenerationInterval": "1s"
+        "ergo.node.blockCandidateGenerationInterval": "1ms"
       }
     }
   ],

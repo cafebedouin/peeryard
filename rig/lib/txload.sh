@@ -30,8 +30,9 @@
 #   txload.jsonl   per payment attempt {t_ms, kind: fund|pay, node, to, seq, chain_pos, chain_len, id|null, error|null
 #                  (the node's text; a long one keeps its first 100 and last 300 characters),
 #                  inputs, outputs} (inputs/outputs: box ids, from the payer's pool right after the send)
-#   txwatch.jsonl  {t_ms, node, ev: "full", h, id} on each new best full block; {t_ms, node, ev: "input", ord, id, txs}
-#                  on each input block first seen in a node's best input chain; {t_ms, node, ev: "pool", n};
+#   txwatch.jsonl  {t_ms, node, ev: "full", h, id} on each new best full block; {t_ms, node, ev: "input", ord, id, txs,
+#                  credited} on each input block first seen in a node's best input chain (credited: the uncle ids the
+#                  node's /blocks/bestInputChain "creditedUncles" lists for it, or "absent" without that field); {t_ms, node, ev: "pool", n};
 #                  {t_ms, node, ev: "mined", id, txs, tries} per input block the node mined (txs null if the node
 #                  never served them within 5 polls)
 #   txload_pools.json {node: [tx ids]};  txload_chain.jsonl {h, id, ts, txs} per block of the named node's chain
@@ -138,7 +139,7 @@ txload_start(){ local rate="$1" n i r; shift
   mark txload-start; echo "[txload] started: $rate per 10 s among $* ($([[ "${TXLOAD_PER_NODE:-0}" == 1 ]] && echo "one sender per node, $r each" || echo "one sender"); $([[ "${TXLOAD_CONFIRMED_ONLY:-0}" == 1 ]] && echo "confirmed boxes only, no chains" || echo "chains of ${TXLOAD_CHAIN_LEN:-3} in ${TXLOAD_CHAIN_PCT:-30}% of ticks"); pid $TXLOAD_PID)"; }
 txload_stop(){ [[ -n "$TXLOAD_PID" ]] || return 0; local p; for p in $TXLOAD_PID; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; TXLOAD_PID=""
   mark txload-stop; echo "[txload] stopped: $(grep -c '"kind":"pay"' "$RIG_LOG_DIR/txload.jsonl" 2>/dev/null) payment attempts"; }
-_txw_loop(){ local nodes=("$@") x info full ic ord id txs t pool lastpool=0 pool_ms=$(( ${TXWATCH_POOL_S:-5} * 1000 )) logf sz k
+_txw_loop(){ local nodes=("$@") x info full ic ord id txs t cu pool lastpool=0 pool_ms=$(( ${TXWATCH_POOL_S:-5} * 1000 )) logf sz k
   declare -A LASTF SEEN NOIB LOGOFF PEND
   # mined input blocks are read from the logs' current ends on: only blocks mined while the observer runs
   for x in "${nodes[@]}"; do logf="$RIG_LOG_DIR/node_$x.log"; [[ -f "$logf" ]] && LOGOFF[$x]=$(stat -c %s "$logf"); done
@@ -174,7 +175,10 @@ _txw_loop(){ local nodes=("$@") x info full ic ord id txs t pool lastpool=0 pool
       for id in $(jq -r '.bestInputBlocks[]? // empty' <<< "$ic" 2>/dev/null); do
         [[ -n "${SEEN[$x/$id]:-}" ]] && continue; SEEN[$x/$id]=1; t=$(date +%s%3N)
         txs="$(rest "$x" "/blocks/$id/inputBlockTransactionIds" | jq -c 'if type == "array" then . else null end' 2>/dev/null)"
-        printf '{"t_ms":%s,"node":"%s","ev":"input","ord":"%s","id":"%s","txs":%s}\n' "$t" "$x" "$ord" "$id" "${txs:-null}"
+        # "credited": the uncles this node credits to the block (field "creditedUncles" of /blocks/bestInputChain, which
+        # only a node running the uncles prototype with its setting on serves); absent = the node does not report it
+        cu="$(jq -c --arg i "$id" 'if has("creditedUncles") then (.creditedUncles[$i] // []) else "absent" end' <<< "$ic" 2>/dev/null)"
+        printf '{"t_ms":%s,"node":"%s","ev":"input","ord":"%s","id":"%s","txs":%s,"credited":%s}\n' "$t" "$x" "$ord" "$id" "${txs:-null}" "${cu:-null}"
       done
     done
     sleep "${TXWATCH_POLL_S:-1}"

@@ -438,6 +438,8 @@ overrides shape a run without editing the topology: `PEERYARD_CHAIN` (preset), `
 polling for miners that set none), `PEERYARD_EXTMINE_POLL` / `PEERYARD_EXTMINE_RATE` (external miners instead of
 the internal CPU miner, see *Hook helpers*), `PEERYARD_DURATION` (hooks that run for a while read it),
 `PEERYARD_KEEP_DATA=1` (do not wipe data directories on first launch), `PEERYARD_WIRE=1` (the wire capture),
+`PEERYARD_NODE_CONF="<node>:<dotted.key>=<value>[;...]"` (extra config lines for single nodes, merged into a copy of the
+topology's `nodes[].conf`, so `effective.json` records them; e.g. one Matrix node with a build's setting off),
 `PEERYARD_JAVA` (the `java` binary for
 JVM nodes; the node is built and tested on JDK 8, so pin one to compare with upstream's numbers),
 `PEERYARD_JAVA_OPTS` (default `-Xmx512m`), and `PEERYARD_UP_TIMEOUT` (seconds a node may take to answer at

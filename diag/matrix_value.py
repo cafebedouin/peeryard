@@ -36,6 +36,11 @@ Sections (each prints what it read, and "n/a: <why>" when its source is absent):
             A transaction is matched by its weak id (3 bytes of its id + 3 of its witness id); a payment or a
             final-chain transaction is matched to a weak id by the first 3 bytes of its id (a 1-in-16.7M collision
             per pair, counted as is).
+  NODE      Per node: its inputBlockUncles setting (effective.json conf, else "jar default"); whether its REST
+            reports credited uncles (txwatch "credited": a list on a flag-on node of the uncles prototype, "absent"
+            otherwise) and how many; "Modifier ... is permanently invalid" verdicts of its synchronizer and the
+            "Double application of a modifier" rejections (on the exception's continuation line) behind them;
+            penalties it gave, by peer and kind; its last best full block and matrix-compat's same_chain against A.
   LOAD      Pool size (txwatch "pool" events), payment attempts and refusals (txload.jsonl), transactions per
             final-chain ordering block (txload_chain.jsonl), per input block (wire weak ids or txwatch), and the
             pool count each Matrix candidate was assembled from ("Assembling a block candidate ... from N
@@ -174,7 +179,7 @@ def fmt(x, nd=1):
 def scan_log(path, clock):
     """Per node: the lines the sections read, with epoch-ms times."""
     r = {"mined_ordering": set(), "applied": [], "got102": [], "rebuilt": [], "fallback": [], "double": [],
-         "available": [], "input_mined": [], "matrix": False}
+         "available": [], "input_mined": [], "matrix": False, "invalid": [], "penalties": []}
     pat = {
         "mined": re.compile(r"New block mined, header: .*?\"id\":\"" + HEX),
         "applied": re.compile(r"Valid modifier with header " + HEX + r" .*applied to UtxoState"),
@@ -185,13 +190,24 @@ def scan_log(path, clock):
         "avail": re.compile(r"Assembling a block candidate for block #\d+ from (\d+) transactions available"),
         "imined": re.compile(r"Input-block " + HEX + r" mined @"),
         "matrix": re.compile(r"Processing valid sub-block |Input-block [0-9a-f]{64} mined"),
+        "penalty": re.compile(r"/(\d+\.\d+\.\d+\.\d+):\d+ penalized, penalty: (\w+)"),
     }
+    t = None
     with open_text(path) as fh:
         for line in fh:
             m = TS.match(line)
             if not m:
+                # a continuation line (an exception's message or stack) belongs to the last timestamped line
+                if t is not None and "Double application" in line:
+                    r["double"].append(t)
                 continue
             t = clock.ms(int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)))
+            if "is permanently invalid" in line and "ErgoNodeViewSynchronizer" in line:
+                r["invalid"].append(t)
+            elif "penalized, penalty:" in line:
+                x = pat["penalty"].search(line)
+                if x:
+                    r["penalties"].append((t, x.group(1), x.group(2)))
             if "New block mined" in line:
                 x = pat["mined"].search(line)
                 if x:
@@ -623,6 +639,41 @@ def node_kinds(msgs, frames, logs, matrix_arg=None):
             "traffic and logs")
 
 
+def nodes_section(logs, watch, eff, rig_log, start, end):
+    """Per node: the uncles setting it was given (effective.json nodes[].conf, else the jar's default), whether its REST
+    reports credited uncles and how many, the synchronizer's "permanently invalid" verdicts and the double-application
+    rejections behind them, the penalties it gave (by peer and kind), and where its best full block ended."""
+    name_of = {n.get("id_ip"): n.get("name") for n in (eff or {}).get("nodes", [])}
+    conf = {n.get("name"): (n.get("conf") or {}) for n in (eff or {}).get("nodes", [])}
+    out = {}
+    names = sorted(set(logs) | set(conf) | {r.get("node") for r in watch if r.get("node")})
+    last_full = {}
+    for r in watch:
+        if r.get("ev") == "full" and r["t_ms"] < end + 300000:
+            last_full[r["node"]] = (r["h"], r["id"])
+    same = dict(re.findall(r"\[matrix-compat\] A-(\w+) same_chain=(\S+)", rig_log or ""))
+    for n in names:
+        L = logs.get(n, {})
+        ev = [r for r in watch if r.get("ev") == "input" and r.get("node") == n and start <= r["t_ms"] < end]
+        rep_ = [r for r in ev if isinstance(r.get("credited"), list)]
+        absent = sum(1 for r in ev if r.get("credited") == "absent")
+        refs = [u for r in rep_ for u in r["credited"]]
+        pen = Counter(f"{name_of.get(ip, ip)}:{kind}" for t, ip, kind in L.get("penalties", []) if start <= t < end)
+        flag = conf.get(n, {}).get("ergo.node.inputBlockUncles")
+        field = ("no input events" if not ev else "not recorded (older txwatch)" if not rep_ and not absent else
+                 "reported" if not absent else "absent" if not rep_ else "mixed")
+        out[n] = {"inputBlockUncles_conf": flag if flag is not None else "jar default",
+                  "credited_field": field,
+                  "input_blocks_seen": len(ev), "blocks_with_credit": sum(1 for r in rep_ if r["credited"]),
+                  "credited_refs": len(refs), "credited_distinct": len(set(refs)),
+                  "permanently_invalid": sum(1 for t in L.get("invalid", []) if start <= t < end),
+                  "double_application": sum(1 for t in L.get("double", []) if start <= t < end),
+                  "penalties_given": dict(pen),
+                  "final_full": last_full.get(n), "same_chain_as_A": same.get(n, "A" if n == "A" else None)}
+    tips = {v["final_full"][1] for v in out.values() if v["final_full"]}
+    return {"per_node": out, "final_tips_agree": len(tips) == 1 if tips else None}
+
+
 def analyze(run, arg_from=None, arg_to=None, matrix_arg=None):
     msgs = read_jsonl(locate(run, "messages.jsonl"))
     watch = read_jsonl(locate(run, "txwatch.jsonl"))
@@ -667,6 +718,14 @@ def analyze(run, arg_from=None, arg_to=None, matrix_arg=None):
     else:
         res["value"] = "n/a: no InputBlock frames (run with the wire on)"
     res["load"] = load_section(txload, watch, chain, logs, ib, start, end)
+    effp = locate(run, "effective.json")
+    eff = None
+    if effp:
+        with open_text(effp) as fh:
+            eff = json.load(fh)
+    rl = locate(run, "rig.log")
+    rig_text = open_text(rl).read() if rl else ""
+    res["nodes"] = nodes_section(logs, watch, eff, rig_text, start, end)
     return res
 
 
@@ -709,6 +768,14 @@ def print_report(res):
               f"on final chain {m['unique_on_final_chain']}); uncles without known txs {m['uncles_without_known_txs']}")
         s = v["siblings"]
         print(f"VALUE siblings {s['blocks'] or 0}; their txs {s['transactions'] or 0}; winning-path ties {s['winning_path_ties']}")
+    for n, v in res["nodes"]["per_node"].items():
+        print(f"NODE {n}: uncles setting {v['inputBlockUncles_conf']}; credited field {v['credited_field']} "
+              f"({v['blocks_with_credit']}/{v['input_blocks_seen']} best-chain input blocks with credit, "
+              f"{v['credited_refs']} refs, {v['credited_distinct']} distinct); permanently invalid "
+              f"{v['permanently_invalid']} (double application {v['double_application']}); penalties given "
+              f"{v['penalties_given'] or 0}; final full block {v['final_full'][0] if v['final_full'] else '-'}; "
+              f"same chain as A {v['same_chain_as_A']}")
+    print(f"NODE final best full blocks agree: {res['nodes']['final_tips_agree']}")
     L = res["load"]
     print(f"LOAD payments {L['payments']['attempts_per_min']}/min accepted {L['payments']['accepted']} refused "
           f"{L['payments']['refused']} {L['payments']['refusal_reasons'] or ''}")

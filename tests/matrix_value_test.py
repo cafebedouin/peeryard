@@ -59,6 +59,39 @@ class Value(unittest.TestCase):
         self.assertEqual(v["weak_vs_full_ids"], {"compared": 1, "agree": 1})
 
 
+class Nodes(unittest.TestCase):
+    def test_flag_state_credit_invalid_and_penalties(self):
+        L = {"invalid": [5, 6], "double": [5, 6, 7], "penalties": [(5, "100.64.0.2", "MisbehaviorPenalty")]}
+        watch = [{"ev": "input", "node": "A", "t_ms": 5, "credited": ["u1", "u2"]},
+                 {"ev": "input", "node": "A", "t_ms": 6, "credited": []},
+                 {"ev": "input", "node": "C", "t_ms": 5, "credited": "absent"},
+                 {"ev": "full", "node": "A", "t_ms": 7, "h": 9, "id": "x"},
+                 {"ev": "full", "node": "C", "t_ms": 7, "h": 9, "id": "x"}]
+        eff = {"nodes": [{"name": "A", "id_ip": "100.64.0.1", "conf": {}},
+                         {"name": "B", "id_ip": "100.64.0.2"},
+                         {"name": "C", "id_ip": "100.64.0.3", "conf": {"ergo.node.inputBlockUncles": "false"}}]}
+        out = mv.nodes_section({"A": L}, watch, eff, "[matrix-compat] A-C same_chain=SAME@9:x", 0, 100)
+        a, c = out["per_node"]["A"], out["per_node"]["C"]
+        self.assertEqual((a["inputBlockUncles_conf"], a["credited_field"], a["blocks_with_credit"], a["credited_refs"]),
+                         ("jar default", "reported", 1, 2))
+        self.assertEqual((a["permanently_invalid"], a["double_application"], a["penalties_given"]),
+                         (2, 3, {"B:MisbehaviorPenalty": 1}))
+        self.assertEqual((c["inputBlockUncles_conf"], c["credited_field"], c["same_chain_as_A"]), ("false", "absent", "SAME@9:x"))
+        self.assertTrue(out["final_tips_agree"])
+
+    def test_continuation_line_double_application_is_counted(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as fh:
+            fh.write("05:26:46.100 WARN  [x] o.e.n.ErgoNodeViewSynchronizer - Modifier aa is permanently invalid\n"
+                     "org.ergoplatform.validation.MalformedModifierError: Double application of a modifier is prohibited. aa\n"
+                     "\tat somewhere\n"
+                     "05:26:46.200 INFO  [x] o.e.n.peer.PeerManager - /100.64.0.2:49900 penalized, penalty: MisbehaviorPenalty\n")
+        r = mv.scan_log(fh.name, mv.Clock(1791520000000))
+        os.unlink(fh.name)
+        self.assertEqual((len(r["invalid"]), len(r["double"]), [p[1:] for p in r["penalties"]]),
+                         (1, 1, [("100.64.0.2", "MisbehaviorPenalty")]))
+
+
 class Wire(unittest.TestCase):
     def test_frame_bytes_and_groups(self):
         self.assertEqual(mv.frame_bytes({"len": 0}), 9)

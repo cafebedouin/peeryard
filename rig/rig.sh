@@ -126,6 +126,21 @@ if [[ "${RIG_INNER:-0}" != "1" ]]; then
   unshare -Urmn true 2>/dev/null || { echo "unprivileged user namespaces are unavailable here (Ubuntu 23.10+: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; or use a VM)" >&2; exit 2; }
   export SCRATCH="${SCRATCH:-$(mktemp -d "${TMPDIR:-/tmp}/peeryard-rig.XXXXXX")}"
   echo "[rig] scratch: $SCRATCH"
+  # PEERYARD_NODE_CONF="<node>:<dotted.key>=<value>[;...]": extra HOCON lines for single nodes without editing the
+  # topology, e.g. "C:ergo.node.inputBlockUncles=false". They are merged into a copy of the topology's nodes[].conf
+  # (so effective.json records them) and win over the topology's own entry for the same key.
+  if [[ -n "${PEERYARD_NODE_CONF:-}" ]]; then
+    ncf="$SCRATCH/topology-node-conf.json"; cp "$RIG_CFG" "$ncf"
+    IFS=';' read -r -a _ncs <<< "$PEERYARD_NODE_CONF"
+    for _nc in "${_ncs[@]}"; do [[ -z "$_nc" ]] && continue
+      [[ "$_nc" =~ ^([A-Za-z0-9_]+):([A-Za-z0-9_.]+)=([A-Za-z0-9_.-]+)$ ]] || { echo "PEERYARD_NODE_CONF entry '$_nc': <node>:<dotted.key>=<value> (value: letters, digits, . _ -)" >&2; exit 2; }
+      jq -e --arg n "${BASH_REMATCH[1]}" 'any(.nodes[]; .name == $n)' "$ncf" >/dev/null || { echo "PEERYARD_NODE_CONF: no node '${BASH_REMATCH[1]}' in the topology" >&2; exit 2; }
+      jq --arg n "${BASH_REMATCH[1]}" --arg k "${BASH_REMATCH[2]}" --arg v "${BASH_REMATCH[3]}" \
+        '.nodes |= map(if .name == $n then .conf = ((.conf // {}) + {($k): $v}) else . end)' "$ncf" > "$ncf.tmp" && mv "$ncf.tmp" "$ncf"
+      echo "[rig] node conf: ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}=${BASH_REMATCH[3]}"
+    done
+    RIG_CFG="$ncf"; export RIG_CFG
+  fi
   exec unshare -Urmn "${BASH_SOURCE[0]}"
 fi
 

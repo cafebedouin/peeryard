@@ -104,6 +104,10 @@ o29="$(floor_out 29 base)"; o30="$(floor_out 30 base)"; onone="$(floor_out 29 ""
 if python3 tests/wire_test.py > "$T/wire.txt" 2>&1; then ok "wire.py: $(grep -oE 'Ran [0-9]+ tests' "$T/wire.txt")"
 else bad "wire.py: reassembly and framing" "see $T/wire.txt"; fi
 
+# diag/matrix_value.py: uncle duplicate/unique split, sibling fates, frame bytes, type-102 request matching (tests/matrix_value_test.py)
+if python3 tests/matrix_value_test.py > "$T/matrix_value.txt" 2>&1; then ok "matrix_value.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_value.txt")"
+else bad "matrix_value.py: value split and request matching" "see $T/matrix_value.txt"; fi
+
 # diffrun/logab.sh: base vs candidate node logs (synthetic runs, no node): a line only the candidate logs is novel,
 # identical logs give no novel message
 mkrun(){ mkdir -p "$1/logs"; for i in $(seq 1 30); do echo "10:00:$(printf %02d $((i % 60))).000 INFO  [x] o.e.n.Foo - step $i done"; done > "$1/logs/node_A.log"; }

@@ -24,7 +24,10 @@
       "jar": "${PEERYARD_MATRIX_JAR}",
       "knownPeers": [
         "A"
-      ]
+      ],
+      "conf": {
+        "ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\""
+      }
     }
   ],
   "links": [

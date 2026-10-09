@@ -16,7 +16,8 @@
 #     20 ERG), about 30% of ticks a chain of 3 back-to-back payments from one wallet (later ones may spend unconfirmed
 #     change); the load stops MATRIX_COMPAT_TXLOAD_DRAIN_S (60) s before the window ends, the pools are read at its end
 #     and diag/txload_report.py prints MATRIX-TXLOAD (per payment: submit time, node, id, first input block seen,
-#     holding ordering block, lost or not; txrecords.jsonl). Reported, not judged.
+#     holding ordering block, lost or not; txrecords.jsonl). Reported, not judged. TXLOAD_FUND_SPLIT=<k> funds each
+#     wallet in k boxes (rig/lib/txload.sh), for loads above what one funded box's change chain carries.
 #   PEERYARD_EXTMINE_POLL=<1s|4s|...>  (rig.sh) every miner is an external miner polling /mining/candidate at that
 #     interval instead of the node's internal CPU miner; MATRIX-EXTMINE sums each miner's submissions.
 #     PEERYARD_EXTMINE_STRICT=1: those miners read the candidate only on the poll schedule (extminer.py --strict).
@@ -60,7 +61,7 @@ for i in $(seq 1 $((DUR / 20))); do sleep 20
 done
 # stop every miner, then let the network settle before comparing: tips compared while several nodes mine race.
 # The analysis window ends here, before the relaunches (a restart brings its own reconnects and penalties).
-END=$(date +%H:%M:%S)
+END=$(date +%H:%M:%S); echo "[matrix-compat] window end $END"
 if (( TXL > 0 )); then txload_stop; txwatch_stop; txload_pools "${NODES[@]}"; fi   # pools before the relaunches empty them
 # each miner's reward key, read while it still mines (the mining routes answer only with mining on)
 declare -A PKN; for x in $MINERS; do pk=$(rest "$x" /mining/rewardPublicKey | jq -r '.rewardPubkey // empty'); [[ -n "$pk" ]] && PKN[$pk]=$x; done

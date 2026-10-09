@@ -1,13 +1,19 @@
 # rig/lib/txload.sh: a benign payment load and the observer that records where each payment went. Sourced by rig.sh.
 # Honest wallets paying each other through /wallet/payment/send (the wallet chooses the inputs); nothing is crafted.
 #
-#   txload_fund <from> <nanoerg> <to>...   one payment from <from> to each <to> (kind "fund"), so their wallets can pay
+#   txload_fund <from> <nanoerg> <to>...   one payment from <from> to each <to> (kind "fund"), so their wallets can pay;
+#                                          TXLOAD_FUND_SPLIT=<k> (default 1) splits each into k boxes of nanoerg/k, so a
+#                                          wallet holds k confirmed boxes and a heavy load is not held to one box's chain
 #   txload_start <rate> <node>...          background load: <rate> payments per 10 s on average (1-50), each from a
 #                                          random listed node whose confirmed balance covers it, to another listed node
 #   txload_stop
 #   txwatch_start <node>...                background observer, every TXWATCH_POLL_S (1) s per node: the best full block
 #                                          (/info) and, on a node with input blocks (Matrix line), every input block id
-#                                          new in /blocks/bestInputChain with its /blocks/<id>/inputBlockTransactionIds
+#                                          new in /blocks/bestInputChain with its /blocks/<id>/inputBlockTransactionIds;
+#                                          every TXWATCH_POOL_S (5) s the pool size /info reports (unconfirmedCount, no
+#                                          extra call); and each input block the node logs as mined ("Input-block <id>
+#                                          mined"), siblings included, with its transaction ids read from that node
+#                                          (TXWATCH_MINED=0 turns this off)
 #   txwatch_stop
 #   txload_pools <node>...                 every node's unconfirmed pool, now (call before a relaunch: pools are memory)
 #   txload_chain <node> <from height>      <node>'s blocks from that height to its tip, with their transaction ids
@@ -20,7 +26,9 @@
 #                  (the node's text; a long one keeps its first 100 and last 300 characters),
 #                  inputs, outputs} (inputs/outputs: box ids, from the payer's pool right after the send)
 #   txwatch.jsonl  {t_ms, node, ev: "full", h, id} on each new best full block; {t_ms, node, ev: "input", ord, id, txs}
-#                  on each input block first seen in a node's best input chain
+#                  on each input block first seen in a node's best input chain; {t_ms, node, ev: "pool", n};
+#                  {t_ms, node, ev: "mined", id, txs, tries} per input block the node mined (txs null if the node
+#                  never served them within 5 polls)
 #   txload_pools.json {node: [tx ids]};  txload_chain.jsonl {h, id, ts, txs} per block of the named node's chain
 # diag/txload_report.py joins them into one record per payment (txrecords.jsonl) and a summary line.
 # The observer sees an input block only if it is in a node's best input chain at one of its polls.
@@ -29,11 +37,13 @@ declare -A TXL_ADDR
 TXLOAD_PID=""; TXWATCH_PID=""
 _txl_addr(){ [[ -n "${TXL_ADDR[$1]:-}" ]] || TXL_ADDR[$1]="$(address "$1")"; echo "${TXL_ADDR[$1]}"; }
 # _txl_send <kind> <from> <to> <nanoerg> <seq> <pos> <len>: one payment, one line in txload.jsonl
-_txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$7" t out id="" err="" tx ins=null outs=null addr
+_txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$7" split="${8:-1}" t out id="" err="" tx ins=null outs=null addr req
   addr="$(_txl_addr "$to")"; t=$(date +%s%3N)
   if [[ -z "$addr" ]]; then err="no address for $to"
   else
-    out="$(wallet "$from" /wallet/payment/send "[{\"address\":\"$addr\",\"value\":$amt}]")"
+    # split > 1: one transaction with that many outputs of amt/split each to the same address (separate boxes)
+    req="$(jq -cn --arg a "$addr" --argjson v "$((amt / split))" --argjson k "$split" '[range($k) | {address: $a, value: $v}]')"
+    out="$(wallet "$from" /wallet/payment/send "$req")"
     id="$(jq -r 'if type == "string" then . else empty end' <<< "$out" 2>/dev/null)"
     if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then
       tx="$(rest "$from" "/transactions/unconfirmed/byTransactionId/$id")"
@@ -46,9 +56,10 @@ _txl_send(){ local kind="$1" from="$2" to="$3" amt="$4" seq="$5" pos="$6" len="$
       id: (if $id == "" then null else $id end), error: (if $err == "" then null else $err end), inputs: $ins, outputs: $outs}' \
     >> "$RIG_LOG_DIR/txload.jsonl"
   [[ -n "$id" ]]; }
-txload_fund(){ local from="$1" amt="$2" to ok=0 n=0; shift 2
-  for to in "$@"; do n=$((n + 1)); _txl_send fund "$from" "$to" "$amt" 0 "$n" "$#" && ok=$((ok + 1)); sleep 0.3; done
-  echo "[txload] funded $ok of $# wallets from $from ($amt nanoERG each)"; }
+txload_fund(){ local from="$1" amt="$2" to ok=0 n=0 k="${TXLOAD_FUND_SPLIT:-1}"; shift 2
+  [[ "$k" =~ ^[0-9]+$ && $k -ge 1 && $k -le 100 ]] || { echo "[txload] TXLOAD_FUND_SPLIT '$k': 1-100"; return 1; }
+  for to in "$@"; do n=$((n + 1)); _txl_send fund "$from" "$to" "$amt" 0 "$n" "$#" "$k" && ok=$((ok + 1)); sleep 0.3; done
+  echo "[txload] funded $ok of $# wallets from $from ($amt nanoERG each, in $k box(es))"; }
 _txl_loop(){ local rate="$1"; shift; local nodes=("$@") amt="${TXLOAD_NANOERG:-100000000}" cpct="${TXLOAD_CHAIN_PCT:-30}" clen="${TXLOAD_CHAIN_LEN:-3}"
   local gap_ms=$((10000 / rate)) seq=0 next from to len k i cand need bal
   RANDOM="${TXLOAD_SEED:-1}"; next=$(date +%s%3N)
@@ -76,13 +87,35 @@ txload_start(){ local rate="$1"; shift
   mark txload-start; echo "[txload] started: $rate per 10 s among $* (chains of ${TXLOAD_CHAIN_LEN:-3} in ${TXLOAD_CHAIN_PCT:-30}% of ticks; pid $TXLOAD_PID)"; }
 txload_stop(){ [[ -n "$TXLOAD_PID" ]] || return 0; kill "$TXLOAD_PID" 2>/dev/null; wait "$TXLOAD_PID" 2>/dev/null; TXLOAD_PID=""
   mark txload-stop; echo "[txload] stopped: $(grep -c '"kind":"pay"' "$RIG_LOG_DIR/txload.jsonl" 2>/dev/null) payment attempts"; }
-_txw_loop(){ local nodes=("$@") x info full ic ord id txs t; declare -A LASTF SEEN NOIB
+_txw_loop(){ local nodes=("$@") x info full ic ord id txs t pool lastpool=0 pool_ms=$(( ${TXWATCH_POOL_S:-5} * 1000 )) logf sz k
+  declare -A LASTF SEEN NOIB LOGOFF PEND
+  # mined input blocks are read from the logs' current ends on: only blocks mined while the observer runs
+  for x in "${nodes[@]}"; do logf="$RIG_LOG_DIR/node_$x.log"; [[ -f "$logf" ]] && LOGOFF[$x]=$(stat -c %s "$logf"); done
   while :; do
+    t=$(date +%s%3N); pool=0; (( t - lastpool >= pool_ms )) && { pool=1; lastpool=$t; }
     for x in "${nodes[@]}"; do
       info="$(rest "$x" /info 2>/dev/null)"; full="$(jq -r '"\(.fullHeight // "")/\(.bestFullHeaderId // "")"' <<< "$info" 2>/dev/null)"
       if [[ "$full" =~ ^[0-9]+/[0-9a-f]{64}$ && "$full" != "${LASTF[$x]:-}" ]]; then LASTF[$x]="$full"
         printf '{"t_ms":%s,"node":"%s","ev":"full","h":%s,"id":"%s"}\n' "$(date +%s%3N)" "$x" "${full%/*}" "${full#*/}"; fi
+      if (( pool )); then k="$(jq -r '.unconfirmedCount // empty' <<< "$info" 2>/dev/null)"
+        [[ "$k" =~ ^[0-9]+$ ]] && printf '{"t_ms":%s,"node":"%s","ev":"pool","n":%s}\n' "$(date +%s%3N)" "$x" "$k"; fi
       [[ -n "${NOIB[$x]:-}" ]] && continue
+      # input blocks this node mined (its own log), siblings included: their transaction ids, read from this node; an id
+      # the node does not serve yet is retried on the next polls (5 in all)
+      logf="$RIG_LOG_DIR/node_$x.log"
+      if [[ "${TXWATCH_MINED:-1}" == 1 && -f "$logf" ]]; then sz=$(stat -c %s "$logf")
+        if (( sz > ${LOGOFF[$x]:-0} )); then
+          for id in $(tail -c +"$(( ${LOGOFF[$x]:-0} + 1 ))" "$logf" | head -c "$(( sz - ${LOGOFF[$x]:-0} ))" \
+                      | grep -oE 'Input-block [0-9a-f]{64} mined @' | cut -d' ' -f2); do PEND[$x/$id]=0; done
+          LOGOFF[$x]=$sz; fi
+        for k in "${!PEND[@]}"; do [[ "$k" == "$x/"* ]] || continue; id="${k#*/}"
+          txs="$(rest "$x" "/blocks/$id/inputBlockTransactionIds" | jq -c 'if type == "array" then . else null end' 2>/dev/null)"
+          PEND[$k]=$(( PEND[$k] + 1 ))
+          if [[ -n "$txs" && "$txs" != null ]] || (( PEND[$k] >= 5 )); then
+            printf '{"t_ms":%s,"node":"%s","ev":"mined","id":"%s","txs":%s,"tries":%s}\n' "$(date +%s%3N)" "$x" "$id" "${txs:-null}" "${PEND[$k]}"
+            unset "PEND[$k]"; fi
+        done
+      fi
       ic="$(rest "$x" /blocks/bestInputChain 2>/dev/null)"
       # a node that answers /info but has no such route (a release jar) is not asked again
       if ! jq -e 'has("bestOrdering")' <<< "$ic" >/dev/null 2>&1; then [[ -n "$info" && -n "$ic" ]] && NOIB[$x]=1; continue; fi

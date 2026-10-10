@@ -1,0 +1,21 @@
+{
+  "chain": {
+    "preset": "current",
+    "v4": true,
+    "blockInterval": "20s"
+  },
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "mine_poll": "5s",
+      "knownPeers": [],
+      "conf": {
+        "ergo.node.extraIndex": "true",
+        "ergo.node.minimalFeeAmount": "0",
+        "ergo.node.blockCandidateGenerationInterval": "1ms"
+      }
+    }
+  ],
+  "links": []
+}

@@ -178,6 +178,8 @@ jobs:
             [ -s "$f" ] && gzip -c "$f" > "$run/load/$(basename "$f").gz"; done; rmdir "$run/load" 2>/dev/null || true
           # the node logs (gzipped, about 1 MB a run) and the rig's topology, so a result can be traced per block
           mkdir -p "$run/nodes"; for f in "$run"/scratch/out/node_*.log "$run"/scratch/out/effective.json; do [ -f "$f" ] && gzip -c "$f" > "$run/nodes/$(basename "$f").gz"; done
+          # the rig's per-node samples (cpu_ticks, rss_mb, io, host loadavg1) and the classifier's cause, so CPU can be compared per run
+          for f in "$run"/scratch/out/samples.jsonl "$run"/scratch/out/cause.json; do [ -s "$f" ] && gzip -c "$f" > "$run/nodes/$(basename "$f").gz"; done
           # wire on: the decoded messages (gzipped) and the capture's health files; the pcaps are never uploaded
           if [ "$WIRE" = 1 ]; then
             [ -s "$run/scratch/out/messages.jsonl" ] && gzip -c "$run/scratch/out/messages.jsonl" > "$run/messages.jsonl.gz"

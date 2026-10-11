@@ -6,16 +6,16 @@ name: wallet oracle
 on:
   workflow_dispatch:
     inputs:
-      jar_url: { description: 'node jar to test (subject and reference both run it)', default: 'https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar' }
-      sha256: { description: 'sha256 of that jar (checked)', default: '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }
+      jar_url: { description: 'node jar to test (subject and reference both run it)', default: 'https://github.com/ergoplatform/ergo/releases/download/v6.0.7/ergo-6.0.7.jar' }
+      sha256: { description: 'sha256 of that jar (checked)', default: '8616f4051335cf3b7ee3f3099821b7b27b1913bcd8bb5957ed7fc42dde26e9fa' }
       repeats: { description: 'runs per variant (1-5)', default: '1' }
   push:
     branches: [ 'ci/wallet-oracle' ]
 permissions:
   contents: read
 env:
-  JAR_URL: ${{ inputs.jar_url || 'https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar' }}
-  JAR_SHA256: ${{ inputs.sha256 || '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }}
+  JAR_URL: ${{ inputs.jar_url || 'https://github.com/ergoplatform/ergo/releases/download/v6.0.7/ergo-6.0.7.jar' }}
+  JAR_SHA256: ${{ inputs.sha256 || '8616f4051335cf3b7ee3f3099821b7b27b1913bcd8bb5957ed7fc42dde26e9fa' }}
 jobs:
   list:
     runs-on: ubuntu-24.04
@@ -30,7 +30,7 @@ jobs:
     needs: list
     name: ${{ matrix.v.name }} (${{ matrix.repeat }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +41,7 @@ jobs:
           - { name: crash,            example: wallet-oracle-restart, env: 'WO_EVENT=crash',                    want: PASS }
           - { name: rescan,           example: wallet-oracle-restart, env: 'WO_EVENT=rescan',                   want: PASS }
           - { name: restart-positive, example: wallet-oracle-restart, env: 'WO_EVENT=rescan-from',              want: FAIL }
+          - { name: pending-aa,       example: wallet-oracle-restart, env: 'WO_EVENT=none WO_AT=pending',       want: PASS }
           - { name: fork-aa,          example: wallet-oracle-fork,    env: 'WO_FORK=0',                         want: PASS }
           - { name: fork,             example: wallet-oracle-fork,    env: 'WO_FORK=1',                         want: '-' }
           - { name: fork-positive,    example: wallet-oracle-fork,    env: 'WO_FORK=1 WO_CONTROL=rescan-from',  want: FAIL }

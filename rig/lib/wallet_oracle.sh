@@ -163,8 +163,11 @@ wo_history(){ local s="$1" r="$2" p="$3" m="$4" b i id sent=0 got=0 h end
   WO_WHY=""
   if ! b=$(wait_balance "$s" "${WO_MIN_REWARDS:-10000000000}" 300); then WO_WHY="no matured rewards on $s ($b)"; return 1; fi
   echo "[wo] $s holds $b nanoERG of matured rewards at height $(full_height "$s"); $r holds $(balance "$r")"
-  for i in 1 2 3; do id=$(pay "$s" "$p" 2000000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && sent=$((sent + 1)) || echo "[wo]   $s -> $p $i rejected: $id"; sleep 1; done
-  if ! b=$(wait_balance "$p" $((sent * 2000000000)) 120) || [[ $sent -lt 1 ]]; then WO_WHY="$s -> $p payments: $sent sent, $p balance $b"; return 1; fi
+  local ids=()
+  for i in 1 2 3; do id=$(pay "$s" "$p" 2000000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && { sent=$((sent + 1)); ids+=("$id"); } || echo "[wo]   $s -> $p $i rejected: $id"; sleep 1; done
+  # WO_HISTORY_WAIT (default 300 s): a subject one hop further from the miner (the fork example) needs longer than 120 s
+  if ! b=$(wait_balance "$p" $((sent * 2000000000)) "${WO_HISTORY_WAIT:-300}") || [[ $sent -lt 1 ]]; then
+    WO_WHY="$s -> $p payments: $sent sent, $p balance $b; pools: $s=$(mempool_size "$s") $m=$(mempool_size "$m"); $(for id in "${ids[@]}"; do printf '%s:%s=%s,%s=%s ' "${id:0:8}" "$s" "$(mempool_ids "$s" | grep -qx "$id" && echo pool || echo -)" "$m" "$(mempool_ids "$m" | grep -qx "$id" && echo pool || echo -)"; done)"; return 1; fi
   for i in 1 2 3; do id=$(pay "$p" "$s" 500000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && got=$((got + 1)) || echo "[wo]   $p -> $s $i rejected: $id"; sleep 1; done
   [[ $got -ge 1 ]] || { WO_WHY="no $p -> $s payment accepted"; return 1; }
   end=$((SECONDS + 120)); while [[ $SECONDS -lt $end && "$(mempool_size "$m")" != 0 ]]; do sleep 2; done

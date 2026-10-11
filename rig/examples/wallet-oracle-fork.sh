@@ -43,6 +43,9 @@ fh=$(tx_height S "$fid"); [[ "$fh" =~ ^[0-9]+$ ]] || { wo_inc STAGING "S's payme
 wait_h M2 $((h0 + 3)) 120
 h2=$(full_height M2); stop_mining M2 >/dev/null; settle_height_back M2; wait_h M2 "$h2" 60; wo_redial 60 M2 S
 h2=$(full_height M2); echo "[wo] S's side: payment ${fid:0:8} confirmed at $fh; M2 stopped at $h2"
+# with no cut, M must hold M2's blocks before it mines: else it builds a competing branch from where it stopped and the
+# "no event" control holds a reorg after all (seen once: S rolled back three blocks)
+if [[ "$FORK" == 0 ]]; then wo_redial 60 M M2; wo_same_tip 90 M2 M R P || { wo_inc STAGING "M did not reach M2's tip before mining (no cut)"; return 0; }; fi
 start_mining M 1500ms >/dev/null; settle_height_back M; wo_redial 60 M R P
 [[ "$FORK" == 0 ]] && wo_redial 60 M M2
 wait_h M $((h2 + LEAD)) 180
@@ -64,6 +67,8 @@ wo_redial 60 M M2
 wo_confirm M 3 S R P M2 || { wo_inc NOT_SETTLED "S, R, P and M2 did not reach M's tip after the heal"; return 0; }
 echo "[wo] after the heal: same_chain(M,S) $(same_chain M S); S at $(full_height S); S's fork payment ${fid:0:8} now at $(tx_height S "$fid") on S, $(tx_height R "$fid") on R; pending ${WO_PENDING:0:8} at $(tx_height R "$WO_PENDING") on R"
 if [[ "$CTL" == rescan-from ]]; then h=$(full_height S); echo "[wo] control: rescan S from $((h - 20)): $(wallet S /wallet/rescan "{\"fromHeight\":$((h - 20))}")"; fi
+rb=$(grep -c 'Rollback UtxoState' "$RIG_LOG_DIR/node_S.log" 2>/dev/null); echo "[wo] S's state rollbacks in its log: ${rb:-?}"
+if [[ "$FORK" == 0 && "${rb:-0}" != 0 ]]; then wo_inc STAGING "the no-cut control saw $rb rollback(s) on S; it is not a no-event run"; return 0; fi
 wallet_oracle S R 240
 case "$WO_RESULT" in SAME) rig_verdict=PASS ;; DIFF) rig_verdict=FAIL; rig_cause=WALLET_DIFF ;; *) rig_verdict=INCONCLUSIVE; rig_cause=NOT_SETTLED ;; esac
 wo_end

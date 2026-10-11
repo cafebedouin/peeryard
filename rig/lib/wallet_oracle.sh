@@ -150,6 +150,7 @@ wallet_oracle(){ local s="$1" r="$2" win="${3:-120}" dir="${4:-${RIG_LOG_DIR:-${
     wallet_settle "$s" "$r" "$win" >/dev/null
   done
   echo "$out"; WO_LINE=$(head -1 <<< "$out")
+  [[ $rc == 1 ]] && wo_explain "$s" "$r" "$dir/subject-$s.json" "$dir/reference-$r.json"
   case $rc in 0) WO_RESULT=SAME ;; 1) WO_RESULT=DIFF ;; *) WO_RESULT=INCONCLUSIVE ;; esac
   return $rc; }
 
@@ -216,3 +217,26 @@ wo_confirm(){ local m="$1" k="$2" h0 end ok=0 n; shift 2
   wo_same_tip 90 "$m" "$@"; ok=$?
   echo "[wo] $m mined from $h0 to $(full_height "$m"), pool $(mempool_size "$m"); one tip with $*: $([[ $ok == 0 ]] && echo yes || echo no)"
   return $ok; }
+
+# wo_explain <s> <r> <subject.json> <reference.json> [max=3]: after a DIFF, for up to <max> unspent boxes listed by
+# one side only, print what the other side's wallet records for that box (/wallet/boxes, spent boxes included:
+# spent, spendingTransaction, spendingHeight, inclusionHeight; "absent" when it lists none) and whether each node's
+# UTXO set holds it (/utxo/byId). Evidence for reading the DIFF, not part of the verdict.
+wo_explain(){ local s="$1" r="$2" fs="$3" fr="$4" max="${5:-3}" side id other off page k rec
+  for side in reference subject; do
+    if [[ $side == reference ]]; then other="$s"
+      mapfile -t ids < <(jq -nr --slurpfile a "$fr" --slurpfile b "$fs" '[$b[0].unspent[].boxId] as $o | $a[0].unspent[].boxId | select(. as $x | $o | index($x) | not)' | head -n "$max")
+    else other="$r"
+      mapfile -t ids < <(jq -nr --slurpfile a "$fs" --slurpfile b "$fr" '[$b[0].unspent[].boxId] as $o | $a[0].unspent[].boxId | select(. as $x | $o | index($x) | not)' | head -n "$max")
+    fi
+    for id in "${ids[@]}"; do
+      rec=""; off=0
+      while :; do
+        page=$(wallet "$other" "/wallet/boxes?minConfirmations=0&limit=$WO_PAGE&offset=$off" | _wo_json array)
+        [[ "$page" == null ]] && break
+        rec=$(jq -c --arg id "$id" 'map(select(.box.boxId == $id))[0] // empty | {spent, spendingTransaction, spendingHeight, inclusionHeight, onchain, scans}' <<< "$page")
+        k=$(jq length <<< "$page"); [[ -n "$rec" || "$k" -lt "$WO_PAGE" ]] && break; off=$((off + k))
+      done
+      echo "[wallet-oracle]   explain: box ${id:0:8} held only by the $side; $other's wallet: ${rec:-absent}; UTXO set: $s=$(rest "$s" "/utxo/byId/$id" | jq -r 'if .boxId then "yes" else "no" end' 2>/dev/null) $r=$(rest "$r" "/utxo/byId/$id" | jq -r 'if .boxId then "yes" else "no" end' 2>/dev/null)"
+    done
+  done; }

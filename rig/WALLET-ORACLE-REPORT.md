@@ -77,11 +77,14 @@ same staging and no event, `WO_AT=pending` is SAME, so the DIFF is the event's.
 | `WO_FORK=1` (the fork switch) | INCONCLUSIVE | `[rig] HARNESS-FAIL netem 'loss 100%' on M->M2 not applied` then `[wallet-oracle] INCONCLUSIVE: partition M M2 failed`: no netem on this host. **Not run** with a cut. |
 | `WO_FORK=0` (A/A), first version of the hook | not a valid control | M resumed mining before it held M2's blocks, built a competing branch, and S rolled back three blocks: the "no event" run held a reorg. The staging was fixed (M must hold M2's tip first; any rollback on S makes the no-cut run INCONCLUSIVE). Its comparison is in *For the operator* below. |
 | `WO_FORK=0 WO_CONTROL=rescan-from`, first version | INCONCLUSIVE | `[wallet-oracle] INCONCLUSIVE: S, R, P and M2 did not reach M's tip after the heal`; R and P stayed at full height 43 (headers 45) while M reached 179 (`[rig] CAUSE HEADERS_AHEAD_FULL_STUCK`); not investigated further, a staging or sync matter on this host, not a wallet result |
-| `WO_FORK=0` (A/A), fixed hook | AA_FIXED_RESULT | |
+| `WO_FORK=0` (A/A), fixed hook | INCONCLUSIVE | `[wallet-oracle] INCONCLUSIVE: S -> P payments: 3 sent, P balance 4000000000`: one of S's three history payments had not confirmed into P's balance within 120 s (S sits one hop further from the miner here than in the restart example); the comparison was not reached. Not re-run (budget). |
 
 ## What did not run, and why
 
 - **The fork switch itself** (`WO_FORK=1`) and its positive control: no netem here. Ready for a hosted runner.
+- **A valid fork A/A.** Neither no-cut run reached a valid comparison (table above), so the fork example's comparator path
+  is not yet shown SAME with no event; the history staging needs a longer wait (or a check of which payment is missing)
+  before its first hosted run.
 - **Repeats.** Every variant ran once; an A/A rate needs repeats on the runner class (`wallet-oracle.yml` takes
   `repeats` 1-5).
 - **Pruning, digest mode, lock/unlock, migration, `/wallet/restore`**: not built (open questions in WALLET-ORACLE.md). The

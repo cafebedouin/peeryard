@@ -63,10 +63,10 @@ jobs:
           cmd="testOnly $SPEC"; [[ -n "$FILTER" ]] && cmd="$cmd -- -z \"$FILTER\""
           echo "command: sbt -Denv=test '$cmd'" | tee -a "$GITHUB_STEP_SUMMARY"
           for i in $(seq 1 "$REPEATS"); do
-            log="out/run-$i.log"; ( cd ergo && sbt -Denv=test "$cmd" ) > "$log" 2>&1; rc=$?
+            log="out/run-$i.log"; rc=0; ( cd ergo && sbt -Denv=test "$cmd" ) > "$log" 2>&1 || rc=$?   # the step runs under bash -e
             sed -i 's/\x1b\[[0-9;]*m//g' "$log"
-            tests="$(grep -o 'Tests: succeeded [0-9]*, failed [0-9]*' "$log" | tail -1)"
-            fail="$(grep -A1 -m1 '\*\*\* FAILED \*\*\*' "$log" | tail -1 | sed 's/^\[info\] *//' | cut -c1-240 | tr '\t' ' ')"
+            tests="$(grep -o 'Tests: succeeded [0-9]*, failed [0-9]*' "$log" | tail -1 || true)"
+            fail="$(grep -A1 -m1 '\*\*\* FAILED \*\*\*' "$log" | tail -1 | sed 's/^\[info\] *//' | cut -c1-240 | tr '\t' ' ' || true)"
             printf '%s\t%s\t%s\t%s\t%s\n' "$LABEL" "$i" "$rc" "${tests:-none}" "$fail" | tee -a out/RESULTS.tsv
           done
           pass=$(awk -F'\t' 'NR>1 && $4=="Tests: succeeded 1, failed 0"' out/RESULTS.tsv | wc -l)

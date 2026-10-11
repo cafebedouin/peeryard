@@ -188,11 +188,13 @@ wo_push(){ local m="$1" id="$2" n tx r; shift 2
   [[ -n "$id" ]] || return 0
   mempool_ids "$m" | grep -qx "$id" && return 0
   for n in "$@"; do
-    tx=$(rest "$n" "/transactions/unconfirmed/byTransactionId/$id" | _wo_json object)
-    [[ "$tx" != null ]] || continue
-    r=$(wallet "$m" /transactions "$tx" | head -c 200)
-    echo "[wo] re-submitted ${id:0:8} from $n's pool to $m: $r"; return 0
-  done; }
+    # a node without it answers with an error object, so the answer must be the transaction itself
+    tx=$(rest "$n" "/transactions/unconfirmed/byTransactionId/$id" | jq -c --arg id "$id" 'select(type == "object" and .id == $id)' 2>/dev/null)
+    [[ -n "$tx" ]] || continue
+    r=$(wallet "$m" /transactions "$tx" | jq -c . 2>/dev/null | head -c 200)
+    echo "[wo] re-submitted ${id:0:8} from $n's pool to $m: ${r:-no answer}"; return 0
+  done
+  echo "[wo] ${id:0:8} is in no pool of $* (not re-submitted)"; }
 
 # wo_same_tip <timeout_s> <node>...: wait until every node reports the first node's best full block (no miner running)
 wo_same_tip(){ local end=$((SECONDS + $1)) n t ok; shift

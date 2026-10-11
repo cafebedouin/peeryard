@@ -6,8 +6,9 @@
 # prints same_state right after the pause (LAG@.. same-chain there: a block landed in the last seconds; not a failure).
 # RESULT_JSON carries both appVersions and interop = follow_ab && follow_ba.
 follow_settle(){ # follow_settle <miner> <follower> <target>: mine to target, settle; sets FS_OK, FS_TRICKLE, FS_WAIT
-  local m=$1 f=$2 t=$3 end
+  local m=$1 f=$2 t=$3 end t0=$SECONDS
   end=$((SECONDS + 240)); while [ $SECONDS -lt $end ] && [ "$(full_height "$m")" -lt "$t" ]; do sleep 3; done
+  echo "[interop] $m reached $(full_height "$m") (target $t) after $((SECONDS - t0))s of mining"
   if settle_follow "$m" "$f" "$t" 150; then FS_OK=yes; else FS_OK=no; fi
   FS_TRICKLE=$SETTLE_TRICKLE; FS_WAIT=$SETTLE_WAIT_S
   echo "[interop] settle $m->$f: ${SETTLE_STATE%%:*} after ${FS_WAIT}s, $FS_TRICKLE block(s) mined during the settle; after the pause: ${SETTLE_AFTER%%:*}"; }

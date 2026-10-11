@@ -663,19 +663,38 @@ relaunch(){ # $1=node: stop, wait for a full exit (RocksDB lock and ports releas
   local n="$1"; local p="${PID[$n]:-}" h0 end
   h0=$(full_height "$n" 2>/dev/null); [[ "$h0" =~ ^[0-9]+$ ]] || h0=0
   rig_event relaunch "" "" "$n" "mining=${MINING_OVR[$n]:-cfg} poll=${POLL_OVR[$n]:-cfg}"
+  local ts te
+  ts=$(date +%s.%N)
   if [[ -n "$p" ]]; then
     kill "$p" 2>/dev/null
     for _ in $(seq 1 40); do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done
     kill -9 "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true
   fi
+  te=$(date +%s.%N)
   # `kill $PID` hits the `ip netns exec` wrapper, whose java child can outlive it and keep mining and holding the
   # port. Match the node's unique conf path in the java command line and kill that too.
   pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true
   sleep 2
   launch "$n"; wait_up "$n" || return 1
   end=$((SECONDS + ${PEERYARD_RELOAD_TIMEOUT:-60}))
-  while [[ $SECONDS -lt $end ]]; do [[ "$(full_height "$n" 2>/dev/null)" -ge "$h0" ]] 2>/dev/null && return 0; sleep 1; done
-  echo "[rig] $n reports full height $(full_height "$n" 2>/dev/null) after the relaunch, below its $h0 before it"; return 0
+  while [[ $SECONDS -lt $end ]]; do [[ "$(full_height "$n" 2>/dev/null)" -ge "$h0" ]] 2>/dev/null && break; sleep 1; done
+  local h1; h1=$(full_height "$n" 2>/dev/null)
+  # timing record (informational, no verdict reads it): how long the stop took, and the full height before the stop
+  # and after the reload; a node that mines while it shuts down comes back above h0
+  printf '[rig] relaunch %s: stop %.1fs, full height %s before the stop, %s after the reload\n' "$n" "$(awk -v a="$ts" -v b="$te" 'BEGIN { print b - a }')" "$h0" "${h1:-?}" >&2   # stderr: callers discard the mining helpers' stdout
+  # when each block above h0 was mined, in seconds from the stop's start (header timestamps): negative = before the
+  # kill, between 0 and the stop's length = while the old process shut down, later = after the relaunch
+  if [[ "${h1:-0}" =~ ^[0-9]+$ && "$h0" =~ ^[0-9]+$ && "$h1" -gt "$h0" ]]; then
+    local hh bid bts offs=""
+    for ((hh = h0 + 1; hh <= h1 && hh <= h0 + 5; hh++)); do
+      bid=$(rest "$n" "/blocks/at/$hh" 2>/dev/null | jq -r '.[0] // empty' 2>/dev/null)
+      bts=$([[ -n "$bid" ]] && rest "$n" "/blocks/$bid/header" 2>/dev/null | jq -r '.timestamp // empty' 2>/dev/null)
+      offs+=" $hh:$([[ -n "$bts" ]] && awk -v t="$bts" -v a="$ts" 'BEGIN { printf "%+.1fs", t / 1000 - a }' || echo '?')"
+    done
+    echo "[rig] relaunch $n: blocks above $h0 mined at (from the stop's start):$offs" >&2
+  fi
+  [[ "${h1:-0}" =~ ^[0-9]+$ && "$h1" -ge "$h0" ]] && return 0
+  echo "[rig] $n reports full height ${h1:-?} after the relaunch, below its $h0 before it"; return 0
 }
 # mining_is <node> <true|false>: a JVM node's /info reports the mining setting it was relaunched with; anything else
 # (no answer, the other value) is a harness failure. Other kinds do not report it and are not checked.

@@ -2,10 +2,19 @@
 
 peeryard is EXPERIMENTAL and small; contributions that keep it that way are welcome.
 
-**The one rule.** peeryard creates ordinary network conditions for honest nodes. No attack tooling: no crafted
-or malformed messages, no fuzzers, no misbehaving peers, no scenario that reproduces a defect that is not
-already public. A scenario names the public issue or pull request it reproduces. If you find a node defect
-while using peeryard, `SECURITY.md` says where it goes; not here.
+**The one rule.** Before adding a technique, ask: does it expose a specific weakness, and does releasing it help
+secure the network more than it helps someone attack it? Testing honest nodes is often adversarial in form (checking
+that they guard correctly), and that alone does not keep it out.
+- **In scope:** what anyone can already do with standard node and wallet software, used to check that nodes behave:
+  delay, loss, partitions, crashes and restarts, mining control, honest votes, different versions side by side,
+  payments, conflicting spends from one wallet on two nodes, honest storage-rent collection.
+- **Not here until fixed:** anything that demonstrates a specific weakness. A scenario that reproduces a defect names
+  the public issue or pull request it reproduces; a defect that is not public yet goes where `SECURITY.md` says.
+- **Not here:** tooling whose main gain is offensive capability beyond standard software: crafted or malformed
+  messages, wire fuzzers, lying or withholding peers, eclipse or peer-slot tooling.
+
+Where this line sits will move as node security and attacker tooling change; a contribution that is close to it
+says in its description which side it is on and why.
 
 **Before a pull request**
 - `shellcheck -x` on every script you touched (the repository's `.shellcheckrc` lists the deliberate

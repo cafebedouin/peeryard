@@ -19,7 +19,8 @@ Rules that bind you here:
 - Every executed A/B carries its log A/B (`Logs:` in the report; GUIDE rule 11c): what else differs between the arms.
 - A read-only finding is at most a "possible bug". "Executed" means you ran it and can show the output.
 - Nothing is posted, pushed or filed without the person's explicit go on the final text.
-- Do not add attack tooling: no crafted messages, no fuzzers, no misbehaving peers (`CONTRIBUTING.md`).
+- Before adding a technique, answer `CONTRIBUTING.md`'s question (does it expose a specific weakness; does releasing it
+  secure more than it helps attack?) in one line in the commit. Never add crafted messages, fuzzers or misbehaving peers.
 - Before any node run: `bash rig/preflight.sh`; one node network at a time on a host.
 - ergo's own Docker integration suite is a dependency you may call, not part of this tree: when a PR changes `src/it`,
   or a multi-node behaviour the rig does not stage, or an upstream CI spec failed on the PR and is one upstream tracks as

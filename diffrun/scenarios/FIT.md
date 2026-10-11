@@ -18,7 +18,8 @@ can observe its effect. This table is the fit; it is a starting point, not a rul
 
 A mempool change that alters *which* transactions are kept (conflict cleanup, eviction, re-validation) is answered by
 the revert check on its spec plus a read of the pool path; `txload` only shows the benign payment path still works.
-Producing a conflict on a live network needs a double-spend, which the tool does not stage (CONTRIBUTING.md).
+A conflict needs two valid spends of one box; the honest form (one wallet on two nodes, each paying from the same box)
+is in scope (CONTRIBUTING.md) but not built yet.
 
 If no row fits, say so in the review instead of running the nearest scenario: a verdict on the wrong scenario
 is evidence about nothing.

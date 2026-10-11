@@ -107,10 +107,11 @@ in each component's README before citing one.
 
 ## Scope
 
-peeryard creates **ordinary network conditions for honest nodes**: delay, loss, partition and heal, crashes and
-restarts, mining control, wallet payments, and different node versions side by side. It contains no attack
-tooling: no crafted or malformed messages, no fuzzer, no misbehaving peers. Its scenarios reproduce node
-behavior that is already public.
+peeryard creates **the conditions honest nodes meet**: delay, loss, partition and heal, crashes and restarts, mining
+control, honest votes, wallet payments (conflicting spends from one wallet included), and different node versions side
+by side, then checks that the nodes guard and agree. It contains no tooling whose main gain is offensive (crafted or
+malformed messages, fuzzers, lying peers), and its scenarios reproduce node behavior that is already public. The rule
+and its reasoning: `CONTRIBUTING.md`.
 
 ## Two tracks
 

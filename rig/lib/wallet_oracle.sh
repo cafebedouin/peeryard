@@ -165,8 +165,13 @@ wo_history(){ local s="$1" r="$2" p="$3" m="$4" b i id sent=0 got=0 h end
   echo "[wo] $s holds $b nanoERG of matured rewards at height $(full_height "$s"); $r holds $(balance "$r")"
   local ids=()
   for i in 1 2 3; do id=$(pay "$s" "$p" 2000000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && { sent=$((sent + 1)); ids+=("$id"); } || echo "[wo]   $s -> $p $i rejected: $id"; sleep 1; done
-  # WO_HISTORY_WAIT (default 300 s): a subject one hop further from the miner (the fork example) needs longer than 120 s
-  if ! b=$(wait_balance "$p" $((sent * 2000000000)) "${WO_HISTORY_WAIT:-300}") || [[ $sent -lt 1 ]]; then
+  # WO_HISTORY_WAIT (default 300 s): a subject one hop further from the miner (the fork example) needs longer than 120 s.
+  # After 60 s, a payment still only in the subject's pool is handed to the miner (seen on a hosted runner: one of three
+  # stayed in S's pool and never reached M, two hops away)
+  if ! b=$(wait_balance "$p" $((sent * 2000000000)) 60); then
+    for id in "${ids[@]}"; do wo_push "$m" "$id" "$s"; done
+    b=$(wait_balance "$p" $((sent * 2000000000)) "${WO_HISTORY_WAIT:-300}"); fi
+  if [[ "${b:-0}" -lt $((sent * 2000000000)) || $sent -lt 1 ]]; then
     WO_WHY="$s -> $p payments: $sent sent, $p balance $b; pools: $s=$(mempool_size "$s") $m=$(mempool_size "$m"); $(for id in "${ids[@]}"; do printf '%s:%s=%s,%s=%s ' "${id:0:8}" "$s" "$(mempool_ids "$s" | grep -qx "$id" && echo pool || echo -)" "$m" "$(mempool_ids "$m" | grep -qx "$id" && echo pool || echo -)"; done)"; return 1; fi
   for i in 1 2 3; do id=$(pay "$p" "$s" 500000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && got=$((got + 1)) || echo "[wo]   $p -> $s $i rejected: $id"; sleep 1; done
   [[ $got -ge 1 ]] || { WO_WHY="no $p -> $s payment accepted"; return 1; }
@@ -174,6 +179,20 @@ wo_history(){ local s="$1" r="$2" p="$3" m="$4" b i id sent=0 got=0 h end
   h=$(full_height "$m"); end=$((SECONDS + 60)); while [[ $SECONDS -lt $end && "$(full_height "$m")" -lt $((h + 2)) ]]; do sleep 1; done
   [[ "$(mempool_size "$m")" == 0 ]] || { WO_WHY="$m's pool did not drain ($(mempool_size "$m") left)"; return 1; }
   echo "[wo] history: $sent payments $s -> $p (spent boxes), $got payments $p -> $s (received), confirmed by height $(full_height "$m")"; }
+
+# wo_push <miner> <txid> <node>...: when the miner's pool lacks an unconfirmed transaction that one of the nodes'
+# pools holds, submit that same signed transaction to the miner (POST /transactions; an honest rebroadcast, nothing is
+# built or altered) and print one line saying so. A node's pool is not re-gossiped on a timer, so a payment that missed
+# the miner (it was relaunched, or a relay dropped it) would otherwise wait out the staging window.
+wo_push(){ local m="$1" id="$2" n tx r; shift 2
+  [[ -n "$id" ]] || return 0
+  mempool_ids "$m" | grep -qx "$id" && return 0
+  for n in "$@"; do
+    tx=$(rest "$n" "/transactions/unconfirmed/byTransactionId/$id" | _wo_json object)
+    [[ "$tx" != null ]] || continue
+    r=$(wallet "$m" /transactions "$tx" | head -c 200)
+    echo "[wo] re-submitted ${id:0:8} from $n's pool to $m: $r"; return 0
+  done; }
 
 # wo_same_tip <timeout_s> <node>...: wait until every node reports the first node's best full block (no miner running)
 wo_same_tip(){ local end=$((SECONDS + $1)) n t ok; shift
@@ -210,8 +229,13 @@ wo_redial(){ local end=$((SECONDS + $1)) m="$2" n ok next=$((SECONDS + 10)); shi
 # miner and wait for one tip again. Prints the heights; returns 1 when the nodes never reached one tip.
 wo_confirm(){ local m="$1" k="$2" h0 end ok=0 n; shift 2
   h0=$(full_height "$m"); start_mining "$m" "${WO_POLL:-2s}" >/dev/null; settle_height_back "$m"; wo_redial 60 "$m" "$@"
+  # start_mining relaunched the miner with an empty pool: the pending payment (WO_PENDING) goes back to it from a peer
+  # that holds it, once now and once more after 30 s if still missing and unconfirmed
+  local pushed=0; wo_push "$m" "${WO_PENDING:-}" "$@"
   end=$((SECONDS + 180))
   while [[ $SECONDS -lt $end ]]; do
+    if [[ $pushed == 0 && $SECONDS -ge $((end - 150)) && -n "${WO_PENDING:-}" ]]; then pushed=1
+      [[ "$(wallet "$m" "/wallet/transactionById?id=$WO_PENDING" | jq -r '.inclusionHeight // empty' 2>/dev/null)" =~ ^[0-9]+$ ]] || wo_push "$m" "$WO_PENDING" "$@"; fi
     if [[ "$(full_height "$m")" -ge $((h0 + k)) && "$(mempool_size "$m")" == 0 ]]; then
       ok=1; for n in "$@"; do [[ "$(full_height "$n")" -ge $((h0 + k)) ]] || ok=0; done; [[ $ok == 1 ]] && break; fi
     sleep 2

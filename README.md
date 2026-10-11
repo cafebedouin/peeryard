@@ -95,7 +95,8 @@ split and rejoined, inspected, repaired and sent back out.
   (`review/GATES.md`), and a human who posts. `AGENTS.md` and `.claude/skills/review-pr` drive it for an agent.
 - `.github/workflows/` — the same suite on GitHub-hosted runners: `sweep.yml` (every rig example, and one pair each of
   `fork-convergence` and `sibling-fork`, on the reference nodes) and `aa.yml` (the A/A calibration of those two); the
-  runs a published verdict is meant to rest on.
+  runs a published verdict is meant to rest on. `spec-loop.yml` runs one of ergo's own unit specs (or one test in it) N
+  times on a commit, with an optional patch applied first: a flaky test's count before and after a change.
 - `audits/` — where a run's evidence lives (ignored by git except the layout and an example), so a reviewer
   can answer follow-up questions from what actually ran.
 

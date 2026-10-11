@@ -1,0 +1,18 @@
+{
+  "name": "indexer-diff",
+  "description": "Two jars' extra indexers on one chain (a miner, X on this role's jar, Y on the other's, both with extraIndex): their /blockchain answers (every box and transaction by global index, per-address balance, transaction and box ids, unspent boxes, token info) compared field by field at settled points after payments and a token issue, after a restart of Y, and after Y rolls back a losing branch. A positive control must show DIFF or the run is INCONCLUSIVE. Written for ergoplatform/ergo#2640 (indexer recovery in the 6.0.8 candidate).",
+  "script": "indexer-diff.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {},
+  "metrics": { "agree": "boolean", "settled_same": "boolean", "restart_same": "boolean", "fork_same": "boolean",
+               "fork_rolled_back": "boolean", "posctl_diff": "boolean", "points_same": "number", "points_diff": "number",
+               "points_inconclusive": "number", "unresponsive_after": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1800,
+  "expect": {
+    "base":      { "all": { "key": "agree", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "agree", "op": "==", "value": true } }
+  }
+}

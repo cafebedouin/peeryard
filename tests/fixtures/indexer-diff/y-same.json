@@ -1,0 +1,179 @@
+{
+  "meta": {
+    "node": "Y",
+    "appVersion": "6.0.7-1-213ef3dc-SNAPSHOT"
+  },
+  "settle": {
+    "before": {
+      "fullHeight": 40,
+      "indexedHeight": 40,
+      "bestFullHeaderId": "aa00000000000000000000000000000000000000000000000000000000000040"
+    },
+    "after": {
+      "fullHeight": 40,
+      "indexedHeight": 40,
+      "bestFullHeaderId": "aa00000000000000000000000000000000000000000000000000000000000040"
+    }
+  },
+  "errors": [],
+  "global": {
+    "indexedHeight": {
+      "indexedHeight": 40,
+      "fullHeight": 40
+    },
+    "box_count": 3,
+    "tx_count": 2,
+    "box_range": [
+      "b2",
+      "b1",
+      "b0"
+    ],
+    "tx_range": [
+      "t1",
+      "t0"
+    ]
+  },
+  "boxes": {
+    "0": {
+      "boxId": "b0",
+      "globalIndex": 0,
+      "address": "addrM",
+      "value": 5000000000,
+      "assets": [],
+      "inclusionHeight": 1,
+      "spentTransactionId": "t1",
+      "spendingHeight": 30
+    },
+    "1": {
+      "boxId": "b1",
+      "globalIndex": 1,
+      "address": "addrX",
+      "value": 4000000000,
+      "assets": [],
+      "inclusionHeight": 30,
+      "spentTransactionId": null,
+      "spendingHeight": null
+    },
+    "2": {
+      "boxId": "b2",
+      "globalIndex": 2,
+      "address": "addrX",
+      "value": 1000000,
+      "assets": [
+        {
+          "tokenId": "k0",
+          "amount": 100
+        }
+      ],
+      "inclusionHeight": 30,
+      "spentTransactionId": null,
+      "spendingHeight": null
+    }
+  },
+  "txs": {
+    "0": {
+      "id": "t0",
+      "globalIndex": 0,
+      "inclusionHeight": 1,
+      "numConfirmations": 40
+    },
+    "1": {
+      "id": "t1",
+      "globalIndex": 1,
+      "inclusionHeight": 30,
+      "numConfirmations": 11
+    }
+  },
+  "tokens": {
+    "k0": {
+      "info": {
+        "id": "k0",
+        "boxId": "b0",
+        "emissionAmount": 1000,
+        "name": "PYT",
+        "description": "test",
+        "decimals": 0
+      },
+      "boxes": {
+        "ids": [
+          "b2"
+        ],
+        "total": 1
+      },
+      "unspent": [
+        "b2"
+      ]
+    }
+  },
+  "addresses": {
+    "addrM": {
+      "balance": {
+        "nanoErgs": 0,
+        "tokens": []
+      },
+      "txs": {
+        "ids": [
+          "t1",
+          "t0"
+        ],
+        "total": 2
+      },
+      "boxes": {
+        "ids": [
+          "b0"
+        ],
+        "total": 1
+      },
+      "unspent": {
+        "status": 404
+      }
+    },
+    "addrX": {
+      "balance": {
+        "nanoErgs": 4001000000,
+        "tokens": [
+          {
+            "tokenId": "k0",
+            "amount": 100,
+            "decimals": 0,
+            "name": "PYT"
+          }
+        ]
+      },
+      "txs": {
+        "ids": [
+          "t1"
+        ],
+        "total": 1
+      },
+      "boxes": {
+        "ids": [
+          "b2",
+          "b1"
+        ],
+        "total": 2
+      },
+      "unspent": [
+        {
+          "boxId": "b2",
+          "value": 1000000,
+          "assets": [
+            {
+              "tokenId": "k0",
+              "amount": 100
+            }
+          ],
+          "globalIndex": 2,
+          "inclusionHeight": 30
+        },
+        {
+          "boxId": "b1",
+          "value": 4000000000,
+          "assets": [],
+          "globalIndex": 1,
+          "inclusionHeight": 30
+        }
+      ]
+    }
+  }
+}

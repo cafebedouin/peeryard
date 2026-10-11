@@ -20,3 +20,7 @@ bash diffrun/build.sh <ref> <ref>..test-<ref>     # the sidecar records the base
 
 Both apply cleanly to v6.0.7 (3a6b00d37) and to ergoplatform/ergo#2598 at 63639222e. Used by `rig/examples/storage-rent*.sh`
 (`docs/storage-rent.md`).
+
+On GitHub-hosted runners: `pr-scenario.yml` takes `test_patches` (space-separated paths here) and applies them to both
+arms as one local commit on the release tag, so the base jar is the release plus these patches and the candidate is the
+same plus the PR's production diff; the build summary lists each patch with its sha256.

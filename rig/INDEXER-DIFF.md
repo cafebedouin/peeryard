@@ -10,7 +10,7 @@ Files:
 
 | file | what |
 |---|---|
-| `rig/examples/indexer-diff.json` | topology: M mines (no indexer), X (`PEERYARD_JAR`) and Y (`PEERYARD_JAR_B`) follow M on their own links, both with `extraIndex`; three wallets with different keys |
+| `rig/examples/indexer-diff.json` | topology: M mines (no indexer) and X follow `PEERYARD_JAR`, Y runs `PEERYARD_JAR_B`; X and Y follow M on their own links, both with `extraIndex`; three wallets with different keys |
 | `rig/examples/indexer-diff.sh` | the hook: content, the settled point, the restart and fork events, the positive control, `RESULT_JSON` |
 | `rig/lib/indexer.sh` | reads one node's indexer into a snapshot (JSON) |
 | `rig/indexer-cmp.sh` | compares two snapshots; one verdict line |
@@ -113,8 +113,17 @@ bash review/with-lock.sh -- env PEERYARD_JAR=<a.jar> PEERYARD_JAR_B=<b.jar> bash
 bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/indexer-diff.json --base <base.jar> --candidate <cand.jar> --out <dir>
 ```
 
+A run takes about 5 minutes on the development host (4.5-5 min each for the six diffrun runs of the first measurement),
+so a diffrun pair is about 10 minutes. The hook first waits up to 90 s for both indexers to answer `indexedHeight` with a
+number: right after bring-up they may not yet (seen once per jar before that wait existed).
+
 On GitHub-hosted runners, `pr-scenario.yml` with `scenario: indexer-diff` (the manifest is public tier, has no
-`stop_when`/`max_n`, and validates); `aa: true` runs the base jar in both roles. The manifest's `expect` is
+`stop_when`/`max_n`, and validates), e.g. `gh workflow run pr-scenario.yml -f scenario=indexer-diff -f line=v6.0.7 -f pr=2640
+-f head=<40-hex head> -f shards=1 -f pairs=1`; `aa: true` runs the base jar in both roles. Not dispatched yet: whether the workflow's
+check that the PR's merge-base is an ancestor of the build base passes for a given PR and `line` is a property of that
+PR's branch, checked by the build job (the first local candidate was v6.0.7 plus `v6.0.7...<head>`, built with
+`diffrun/build.sh`, which the workflow does not do). Size it before dispatching:
+the run job's limit is 2 × pairs × 1800 s + 30 min, and a pair is about 10 minutes of three JVM nodes. The manifest's `expect` is
 `all(agree == true)` for both roles (`agree` = no point DIFF), so SUPPORTS means no difference was seen in either role,
 AGAINST a difference in the candidate role, NULL one in the base role only. A run whose settled point does not settle,
 or whose positive control is not DIFF, prints no `RESULT_JSON` and is `INCONCLUSIVE (setup)`. `timeout_seconds` is 1800.

@@ -1,0 +1,26 @@
+From 9cf595d7e395a301545a115801ad12023895e08c Mon Sep 17 00:00:00 2001
+From: peeryard-test <test@invalid>
+Date: Sun, 11 Oct 2026 16:24:15 -0500
+Subject: [PATCH] DEVNET TEST BUILD ONLY: txRentDistinctOutputs activation at
+ height 30 so the rule is active on a devnet
+
+---
+ .../main/scala/org/ergoplatform/settings/ValidationRules.scala  | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala b/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala
+index 9a17979b2..27ecb6944 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala
+@@ -272,7 +272,7 @@ object ValidationRules {
+     * The network type is not available at this level, so a single height applies to
+     * all networks.
+     */
+-  val StorageRentDistinctOutputsActivationHeight: Int = 1885000
++  val StorageRentDistinctOutputsActivationHeight: Int = 30 // DEVNET TEST BUILD ONLY: lowered from mainnet 1885000 so the rule is active before the first storage-rent claim on a devnet
+ 
+   // header validation
+   val hdrGenesisParent: Short = 200
+-- 
+2.43.0
+

@@ -1,0 +1,40 @@
+From ada264e45366a4a33830671ad7722def894d6573 Mon Sep 17 00:00:00 2001
+From: cafebedouin <cafebedouin@gmail.com>
+Date: Sun, 27 Sep 2026 23:33:09 -0500
+Subject: [PATCH] DEVNET TEST BUILD ONLY: StoragePeriod 60 blocks so
+ storage-rent claims exist on a devnet
+
+---
+ .../src/main/scala/org/ergoplatform/settings/Constants.scala    | 2 +-
+ .../main/scala/org/ergoplatform/wallet/protocol/Constants.scala | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/settings/Constants.scala b/ergo-core/src/main/scala/org/ergoplatform/settings/Constants.scala
+index 34896726f..c1b0221c4 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/settings/Constants.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/settings/Constants.scala
+@@ -30,7 +30,7 @@ object Constants {
+ 
+   //For how many blocks a box could be put into the state with no paying.
+   //4 years
+-  val StoragePeriod: Int = 4 * BlocksPerYear // 1,051,200 blocks
++  val StoragePeriod: Int = 60 // DEVNET TEST BUILD ONLY: shortened from 4 * BlocksPerYear so rent claims exist on a devnet // 1,051,200 blocks
+ 
+   val StorageContractCost: Long = 50
+ 
+diff --git a/ergo-wallet/src/main/scala/org/ergoplatform/wallet/protocol/Constants.scala b/ergo-wallet/src/main/scala/org/ergoplatform/wallet/protocol/Constants.scala
+index 05ab48a52..6dd4c7d9c 100644
+--- a/ergo-wallet/src/main/scala/org/ergoplatform/wallet/protocol/Constants.scala
++++ b/ergo-wallet/src/main/scala/org/ergoplatform/wallet/protocol/Constants.scala
+@@ -16,7 +16,7 @@ object Constants {
+ 
+   //For how many blocks a box could be put into the state with no paying storage rent.
+   //4 years
+-  val StoragePeriod: Int = 4 * BlocksPerYear
++  val StoragePeriod: Int = 60 // DEVNET TEST BUILD ONLY: shortened from 4 * BlocksPerYear so rent claims exist on a devnet
+ 
+   val StorageContractCost: Long = 50
+ 
+-- 
+2.43.0
+

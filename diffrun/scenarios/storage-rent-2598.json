@@ -1,0 +1,18 @@
+{
+  "name": "storage-rent-2598",
+  "description": "Miner-side storage-rent collection (ergoplatform/ergo#2598): C mines this role's jar with storageRentCollection = true next to a base-jar follower and a candidate-jar follower; every claim in the chain is checked against the consensus rule from the blocks, and all three nodes must end on one state root. Base role (no collection in the jar): 0 claims and agreement; candidate role: claims, all within the rule, every holder box claimed, agreement. Both jars need the test patches in patches/test/.",
+  "script": "storage-rent-2598.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": { "PEERYARD_STORAGE_PERIOD": 60 },
+  "metrics": { "claims": "number", "claim_txs": "number", "rule_failures": "number", "holders": "number",
+               "holders_claimed": "number", "agreement": "boolean", "log_lines": "number", "size_mismatches": "number",
+               "pass": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1200,
+  "expect": {
+    "base":      { "all": { "key": "pass", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "pass", "op": "==", "value": true } }
+  }
+}

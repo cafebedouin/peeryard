@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    {"name": "C", "mining": true, "mine_poll": "1s", "knownPeers": ["F1", "F2"], "jar": "${PEERYARD_JAR_C}", "defer": true},
+    {"name": "F1", "mining": false, "knownPeers": ["C"], "jar": "${PEERYARD_JAR_F1}"},
+    {"name": "F2", "mining": false, "knownPeers": ["C"], "jar": "${PEERYARD_JAR_F2}",
+     "conf": {"ergo.node.storageRentCollection": false}}
+  ],
+  "links": [
+    {"a": "C", "b": "F1", "delay_ms": 5},
+    {"a": "C", "b": "F2", "delay_ms": 5}
+  ]
+}

@@ -49,9 +49,11 @@ rent_box(){ local n="$1" v="$2" a="${3:-}" assets="${4:-[]}" regs="${5:-}" req r
       | jq -r --argjson v "$v" --arg t "$t" '.outputs[]?|select(.value==$v and .ergoTree==$t)|"\(.boxId) \(.creationHeight)"' 2>/dev/null | head -1)"
     [[ -n "$r" ]] && { echo "$r"; return 0; }; sleep 1
   done; return 1; }
-# rent_issue <node> <amount> <name>: issue a token to <node>'s own wallet address; prints the token id
+# rent_issue <node> <amount> <name>: issue a token to <node>'s own wallet address (an asset-issue request through
+# /wallet/transaction/send); prints the token id once the issue confirms
 rent_issue(){ local n="$1" amt="$2" name="$3" r tx
-  r="$(wallet "$n" /wallet/assets/issue "$(jq -cn --argjson m "$amt" --arg nm "$name" '{amount:$m, name:$nm, description:"peeryard storage-rent test token", decimals:0}')")"
+  r="$(wallet "$n" /wallet/transaction/send "$(jq -cn --arg a "$(address "$n")" --argjson m "$amt" --arg nm "$name" \
+    '{requests: [{address:$a, ergValue:1000000, amount:$m, name:$nm, description:"peeryard storage-rent test token", decimals:0}], fee:1000000}')")"
   tx="$(jq -r 'if type=="string" then . else empty end' <<<"$r" 2>/dev/null)"
   [[ "$tx" =~ ^[0-9a-f]{64}$ ]] || { echo "[rent] rent_issue refused: ${r:0:160}" >&2; return 1; }
   for _ in $(seq 1 80); do mempool_ids "$n" | grep -q "$tx" || break; sleep 1; done

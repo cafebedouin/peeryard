@@ -135,6 +135,10 @@ Listed at the top of `rig.sh`. The main ones:
   the UTXO set, batches left to confirm), `mempool_ids <node>` / `mempool_size <node>` (the unconfirmed pool as
   the node lists it). Every node's wallet is initialized and unlocked from its test mnemonic; give a
   node its own keys with a `conf` override of `ergo.wallet.testMnemonic` (see `examples/txload.json`).
+- storage rent (`lib/storage_rent.sh`, [docs/storage-rent.md](../docs/storage-rent.md); needs a short-period test build):
+  `rent_box <node> <value> [owner] [assets] [registers]` (a holder box; prints "boxId creationHeight"), `rent_issue`,
+  `rent_expired`, `rent_claim` (a claim for a box that does not cover its fee), `rent_blocks` + `rent_audit` (every claim in a
+  chain checked against the consensus rule from the blocks), `box_size_check`, `rent_bot` / `rent_bots_stop` (competing collectors)
 - verdict: a hook sets `rig_verdict=PASS`, `FAIL` or `INCONCLUSIVE` (the check could not be exercised, e.g.
   `corruption`, `mempool-evict`); `rig.sh` exits 1 on FAIL, 3 on INCONCLUSIVE and 0 otherwise, so a caller can
   chain on it.
@@ -244,6 +248,9 @@ Each node's `knownPeers` are its link neighbours, so `check_topology` should rep
 | `reorg-mempool-phases` | 3 | `reorg-mempool`'s claim as a data scenario: the same staging, with the conditions `reorg-mempool` checks together in one loop waited for one after another; 3 of 3 PASS hosted, with its original ([sweep](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) |
 | `reorder-dup-phases` | 3 | payments from a miner to a wallet two hops away while every link direction reorders and duplicates packets (`RD_REORDER`, `RD_DUP`): every accepted payment arrives and the ends agree on chain and state; `RD_CONTROL=cut` cuts the relay before the payments, which must FAIL |
 | `mixed-roles-phases` | 3 | a digest and a pruned follower of a full miner through partitions, the digest node killed and revived while cut (it restores its height from disk): both reach the miner's state root at its final height; `MR_CONTROL=down` leaves the digest node down, which must FAIL |
+| `storage-rent` | 2 | storage rent on a short-period test build (`patches/test/`, `PEERYARD_STORAGE_PERIOD`; [docs/storage-rent.md](../docs/storage-rent.md)): dust boxes owned by a foreign key age past the period and are claimed with `rent_claim`; PASS = every claim accepted, mined, and the boxes spent |
+| `storage-rent-war` | 2 | competing `rent_bot` collectors with different latencies and fee bids race for the same expired boxes on one node: submissions per bot, boxes collected |
+| `storage-rent-2598` | 3 | miner-side collection (ergoplatform/ergo#2598): C mines with `storageRentCollection` (#2598 jar, `PEERYARD_JAR_C`), F1 follows on v6.0.7 (`PEERYARD_JAR_F1`), F2 on #2598 with collection off (`PEERYARD_JAR_F2`), all with `patches/test/`; holder boxes of several sizes, values, registers and a token; every claim in the chain audited against the rule from F1's blocks (`rent_audit`); PASS = claims, all within the rule, every holder box claimed, `same_state` SAME C-F1 and C-F2 after the claims, no `invalid`/`SemanticallyFailed` line in F1's or F2's log; `SR2598_CONTROL=off` (collection off) must show 0 claims with the same agreement. Also a diffrun scenario (`diffrun/scenarios/storage-rent-2598.json`, mixed jars) |
 
 ## Experimental examples
 

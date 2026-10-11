@@ -194,3 +194,10 @@ Used in: `mining.sh`, `corruption.sh`, `matrix-pair.sh`.
 
 `mark flap-start`
 Used in: `flap.sh`, `loss.sh`, `matrix-paychain.sh`.
+
+## rent_box
+
+`rent_box <node> <value> [<owner address>] [<assets json>] [<registers json>]` pays one box of `<value>` nanoERG from `<node>`'s wallet (`/wallet/payment/send`) to the owner (default the node's first address), with the wallet API's `assets` list and `registers` map when given. It polls the mempool every second, up to 80 s, until the payment leaves it, then prints `<boxId> <creationHeight>` of the output with that value and the owner's ergoTree, read from `/wallet/transactionById`, and returns 0. A refused payment prints `[rent] rent_box refused: <first 160 characters of the response>` on stderr, nothing on stdout, and returns 1; an output not found within 10 s after that returns 1 with nothing printed. Defined in `rig/lib/storage_rent.sh`.
+
+`rent_box C 10000000 "$holder_address"`
+Used in: `storage-rent.sh`, `storage-rent-war.sh`, `storage-rent-2598.sh`.

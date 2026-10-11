@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    {"name": "C", "mining": true, "mine_poll": "1s", "knownPeers": ["F1", "F2"], "defer": true},
+    {"name": "F1", "mining": false, "knownPeers": ["C"], "jar": "${DIFFRUN_BASE_JAR}"},
+    {"name": "F2", "mining": false, "knownPeers": ["C"], "jar": "${DIFFRUN_CANDIDATE_JAR}",
+     "conf": {"ergo.node.storageRentCollection": false}}
+  ],
+  "links": [
+    {"a": "C", "b": "F1", "delay_ms": 5},
+    {"a": "C", "b": "F2", "delay_ms": 5}
+  ]
+}

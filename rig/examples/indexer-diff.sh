@@ -65,7 +65,10 @@ inconclusive(){ say "INCONCLUSIVE: $1"; rig_verdict=INCONCLUSIVE; rig_cause=${2:
 
 VM=$(rest M /info | jq -r '.appVersion // "null"'); VX=$(rest X /info | jq -r '.appVersion // "null"'); VY=$(rest Y /info | jq -r '.appVersion // "null"')
 say "M=$VM mines; X=$VX ($(basename "${NODE_JAR[X]}")) and Y=$VY ($(basename "${NODE_JAR[Y]}")) index"
-for n in X Y; do [[ "$(rest "$n" /blockchain/indexedHeight | jq -r '.indexedHeight // empty' 2>/dev/null)" =~ ^[0-9]+$ ]] || { inconclusive "$n does not serve /blockchain/indexedHeight (extraIndex off?)" SETUP_NODE_API; return 0; }; done
+# the indexer answers some seconds after REST does (seen: a check right after bring-up got no number from Y): wait up to 90 s
+for n in X Y; do end=$((SECONDS + 90)); ih=""
+  while [[ $SECONDS -lt $end ]]; do ih=$(rest "$n" /blockchain/indexedHeight | jq -r '.indexedHeight // empty' 2>/dev/null); [[ "$ih" =~ ^[0-9]+$ ]] && break; sleep 3; done
+  [[ "$ih" =~ ^[0-9]+$ ]] || { inconclusive "$n does not serve /blockchain/indexedHeight after 90 s (extraIndex off?): $(rest "$n" /blockchain/indexedHeight | head -c 200)" SETUP_NODE_API; return 0; }; done
 AM=$(address M); AX=$(address X); AY=$(address Y)
 [[ -n "$AM" && -n "$AX" && -n "$AY" && "$AM" != "$AX" && "$AM" != "$AY" && "$AX" != "$AY" ]] || { inconclusive "wallet addresses missing or shared: M=$AM X=$AX Y=$AY" SETUP_NODE_API; return 0; }
 

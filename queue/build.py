@@ -14,7 +14,7 @@ and check runs (public data). Writes: <out>/index.html, <out>/maintainers/index.
 reviewed with peeryard at its current head (an issue comment carrying "using peeryard" or the earlier "using
 forkbench", posted after the head commit) is shown with that review's link instead of being offered for one.
 """
-import argparse, datetime as dt, fnmatch, html, json, os, sys, time, urllib.parse, urllib.request
+import argparse, datetime as dt, fnmatch, html, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 
 API = "https://api.github.com"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -195,6 +195,37 @@ def pr_cell(r):
             f"base {html.escape(r['base'])}, head {r['head_sha']}</small>")
 
 
+def carried_state_cell(c, token):
+    """A carried pull request missing from the open, non-draft list: say what it is (draft, closed, merged), from public data."""
+    repo, n = c["repo"], c["number"]
+    link = f"<a href='https://github.com/{repo}/pull/{n}'>#{n}</a>"
+    try:
+        p = api(f"/repos/{repo}/pulls/{n}", token=token)
+    except Exception:
+        return f"{link} (state not readable today)"
+    title = html.escape(p.get("title", ""))
+    if p["state"] == "open":
+        kind = "open as a draft" if p.get("draft") else "open"
+        return f"{link} {title}<br><small>{html.escape(p['user']['login'])}, base {html.escape(p['base']['ref'])}, {kind}</small>"
+    if p.get("merged_at"):
+        return f"{link} {title}<br><small>merged {p['merged_at'][:10]}; the patch leaves the stack with the release that carries it</small>"
+    base = p["base"]["ref"]
+    try:
+        api(f"/repos/{repo}/branches/{urllib.parse.quote(base, safe='')}", token=token); base_note = ""
+    except urllib.error.HTTPError as e:
+        base_note = f" (its base branch {html.escape(base)} no longer exists)" if e.code == 404 else ""
+    issues = []
+    for m in re.finditer(r"(?i)\b(?:fixes|closes|resolves)\s+#(\d+)", p.get("body") or ""):
+        num = int(m.group(1))
+        try:
+            st = api(f"/repos/{repo}/issues/{num}", token=token)["state"]
+        except Exception:
+            st = "state unknown"
+        issues.append(f"<a href='https://github.com/{repo}/issues/{num}'>#{num}</a> {st}")
+    fixes = f"; fixes {', '.join(issues)}" if issues else ""
+    return f"{link} {title}<br><small>closed unmerged {(p.get('closed_at') or '')[:10]}{base_note}{fixes}</small>"
+
+
 def why_cell(r):
     return "<span class=why>" + "; ".join(html.escape(w) for w in r["why"]) + "</span>"
 
@@ -236,12 +267,13 @@ def main():
     carried_rows = []
     for c in carried:
         r = by_number.get(c["number"])
-        cell = pr_cell(r) if r else f"<a href='https://github.com/{c['repo']}/pull/{c['number']}'>#{c['number']}</a> (not an open pull request today)"
+        cell = pr_cell(r) if r else carried_state_cell(c, token)
         carried_rows.append((cell, f"<span class=why>carried as {', '.join(c['patches'])} ({c['status']}); "
                              f"unblocks {len(c['needed_by'])} example(s): {html.escape(', '.join(c['needed_by']) or 'none named')}</span>"))
     maint_page = page("Ergo node pull requests that need a maintainer", [
-        ("Pull requests the peeryard test suite depends on", "Open upstream pull requests carried as patches in the reference node; "
-         "merging one lets an example read true on the plain release. Ranked by how many examples need it.", carried_rows, ["pull request", "why here"]),
+        ("Pull requests the peeryard test suite depends on", "Upstream pull requests carried as patches in the reference node; "
+         "merging one lets an example read true on the plain release. Ranked by how many examples need it. A row that is not an "
+         "open, ready pull request says what it is instead (a draft, or closed with the issue it fixes still open).", carried_rows, ["pull request", "why here"]),
         ("Needs a maintainer", "Reviewed at the current head, CI green, mergeable; ranked by days since the last activity.",
          [(pr_cell(r), why_cell(r)) for r in maint], cols),
     ], generated, a.repo, path_prefix="../")

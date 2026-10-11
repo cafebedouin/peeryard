@@ -52,7 +52,7 @@
  ],
  "tracks": {
   "needs_review": "open, not a draft, title not marked WIP, head pushed within stale_days, no review by anyone but the author at the current head, and no peeryard review at that head; ordered by tier, then by days at the current head (longest waiting first), then by size",
-  "needs_maintainer": "open, not a draft, at least one review at the current head, CI green or absent, mergeable state clean; ordered by days since the last activity",
+  "needs_maintainer": "open, not a draft, at least one review at the current head, CI green or absent, mergeable state clean (or not yet computed by GitHub, which recomputes lazily after the base branch moves; asked again before judging, and shown as such); ordered by days since the last activity",
   "carried": "open upstream pull requests this tree carries as patches (patches/*/patches.json with an upstream_pr and a status that is not candidate, withdrawn or merged-in-<tag>), ordered by how many examples need them",
   "stale": "open pull requests whose head is older than stale_days: listed at the end, unranked, so the work list stays a work list"
  },

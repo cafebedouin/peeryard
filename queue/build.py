@@ -103,6 +103,13 @@ def collect(repo, token, limit):
     for p in prs:
         n = p["number"]
         full = api(f"/repos/{repo}/pulls/{n}", token=token)
+        # GitHub computes mergeability lazily: after the base branch moves, the first read says "unknown" and starts the
+        # computation. Ask again before judging; a pull request still unknown stays on the track (see rank_maintainer).
+        for wait in (3, 6, 12):
+            if full.get("mergeable_state") != "unknown":
+                break
+            time.sleep(wait)
+            full = api(f"/repos/{repo}/pulls/{n}", token=token)
         files = [f["filename"] for f in api(f"/repos/{repo}/pulls/{n}/files", {"per_page": 100}, token, paginate=True)]
         head_sha = full["head"]["sha"]
         head = api(f"/repos/{repo}/commits/{head_sha}", token=token)
@@ -157,11 +164,11 @@ def rank_review(rows):
 
 def rank_maintainer(rows):
     """Needs a maintainer: reviewed at this head, CI green (or none), mergeable. Order: longest waiting first."""
-    todo = [r for r in rows if r["reviews_at_head"] > 0 and r["ci"] in ("green", "none") and r["mergeable"] in ("clean", "unstable", "has_hooks")]
+    todo = [r for r in rows if r["reviews_at_head"] > 0 and r["ci"] in ("green", "none") and r["mergeable"] in ("clean", "unstable", "has_hooks", "unknown")]
     todo.sort(key=lambda r: (-r["days_waiting"], r["tier"][0]))
     for r in todo:
         r["why"] = [f"{r['days_waiting']} days since the last activity", f"{r['reviews_at_head']} review(s) at this head"
-                    + (", approved" if r["approved_at_head"] else ""), f"CI {r['ci']}", f"mergeable: {r['mergeable']}",
+                    + (", approved" if r["approved_at_head"] else ""), f"CI {r['ci']}", ("mergeable: not yet computed by GitHub" if r["mergeable"] == "unknown" else f"mergeable: {r['mergeable']}"),
                     f"tier {r['tier'][0]} ({r['tier'][1]})"]
     return todo
 

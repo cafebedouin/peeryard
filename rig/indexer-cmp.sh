@@ -64,11 +64,13 @@ out="$(jq -n -r --slurpfile x "$1" --slurpfile y "$2" --arg label "$label" --arg
     ([$fx, $fy] | map(keys) | add | unique) as $keys |
     [ $keys[] | . as $k | select(($fx | has($k)) != ($fy | has($k)) or $fx[$k] != $fy[$k]) ] as $d |
     def val($m; $k): if ($m | has($k)) then ($m[$k] | short) else "<absent>" end;
+    # display only: a path segment of 70+ characters (a contract address) as its first 12 and last 8 characters
+    def p: gsub("(?<a>[0-9A-Za-z]{12})(?<m>[0-9A-Za-z]{50,})(?<b>[0-9A-Za-z]{8})"; "\(.a)...\(.b)");
     if ($d | length) == 0 then
       "INDEXER-DIFF \($label) SAME@\($x.settle.after.fullHeight):\($x.settle.after.bestFullHeaderId) fields=\($keys | length)"
     else
-      ( "INDEXER-DIFF \($label) DIFF@\($d[0]) x=\(val($fx; $d[0])) y=\(val($fy; $d[0])) (\($d | length) of \($keys | length) fields differ)",
-        ($d[0:$show][] | . as $k | "  diff \($k) x=\(val($fx; $k)) y=\(val($fy; $k))") )
+      ( "INDEXER-DIFF \($label) DIFF@\($d[0] | p) x=\(val($fx; $d[0])) y=\(val($fy; $d[0])) (\($d | length) of \($keys | length) fields differ)",
+        ($d[0:$show][] | . as $k | "  diff \($k | p) x=\(val($fx; $k)) y=\(val($fy; $k))") )
     end
   end')" || { echo "INDEXER-DIFF $label INCONCLUSIVE comparator error"; exit 3; }
 echo "$out"

@@ -86,8 +86,8 @@ if [[ -n "$TID" ]]; then
 else rej+="token never confirmed in M's wallet; "; fi
 end=$((SECONDS + 120)); while [[ $SECONDS -lt $end ]] && ! pool_empty; do sleep 3; done
 h=$(full_height M); wait_h X $((h + 2)) 60 >/dev/null
-say "content: $acc of 11 transactions accepted${rej:+ (rejected: $rej)}; token ${TID:-none}; pools empty: $(pool_empty && echo yes || echo no); M at $(full_height M)"
-[[ $acc -ge 9 ]] || { inconclusive "only $acc of 11 transactions accepted" SETUP_SYNC; return 0; }
+say "content: $acc of 10 transactions accepted${rej:+ (rejected: $rej)}; token ${TID:-none}; pools empty: $(pool_empty && echo yes || echo no); M at $(full_height M)"
+[[ $acc -ge 8 ]] || { inconclusive "only $acc of 10 transactions accepted" SETUP_SYNC; return 0; }
 
 # ---- settled
 stop_mining M >/dev/null

@@ -97,12 +97,23 @@ while read -r label box ch v; do
 done < "$BOXES"
 claims=$(jq -r '.claim_inputs' <<< "$sum"); ctx=$(jq -r '.claim_txs' <<< "$sum"); failed=$(jq -r '.failed' <<< "$sum"); unk=$(jq -r '.unknown' <<< "$sum"); young=$(jq -r '.younger_than_period' <<< "$sum")
 note "claim transactions $ctx with $claims claimed inputs in C's blocks (C is the only miner); holder boxes claimed $held/$nb (rule ok $hok)"
-bad=0
+bad=0; cachedup=0
+# ErgoModifiersCache logs a cached copy of a modifier it already stores as "permanently invalid" (public issue
+# ergoplatform/ergo#2590): such a line is counted apart when the named modifier is stored on that node at the end
+# (/blocks/modifier/<id> answers it); any other matching line, or a cache line whose modifier is not stored, counts as bad
 for f in F1 F2; do
   [ -s "$RIG_LOG_DIR/node_$f.log" ] || { inconclusive "no log for $f, so the log search could not run"; return 0; }
   lines=$(grep -E 'SemanticallyFailed|[Ii]nvalid' "$RIG_LOG_DIR/node_$f.log" 2>/dev/null)
-  n=0; [ -n "$lines" ] && n=$(printf '%s\n' "$lines" | wc -l)
-  note "$f log lines matching invalid|SemanticallyFailed: $n"; [ "$n" -gt 0 ] && { printf '%s\n' "$lines" | head -5 | cut -c1-300 | sed 's/^/    /'; bad=$((bad+n)); }
+  n=0; d=0
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    mid=$(sed -nE 's/.*ErgoModifiersCache - Modifier ([0-9a-f]{64}) is permanently invalid and will be removed from cache.*/\1/p' <<< "$l")
+    if [ -n "$mid" ] && [ "$(rest "$f" "/blocks/modifier/$mid" | jq -r 'if type == "object" and (has("error") | not) then "stored" else "no" end' 2>/dev/null)" = stored ]; then
+      d=$((d+1)); note "$f: cache line for $mid, which $f stores (cached duplicate, #2590)"
+    else n=$((n+1)); printf '    %s\n' "$(cut -c1-300 <<< "$l")"; fi
+  done <<< "$lines"
+  note "$f log lines matching invalid|SemanticallyFailed: $n counted, $d cached duplicates of stored modifiers"
+  bad=$((bad+n)); cachedup=$((cachedup+d))
 done
 ok_state(){ case "$1" in SAME@*) h=${1#SAME@}; [ "${h%%:*}" -ge "$hs" ] ;; *) return 1 ;; esac; }
 agree=false; ok_state "$s1" && ok_state "$s2" && agree=true
@@ -119,9 +130,9 @@ fi
 if [ -n "${DIFFRUN_ROLE:-}" ]; then
   echo "RESULT_JSON $(jq -cn --arg C "$(rest C /info | jq -r '.appVersion // "null"')" --arg F1 "$(rest F1 /info | jq -r '.appVersion // "null"')" \
     --arg F2 "$(rest F2 /info | jq -r '.appVersion // "null"')" --argjson s "$sum" --argjson h "$held" --argjson nb "$nb" \
-    --argjson ag "$agree" --argjson ll "$bad" --argjson sb "$sizebad" --argjson pass "$([ "$rig_verdict" = PASS ] && echo true || echo false)" \
+    --argjson ag "$agree" --argjson ll "$bad" --argjson cd "$cachedup" --argjson sb "$sizebad" --argjson pass "$([ "$rig_verdict" = PASS ] && echo true || echo false)" \
     '{schema_version: 1, scenario: "storage-rent-2598", versions: {C: $C, F1: $F1, F2: $F2},
       metrics: {claims: $s.claim_inputs, claim_txs: $s.claim_txs, rule_failures: ($s.failed + $s.unknown + $s.younger_than_period),
-                holders: $nb, holders_claimed: $h, agreement: $ag, log_lines: $ll, size_mismatches: $sb, pass: $pass}}')"
+                holders: $nb, holders_claimed: $h, agreement: $ag, log_lines: $ll, cache_duplicates: $cd, size_mismatches: $sb, pass: $pass}}')"
 fi
 [ "$sf" = 0 ] || note "settle_follow returned $sf"

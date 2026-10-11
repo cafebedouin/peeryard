@@ -243,3 +243,9 @@ wo_explain(){ local s="$1" r="$2" fs="$3" fr="$4" max="${5:-3}" side id other of
       echo "[wallet-oracle]   explain: box ${id:0:8} held only by the $side; $other's wallet: ${rec:-absent}; UTXO set: $s=$(rest "$s" "/utxo/byId/$id" | jq -r 'if .boxId then "yes" else "no" end' 2>/dev/null) $r=$(rest "$r" "/utxo/byId/$id" | jq -r 'if .boxId then "yes" else "no" end' 2>/dev/null)"
     done
   done; }
+
+# wo_versions: one JSON object {node: appVersion} over the rig's NODES (the diffrun scenario wraps it into RESULT_JSON's
+# "versions"; a node that does not answer reports "null")
+wo_versions(){ local n vs='{}'
+  for n in "${NODES[@]}"; do vs=$(jq -c --arg k "$n" --arg v "$(rest "$n" /info | jq -r '.appVersion // "null"' 2>/dev/null)" '. + {($k): $v}' <<< "$vs"); done
+  echo "$vs"; }

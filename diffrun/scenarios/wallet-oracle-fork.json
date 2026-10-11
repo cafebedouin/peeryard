@@ -1,0 +1,15 @@
+{
+  "name": "wallet-oracle-fork",
+  "description": "The wallet oracle (rig/WALLET-ORACLE.md) across a fork switch, every node on this role's jar: the subject wallet follows a losing branch (its own payment confirmed there, rewards maturing there) and rolls back to the heavier chain at the heal; it is then compared field by field with a reference wallet with the same keys that never saw the losing branch. WO_EVENTS: fork (the switch), none (no cut: A/A), rescan-from (fork + positive control). Needs netem. Expectation, the before/after shape: the base shows a wallet difference in at least one run, the candidate in none. A PR that should not change the wallet reads as NULL with both roles same.",
+  "script": "wallet-oracle.sh",
+  "tier": "public",
+  "env": { "WO_EXAMPLE": "fork", "WO_EVENTS": "fork" },
+  "metrics": { "events": "number", "events_same": "number", "events_diff": "number", "same": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 3000,
+  "expect": {
+    "base":      { "any": { "key": "same", "op": "==", "value": false } },
+    "candidate": { "all": { "key": "same", "op": "==", "value": true } }
+  }
+}

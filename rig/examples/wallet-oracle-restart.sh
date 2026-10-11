@@ -20,7 +20,7 @@
 source "$(dirname "$(readlink -f "$HOOK")")/../lib/wallet_oracle.sh"
 EV="${WO_EVENT:-restart}"; AT="${WO_AT:-confirmed}"
 label="$EV"; [[ "$AT" == pending ]] && label+=" at=pending"
-wo_end(){ echo "[wo] === WALLET-ORACLE-RESTART ($label): $rig_verdict ==="; echo "WALLET-ORACLE-DONE"; }
+wo_end(){ echo "[wo] versions $(wo_versions)"; echo "[wo] === WALLET-ORACLE-RESTART ($label): $rig_verdict ==="; echo "WALLET-ORACLE-DONE"; }
 wo_inc(){ rig_verdict=INCONCLUSIVE; rig_cause="$1"; echo "[wallet-oracle] INCONCLUSIVE: $2"; wo_end; }
 case "$EV" in none|restart|crash|rescan|rescan-from) ;; *) wo_inc BAD_EVENT "unknown WO_EVENT '$EV'"; return 0 ;; esac
 case "$AT" in confirmed|pending) ;; *) wo_inc BAD_EVENT "unknown WO_AT '$AT'"; return 0 ;; esac

@@ -1,0 +1,15 @@
+{
+  "name": "wallet-oracle-restart",
+  "description": "The wallet oracle (rig/WALLET-ORACLE.md) through node lifecycle events, every node on this role's jar: a subject wallet goes through each event in WO_EVENTS (restart, crash, rescan; none = A/A; rescan-from = positive control) and is compared field by field with a reference wallet that holds the same keys and went through nothing. WO_AT=pending compares before the pending payment confirms. Metric same = every event SAME. Expectation, the before/after shape: the base shows a wallet difference in at least one run, the candidate in none. A PR that should not change the wallet reads as NULL with both roles same.",
+  "script": "wallet-oracle.sh",
+  "tier": "public",
+  "env": { "WO_EXAMPLE": "restart", "WO_EVENTS": "restart crash", "WO_AT": "confirmed" },
+  "metrics": { "events": "number", "events_same": "number", "events_diff": "number", "same": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 3600,
+  "expect": {
+    "base":      { "any": { "key": "same", "op": "==", "value": false } },
+    "candidate": { "all": { "key": "same", "op": "==", "value": true } }
+  }
+}

@@ -48,4 +48,17 @@ WO_IGNORE_MEMPOOL=1 case_ mempool-ignored "$S" "$(v mi '.mempool = []')" 0 "[wal
 WO_IGNORE_MEMPOOL=1 case_ mempool-ign-diff "$S" "$(v md '.mempool = [] | .balanceUnconfirmed = .balance')" 1 "[wallet-oracle] DIFF@84: balanceUnconfirmed:"
 case_ incomplete        "$S" "$(v nu '.unspent = null')" 3 "[wallet-oracle] INCONCLUSIVE: reference snapshot incomplete: unspent"
 case_ not-json          "$S" "$(echo 'oops' > "$T/bad.json"; echo "$T/bad.json")" 3 "[wallet-oracle] INCONCLUSIVE: comparator error"
+# the diffrun manifests validate, and diffrun/scenario-env.sh (pr-scenario.yml's scenario_env) sets only declared keys
+for m in diffrun/scenarios/wallet-oracle-restart.json diffrun/scenarios/wallet-oracle-fork.json; do
+  e=$(jq -c -L diffrun/lib 'include "diffrun"; validate_manifest' "$m"); [[ "$e" == "[]" ]] && r=ok || { r="MISMATCH ($e)"; fail=1; }
+  echo "manifest $(basename "$m") validates                                $r"; done
+cp diffrun/scenarios/wallet-oracle-restart.json "$T/m.json"
+se(){ local want=$1 spec=$2 rc; bash diffrun/scenario-env.sh "$T/m.json" "$spec" > "$T/se.out" 2>&1; rc=$?
+  [[ $rc == "$want" ]] && r=ok || { r="MISMATCH ($(cat "$T/se.out"))"; fail=1; }
+  printf 'scenario-env %-34s want exit %s got %s  %s\n' "'$spec'" "$want" "$rc" "$r"; }
+se 0 'WO_AT=pending; WO_EVENTS=restart crash'
+[[ "$(jq -c .env "$T/m.json")" == '{"WO_EXAMPLE":"restart","WO_EVENTS":"restart crash","WO_AT":"pending"}' ]] && echo "scenario-env: env after the override                              ok" || { echo "scenario-env: env MISMATCH $(jq -c .env "$T/m.json")"; fail=1; }
+se 1 'WO_UNKNOWN=1'
+se 1 'WO_AT=$(id)'
+se 0 ''
 [[ $fail == 0 ]] && echo "wallet oracle tests: all ok" || { echo "wallet oracle tests: MISMATCH (see $T)"; exit 1; }

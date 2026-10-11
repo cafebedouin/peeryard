@@ -14,7 +14,7 @@
 source "$(dirname "$(readlink -f "$HOOK")")/../lib/wallet_oracle.sh"
 FORK="${WO_FORK:-1}"; CTL="${WO_CONTROL:-}"; LEAD="${WO_LEAD:-3}"
 label="fork=$FORK${CTL:+ control=$CTL}"
-wo_end(){ echo "[wo] === WALLET-ORACLE-FORK ($label): $rig_verdict ==="; echo "WALLET-ORACLE-DONE"; }
+wo_end(){ echo "[wo] versions $(wo_versions)"; echo "[wo] === WALLET-ORACLE-FORK ($label): $rig_verdict ==="; echo "WALLET-ORACLE-DONE"; }
 wo_inc(){ rig_verdict=INCONCLUSIVE; rig_cause="$1"; echo "[wallet-oracle] INCONCLUSIVE: $2"; wo_end; }
 [[ "$FORK" == 0 || "$FORK" == 1 ]] || { wo_inc BAD_EVENT "WO_FORK must be 0 or 1, not '$FORK'"; return 0; }
 [[ -z "$CTL" || "$CTL" == rescan-from ]] || { wo_inc BAD_EVENT "unknown WO_CONTROL '$CTL'"; return 0; }

@@ -10,15 +10,20 @@
 #   none         nothing: the A/A control, must PASS
 #   rescan-from  POST /wallet/rescan {"fromHeight": <tip - 20>} on S: the positive control, must FAIL (S no longer sees
 #                boxes below that height)
-# Then M mines until the pending payment confirms and stops, and the oracle compares S and R at a settled point:
+# Then M mines until the pending payment confirms and stops, and the oracle compares S and R at a settled point.
+# WO_AT=pending compares instead right after the event, before any block, with the same-mempool rule dropped
+# (WO_IGNORE_MEMPOOL): the wallet's unconfirmed view while the payment is still pending (what a wallet that persists
+# its unconfirmed transactions keeps across a restart; on 6.0.6 a restart empties the pool). Either way:
 # PASS = "[wallet-oracle] SAME@...", FAIL = "DIFF@...", INCONCLUSIVE = not settled, or a staging step that did not
 # happen (keys differ, no rewards, the pending payment never reached both pools).
 # shellcheck source=rig/lib/wallet_oracle.sh
 source "$(dirname "$(readlink -f "$HOOK")")/../lib/wallet_oracle.sh"
-EV="${WO_EVENT:-restart}"
-wo_end(){ echo "[wo] === WALLET-ORACLE-RESTART ($EV): $rig_verdict ==="; echo "WALLET-ORACLE-DONE"; }
+EV="${WO_EVENT:-restart}"; AT="${WO_AT:-confirmed}"
+label="$EV"; [[ "$AT" == pending ]] && label+=" at=pending"
+wo_end(){ echo "[wo] === WALLET-ORACLE-RESTART ($label): $rig_verdict ==="; echo "WALLET-ORACLE-DONE"; }
 wo_inc(){ rig_verdict=INCONCLUSIVE; rig_cause="$1"; echo "[wallet-oracle] INCONCLUSIVE: $2"; wo_end; }
 case "$EV" in none|restart|crash|rescan|rescan-from) ;; *) wo_inc BAD_EVENT "unknown WO_EVENT '$EV'"; return 0 ;; esac
+case "$AT" in confirmed|pending) ;; *) wo_inc BAD_EVENT "unknown WO_AT '$AT'"; return 0 ;; esac
 echo "[wo] event: $EV; jar $(basename "${NODE_JAR[S]:-?}")"
 
 # precondition: one key derivation on both nodes (the same addresses), and P's keys are not theirs
@@ -39,6 +44,12 @@ case "$EV" in
   rescan-from) echo "[wo] rescan from $((h - 20)): $(wallet S /wallet/rescan "{\"fromHeight\":$((h - 20))}")" ;;
 esac
 echo "[wo] after the event: pending ${WO_PENDING:0:8} in S's pool: $(mempool_ids S | grep -qx "$WO_PENDING" && echo yes || echo no), in R's: $(mempool_ids R | grep -qx "$WO_PENDING" && echo yes || echo no)"
+if [[ "$AT" == pending ]]; then
+  WO_IGNORE_MEMPOOL=1 wallet_oracle S R 180
+  echo "[wo] compared before any block: pending ${WO_PENDING:0:8} in S's pool: $(mempool_ids S | grep -qx "$WO_PENDING" && echo yes || echo no)"
+  case "$WO_RESULT" in SAME) rig_verdict=PASS ;; DIFF) rig_verdict=FAIL; rig_cause=WALLET_DIFF ;; *) rig_verdict=INCONCLUSIVE; rig_cause=NOT_SETTLED ;; esac
+  wo_end; return 0
+fi
 wo_confirm M 3 S R P || { wo_inc NOT_SETTLED "S, R and P did not reach M's tip after the confirming blocks"; return 0; }
 echo "[wo] pending ${WO_PENDING:0:8} on R: inclusionHeight $(wallet R "/wallet/transactionById?id=$WO_PENDING" | jq -r '.inclusionHeight // "none"')"
 wallet_oracle S R 180

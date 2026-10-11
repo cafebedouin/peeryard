@@ -1,0 +1,93 @@
+# The wallet oracle (rig/WALLET-ORACLE.md) on GitHub-hosted runners, where netem exists and anyone can re-run it: one
+# job per variant and repeat, each the rig on a release jar (or any jar URL with its sha256), and a summary that checks
+# every variant against what it must report: the events and the A/A controls PASS (SAME), the positive controls FAIL
+# (DIFF). Runs by hand, or on push to ci/wallet-oracle (git push origin <branch>:ci/wallet-oracle).
+name: wallet oracle
+on:
+  workflow_dispatch:
+    inputs:
+      jar_url: { description: 'node jar to test (subject and reference both run it)', default: 'https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar' }
+      sha256: { description: 'sha256 of that jar (checked)', default: '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }
+      repeats: { description: 'runs per variant (1-5)', default: '1' }
+  push:
+    branches: [ 'ci/wallet-oracle' ]
+permissions:
+  contents: read
+env:
+  JAR_URL: ${{ inputs.jar_url || 'https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar' }}
+  JAR_SHA256: ${{ inputs.sha256 || '21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323' }}
+jobs:
+  list:
+    runs-on: ubuntu-24.04
+    outputs:
+      repeats: ${{ steps.r.outputs.repeats }}
+    steps:
+      - id: r
+        run: |
+          n='${{ inputs.repeats || '1' }}'; [[ "$n" =~ ^[1-5]$ ]] || { echo "repeats must be 1-5"; exit 1; }
+          echo "repeats=$(jq -c -n --argjson n "$n" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+  run:
+    needs: list
+    name: ${{ matrix.v.name }} (${{ matrix.repeat }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        repeat: ${{ fromJSON(needs.list.outputs.repeats) }}
+        v:
+          - { name: restart-aa,       example: wallet-oracle-restart, env: 'WO_EVENT=none',                     want: PASS }
+          - { name: restart,          example: wallet-oracle-restart, env: 'WO_EVENT=restart',                  want: PASS }
+          - { name: crash,            example: wallet-oracle-restart, env: 'WO_EVENT=crash',                    want: PASS }
+          - { name: rescan,           example: wallet-oracle-restart, env: 'WO_EVENT=rescan',                   want: PASS }
+          - { name: restart-positive, example: wallet-oracle-restart, env: 'WO_EVENT=rescan-from',              want: FAIL }
+          - { name: fork-aa,          example: wallet-oracle-fork,    env: 'WO_FORK=0',                         want: PASS }
+          - { name: fork,             example: wallet-oracle-fork,    env: 'WO_FORK=1',                         want: PASS }
+          - { name: fork-positive,    example: wallet-oracle-fork,    env: 'WO_FORK=1 WO_CONTROL=rescan-from',  want: FAIL }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          sudo apt-get install -y -qq jq iproute2 >/dev/null
+          bash rig/preflight.sh 5
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Node jar
+        run: |
+          curl -sSL -o node.jar "$JAR_URL"
+          echo "$JAR_SHA256  node.jar" | sha256sum -c
+      - name: Run
+        run: |
+          mkdir -p out
+          set +e
+          env ${{ matrix.v.env }} PEERYARD_JAR="$PWD/node.jar" SCRATCH="$RUNNER_TEMP/rig" \
+            timeout 2400 bash rig/rig.sh rig/examples/${{ matrix.v.example }}.json rig/examples/${{ matrix.v.example }}.sh > out/run.txt 2>&1
+          rc=$?; set -e
+          case $rc in 0) got=PASS ;; 1) got=FAIL ;; 3) got=INCONCLUSIVE ;; *) got="ERROR($rc)" ;; esac
+          verdict=$(grep -E '^\[wallet-oracle\] (SAME|DIFF|INCONCLUSIVE)' out/run.txt | head -1)
+          printf '%s\t%s\t%s\t%s\t%s\n' '${{ matrix.v.name }}' '${{ matrix.repeat }}' '${{ matrix.v.want }}' "$got" "${verdict:-none}" | tee out/row.tsv
+          grep -E '^\[(wo|wallet-oracle)\]|\[rig\] (CAUSE|HARNESS-FAIL)' out/run.txt || true
+          cp -r "$RUNNER_TEMP"/rig/out/effective.json "$RUNNER_TEMP"/rig/out/wallet-oracle out/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wallet-oracle-${{ matrix.v.name }}-${{ matrix.repeat }}
+          path: out/
+          retention-days: 14
+  summary:
+    needs: run
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'wallet-oracle-*', path: rows }
+      - name: Table
+        run: |
+          {
+            echo "| variant | repeat | must | got | verdict line |"; echo "|---|---|---|---|---|"
+            cat rows/*/row.tsv | sort | awk -F'\t' '{printf "| %s | %s | %s | %s | `%s` |\n", $1, $2, $3, $4, $5}'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          bad=$(cat rows/*/row.tsv | awk -F'\t' '$3 != $4' | wc -l)
+          echo "$bad variant run(s) did not report what they must"; [ "$bad" = 0 ]

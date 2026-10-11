@@ -47,3 +47,5 @@ flap-phases	FLAP-PHASES: PASS	900	-	-
 flap	FLAP: PASS	900	-	-
 reorder-dup-phases	REORDER-DUP-PHASES: PASS	900	-	-
 mixed-roles-phases	MIXED-ROLES-PHASES: PASS	900	-	-
+wallet-oracle-restart	WALLET-ORACLE-RESTART \(restart\): PASS	1200	-	-
+wallet-oracle-fork	WALLET-ORACLE-FORK \(fork=1\): PASS	1500	-	-

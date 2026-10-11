@@ -44,6 +44,8 @@ case_ ns-mid-read       "$S" "$(v mr '.info_after.fullHeight += 1 | .balance.bal
 case_ ns-ref-wallet     "$S" "$(v wh '.walletHeight = 83')" 3 "[wallet-oracle] INCONCLUSIVE: not settled: reference wallet height 83 at full height 84"
 case_ ns-wallet-behind  "$(jq '.walletHeight = 80' "$S" > "$T/sw.json"; echo "$T/sw.json")" "$R" 3 "[wallet-oracle] INCONCLUSIVE: not settled: subject wallet height 80 at full height 84"
 case_ ns-mempool        "$S" "$(v mp '.mempool = [] | .balanceUnconfirmed = .balance')" 3 "[wallet-oracle] INCONCLUSIVE: not settled: mempools differ: subject=1 reference=0"
+WO_IGNORE_MEMPOOL=1 case_ mempool-ignored "$S" "$(v mi '.mempool = []')" 0 "[wallet-oracle] SAME@84:4"   # WO_AT=pending: the pools may differ, the wallets may not
+WO_IGNORE_MEMPOOL=1 case_ mempool-ign-diff "$S" "$(v md '.mempool = [] | .balanceUnconfirmed = .balance')" 1 "[wallet-oracle] DIFF@84: balanceUnconfirmed:"
 case_ incomplete        "$S" "$(v nu '.unspent = null')" 3 "[wallet-oracle] INCONCLUSIVE: reference snapshot incomplete: unspent"
 case_ not-json          "$S" "$(echo 'oops' > "$T/bad.json"; echo "$T/bad.json")" 3 "[wallet-oracle] INCONCLUSIVE: comparator error"
 [[ $fail == 0 ]] && echo "wallet oracle tests: all ok" || { echo "wallet oracle tests: MISMATCH (see $T)"; exit 1; }

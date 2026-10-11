@@ -20,6 +20,9 @@
 # assets, inclusionHeight, onchain, creationTransaction; minConfirmations=-1, so boxes of mempool transactions too),
 # transactions (sorted by id: id, inclusionHeight; inclusion heights 0..fullHeight), scans (sorted scanId, scanName).
 # A read that did not return JSON of the expected type is null, and the comparator reports the snapshot incomplete.
+# WO_IGNORE_MEMPOOL=1 drops the same-mempool settle rule (wallet_settle and wallet_cmp): for a comparison taken while
+# a payment is pending and the subject's pool may have lost it (a restart empties the pool on 6.0.6), where the
+# question is the wallet's own unconfirmed view.
 
 WO_PAGE=2500   # /wallet/boxes/unspent's maximum limit
 
@@ -73,11 +76,11 @@ wallet_settle(){ local s="$1" r="$2" end=$((SECONDS + ${3:-120})) why is ir ws w
     ws=$(wallet "$s" /wallet/status | jq -r '.walletHeight // "none"' 2>/dev/null); wr=$(wallet "$r" /wallet/status | jq -r '.walletHeight // "none"' 2>/dev/null)
     ps=$(rest "$s" '/transactions/unconfirmed?limit=10000' | jq -c '[.[]?.id] | sort' 2>/dev/null)
     pr=$(rest "$r" '/transactions/unconfirmed?limit=10000' | jq -c '[.[]?.id] | sort' 2>/dev/null)
-    why=$(jq -nr --argjson is "$is" --argjson ir "$ir" --arg ws "$ws" --arg wr "$wr" --arg ps "$ps" --arg pr "$pr" '
+    why=$(jq -nr --argjson is "$is" --argjson ir "$ir" --arg ws "$ws" --arg wr "$wr" --arg ps "$ps" --arg pr "$pr" --arg im "${WO_IGNORE_MEMPOOL:-0}" '
       if ($is.fullHeight // 0) < 1 or ($ir.fullHeight // 0) < 1 then "no full block on one node"
       elif $is.bestFullHeaderId != $ir.bestFullHeaderId then "best full blocks differ (\($is.fullHeight), \($ir.fullHeight))"
       elif $ws != ($is.fullHeight | tostring) or $wr != ($ir.fullHeight | tostring) then "wallet heights \($ws), \($wr) at full height \($is.fullHeight)"
-      elif $ps != $pr then "mempools differ"
+      elif $ps != $pr and $im != "1" then "mempools differ"
       else "" end' 2>/dev/null || echo "unreadable")
     [[ -z "$why" ]] && { echo "SETTLED@$(jq -r .fullHeight <<< "$is")"; return 0; }
     [[ $SECONDS -ge $end ]] && { echo "NOT-SETTLED: $why"; return 1; }
@@ -86,7 +89,7 @@ wallet_settle(){ local s="$1" r="$2" end=$((SECONDS + ${3:-120})) why is ir ws w
 
 # The comparison itself: a pure function of two snapshot files.
 wallet_cmp(){ local res kind
-  res=$(jq -n --slurpfile S "$1" --slurpfile R "$2" '
+  res=$(jq -n --slurpfile S "$1" --slurpfile R "$2" --arg im "${WO_IGNORE_MEMPOOL:-0}" '
     # lists compared as sets: sorted here too, so a hand-made or reordered snapshot compares by content
     def norm: if type != "object" then . else
       .addresses |= (if . == null then . else sort end) | .mempool |= (if . == null then . else sort end)
@@ -104,7 +107,7 @@ wallet_cmp(){ local res kind
         "best full blocks differ: subject=\($s.info.fullHeight):\($s.info.bestFullHeaderId | id8) reference=\($r.info.fullHeight):\($r.info.bestFullHeaderId | id8)"
       elif $s.walletHeight != $s.info.fullHeight then "subject wallet height \($s.walletHeight) at full height \($s.info.fullHeight)"
       elif $r.walletHeight != $r.info.fullHeight then "reference wallet height \($r.walletHeight) at full height \($r.info.fullHeight)"
-      elif $s.mempool != $r.mempool then "mempools differ: subject=\($s.mempool | length) reference=\($r.mempool | length) transactions"
+      elif $s.mempool != $r.mempool and $im != "1" then "mempools differ: subject=\($s.mempool | length) reference=\($r.mempool | length) transactions"
       else null end;
     # a list field: counts, the entries only on one side, and the entries under one key with different contents
     def listdiff($f):

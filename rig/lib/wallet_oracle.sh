@@ -149,3 +149,67 @@ wallet_oracle(){ local s="$1" r="$2" win="${3:-120}" dir="${4:-${RIG_LOG_DIR:-${
   echo "$out"; WO_LINE=$(head -1 <<< "$out")
   case $rc in 0) WO_RESULT=SAME ;; 1) WO_RESULT=DIFF ;; *) WO_RESULT=INCONCLUSIVE ;; esac
   return $rc; }
+
+# ---- staging shared by the wallet-oracle examples (rig/WALLET-ORACLE.md, "Events") ----
+# wo_history <s> <r> <p> <miner>: with the miner mining, give the subject's wallet something worth checking: matured
+# mining rewards (>= WO_MIN_REWARDS nanoERG, default 10 ERG, on both s and r), three payments s -> p (spent boxes)
+# and three payments p -> s (received boxes from a foreign wallet), all confirmed (the miner's pool drains and two
+# more blocks follow). Prints one line per step; returns 1 (with WO_WHY set) when a step did not happen.
+wo_history(){ local s="$1" r="$2" p="$3" m="$4" b i id sent=0 got=0 h end
+  WO_WHY=""
+  if ! b=$(wait_balance "$s" "${WO_MIN_REWARDS:-10000000000}" 300); then WO_WHY="no matured rewards on $s ($b)"; return 1; fi
+  echo "[wo] $s holds $b nanoERG of matured rewards at height $(full_height "$s"); $r holds $(balance "$r")"
+  for i in 1 2 3; do id=$(pay "$s" "$p" 2000000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && sent=$((sent + 1)) || echo "[wo]   $s -> $p $i rejected: $id"; sleep 1; done
+  if ! b=$(wait_balance "$p" $((sent * 2000000000)) 120) || [[ $sent -lt 1 ]]; then WO_WHY="$s -> $p payments: $sent sent, $p balance $b"; return 1; fi
+  for i in 1 2 3; do id=$(pay "$p" "$s" 500000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && got=$((got + 1)) || echo "[wo]   $p -> $s $i rejected: $id"; sleep 1; done
+  [[ $got -ge 1 ]] || { WO_WHY="no $p -> $s payment accepted"; return 1; }
+  end=$((SECONDS + 120)); while [[ $SECONDS -lt $end && "$(mempool_size "$m")" != 0 ]]; do sleep 2; done
+  h=$(full_height "$m"); end=$((SECONDS + 60)); while [[ $SECONDS -lt $end && "$(full_height "$m")" -lt $((h + 2)) ]]; do sleep 1; done
+  [[ "$(mempool_size "$m")" == 0 ]] || { WO_WHY="$m's pool did not drain ($(mempool_size "$m") left)"; return 1; }
+  echo "[wo] history: $sent payments $s -> $p (spent boxes), $got payments $p -> $s (received), confirmed by height $(full_height "$m")"; }
+
+# wo_same_tip <timeout_s> <node>...: wait until every node reports the first node's best full block (no miner running)
+wo_same_tip(){ local end=$((SECONDS + $1)) n t ok; shift
+  while :; do ok=1; t=$(applied_header "$1"); [[ -n "$t" ]] || ok=0
+    for n in "$@"; do [[ "$(applied_header "$n")" == "$t" ]] || ok=0; done
+    [[ $ok == 1 ]] && return 0; [[ $SECONDS -ge $end ]] && return 1; sleep 2; done; }
+
+# wo_pending <s> <r> <p>: one payment s -> p that is left unconfirmed (call it with no miner running); WO_PENDING is
+# its id. Returns 1 (WO_WHY set) unless both s's and r's pools list it within 30 s.
+wo_pending(){ local s="$1" r="$2" p="$3" end
+  WO_PENDING=$(pay "$s" "$p" 300000000); WO_WHY=""
+  [[ "$WO_PENDING" =~ ^[0-9a-f]{64}$ ]] || { WO_WHY="pending payment rejected: $WO_PENDING"; return 1; }
+  end=$((SECONDS + 30))
+  while [[ $SECONDS -lt $end ]]; do
+    mempool_ids "$s" | grep -qx "$WO_PENDING" && mempool_ids "$r" | grep -qx "$WO_PENDING" && { echo "[wo] pending payment ${WO_PENDING:0:8} in $s's and $r's pools"; return 0; }
+    sleep 1
+  done
+  WO_WHY="pending payment ${WO_PENDING:0:8} not in both pools"; return 1; }
+
+# wo_redial <timeout_s> <miner> <node>...: after the miner's relaunch, wait until each node lists the miner as a
+# connected peer. The miner has no knownPeers, so it does not dial back, and a follower's own retry may have hit the
+# miner while it was down: a node still without it after 10 s is re-dialled (POST /peers/connect, as the rig's
+# bring-up does), every 10 s. Returns 1 when one is still missing at the deadline.
+wo_redial(){ local end=$((SECONDS + $1)) m="$2" n ok next=$((SECONDS + 10)); shift 2
+  while :; do ok=1
+    for n in "$@"; do [[ " $(peers_of "$n") " == *" $m "* ]] && continue; ok=0
+      [[ $SECONDS -ge $next ]] && wallet "$n" /peers/connect "\"${IP[$m]}:${P2P[$m]}\"" >/dev/null; done
+    [[ $SECONDS -ge $next ]] && next=$((SECONDS + 10))
+    [[ $ok == 1 ]] && return 0; [[ $SECONDS -ge $end ]] && { echo "[wo] redial: $m still not a peer of every node"; return 1; }
+    sleep 2; done; }
+
+# wo_confirm <miner> <blocks> <node>...: mine (poll WO_POLL, default 2s) until the miner's pool is empty, it is at least
+# <blocks> blocks higher, and every node has reached that height (so the blocks reached them); then stop it, re-dial the nodes to the relaunched
+# miner and wait for one tip again. Prints the heights; returns 1 when the nodes never reached one tip.
+wo_confirm(){ local m="$1" k="$2" h0 end ok=0 n; shift 2
+  h0=$(full_height "$m"); start_mining "$m" "${WO_POLL:-2s}" >/dev/null; settle_height_back "$m"; wo_redial 60 "$m" "$@"
+  end=$((SECONDS + 180))
+  while [[ $SECONDS -lt $end ]]; do
+    if [[ "$(full_height "$m")" -ge $((h0 + k)) && "$(mempool_size "$m")" == 0 ]]; then
+      ok=1; for n in "$@"; do [[ "$(full_height "$n")" -ge $((h0 + k)) ]] || ok=0; done; [[ $ok == 1 ]] && break; fi
+    sleep 2
+  done
+  stop_mining "$m" >/dev/null; settle_height_back "$m"; wo_redial 60 "$m" "$@"
+  wo_same_tip 90 "$m" "$@"; ok=$?
+  echo "[wo] $m mined from $h0 to $(full_height "$m"), pool $(mempool_size "$m"); one tip with $*: $([[ $ok == 0 ]] && echo yes || echo no)"
+  return $ok; }

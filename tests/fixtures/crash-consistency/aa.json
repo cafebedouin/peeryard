@@ -1,0 +1,86 @@
+{
+  "subject": "S",
+  "refs": [
+    "R",
+    "M"
+  ],
+  "staging": {
+    "control": "aa",
+    "kills_planned": 0,
+    "kills_done": 0,
+    "kills_in_window": 0,
+    "min_in_window": 0,
+    "harness_fail": []
+  },
+  "kills": [],
+  "samples": [
+    {
+      "t": 1000,
+      "nodes": {
+        "S": {
+          "answered": true,
+          "full": 118,
+          "headers": 118,
+          "bestFull": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "bestHeader": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "root": "2222222222222222222222222222222222222222222222222222222222222222bb"
+        },
+        "R": {
+          "answered": true,
+          "full": 120,
+          "headers": 120,
+          "bestFull": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bestHeader": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "root": "1111111111111111111111111111111111111111111111111111111111111111aa"
+        },
+        "M": {
+          "answered": true,
+          "full": 120,
+          "headers": 120,
+          "bestFull": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bestHeader": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "root": "1111111111111111111111111111111111111111111111111111111111111111aa"
+        }
+      },
+      "subject_at": {
+        "R": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "M": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    {
+      "t": 4000,
+      "nodes": {
+        "S": {
+          "answered": true,
+          "full": 120,
+          "headers": 120,
+          "bestFull": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bestHeader": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "root": "1111111111111111111111111111111111111111111111111111111111111111aa"
+        },
+        "R": {
+          "answered": true,
+          "full": 120,
+          "headers": 120,
+          "bestFull": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bestHeader": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "root": "1111111111111111111111111111111111111111111111111111111111111111aa"
+        },
+        "M": {
+          "answered": true,
+          "full": 120,
+          "headers": 120,
+          "bestFull": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bestHeader": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "root": "1111111111111111111111111111111111111111111111111111111111111111aa"
+        }
+      },
+      "subject_at": {
+        "R": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "M": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "log_fatal": [],
+  "indexer": null
+}

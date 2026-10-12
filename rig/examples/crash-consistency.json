@@ -1,0 +1,9 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "M", "mining": true, "mine_poll": "500ms", "knownPeers": [] },
+    { "name": "R", "mining": false, "knownPeers": ["M"], "defer": true },
+    { "name": "S", "mining": false, "knownPeers": ["M"], "defer": true }
+  ],
+  "links": [ { "a": "M", "b": "R", "delay_ms": 0 }, { "a": "M", "b": "S", "delay_ms": 0 } ]
+}

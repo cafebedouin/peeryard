@@ -1,0 +1,35 @@
+{
+  "subject": "S",
+  "refs": [
+    "R",
+    "M"
+  ],
+  "staging": {
+    "control": "none",
+    "kills_planned": 3,
+    "kills_done": 3,
+    "kills_in_window": 3,
+    "min_in_window": 1,
+    "harness_fail": []
+  },
+  "kills": [
+    {
+      "k": 1,
+      "height": 64,
+      "in_window": true
+    },
+    {
+      "k": 2,
+      "height": 90,
+      "in_window": true
+    },
+    {
+      "k": 3,
+      "height": 110,
+      "in_window": true
+    }
+  ],
+  "samples": [],
+  "log_fatal": [],
+  "indexer": null
+}

@@ -34,6 +34,8 @@ jobs:
         run: T=$(mktemp -d) bash tests/phases.sh
       - name: indexer-diff comparator (rig/indexer-cmp.sh on fixture snapshots)
         run: T=$(mktemp -d) bash tests/indexer_diff.sh
+      - name: crash-consistency classifier (rig/crash-verdict.sh on fixture observations)
+        run: T=$(mktemp -d) bash tests/crash_consistency.sh
       - name: tooling (check.sh, stack.sh, register.sh, provenance.sh, post.sh)
         run: |
           git config --global user.email ci@example.invalid

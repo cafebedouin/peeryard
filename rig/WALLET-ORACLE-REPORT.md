@@ -1,4 +1,4 @@
-# Wallet oracle: report (2026-10-11)
+# Wallet oracle: report (2026-10-11, hosted runs 2026-10-12)
 
 The task: a differential oracle for "the node's wallet stays correct across a lifecycle event" (design:
 [WALLET-ORACLE.md](WALLET-ORACLE.md)). This page says what was built, what ran (verdict lines verbatim), what did not run
@@ -81,6 +81,9 @@ same staging and no event, `WO_AT=pending` is SAME, so the DIFF is the event's.
 
 ## What did not run, and why
 
+(As of 2026-10-11. The fork example, repeats and the pull-request runs have since run on hosted runners: *Hosted runs
+(2026-10-12)* below.)
+
 - **The fork switch itself** (`WO_FORK=1`) and its positive control: no netem here. Ready for a hosted runner.
 - **A valid fork A/A.** Neither no-cut run reached a valid comparison (table above), so the fork example's comparator path
   is not yet shown SAME with no event; the history staging needs a longer wait (or a check of which payment is missing)
@@ -102,6 +105,102 @@ Its summary lists every variant with what it must report and what it got, and fa
 itself (`WO_FORK=1`) is reported, not judged, until the operator's finding below is settled. The two
 `WO_AT=pending` event variants are not in the workflow's must-table: on the release they are expected to DIFF (above), on a
 PR that persists unconfirmed transactions to be SAME; run them by hand with the PR's jar.
+
+## Hosted runs (2026-10-12)
+
+Everything below ran on GitHub-hosted runners (ubuntu-24.04, netem available) in cafebedouin/peeryard; the sections above
+are the earlier development runs. Node: the v6.0.7 release asset `ergo-6.0.7.jar`, sha256
+`8616f4051335cf3b7ee3f3099821b7b27b1913bcd8bb5957ed7fc42dde26e9fa`, unless a pull request's jars are named.
+
+### `wallet-oracle.yml`, one run per variant
+
+Nine rounds, each on the branch head of its commit; the staging changed between rounds (below). The last round, run
+38198808611 at `0f75740`, verbatim:
+
+| variant | must | got | verdict line |
+|---|---|---|---|
+| restart-aa | PASS | PASS | `[wallet-oracle] SAME@44:36` |
+| restart | PASS | PASS | `[wallet-oracle] SAME@31:24` |
+| crash | PASS | PASS | `[wallet-oracle] SAME@42:34` |
+| rescan | PASS | PASS | `[wallet-oracle] SAME@59:47` |
+| restart-positive | FAIL | FAIL | `[wallet-oracle] DIFF@33: balance: subject={"balance":1412699000000,"assets":{}} reference={"balance":1547699000000,"assets":{}}` |
+| pending-aa | PASS | PASS | `[wallet-oracle] SAME@48:35` |
+| fork-aa | PASS | PASS | `[wallet-oracle] SAME@85:81` |
+| fork | - | FAIL | `[wallet-oracle] DIFF@85: balance: subject={"balance":4989803000000,"assets":{}} reference={"balance":5057303000000,"assets":{}}` |
+| fork-positive | FAIL | FAIL | `[wallet-oracle] DIFF@121: balance: subject={"balance":876806000000,"assets":{}} reference={"balance":7487303000000,"assets":{}}` |
+
+Every round's `fork` variant that reached a comparison (rounds 38185046878, 38185580629, 38186050449, 38195830924,
+38198199388, 38198808611) was a `DIFF` of the same shape: the subject's balance 67.5 ERG (one block reward) below the
+reference's, and one unspent box held only by the reference, in both nodes' UTXO sets (last round: `unspent: subject=76
+(0 only here) reference=77 (1 only here, e.g. f8d60b69)`, `explain: box f8d60b69 held only by the reference; S's wallet:
+absent; UTXO set: S=yes R=yes`). That is the behaviour ergoplatform/ergo#2514 describes and changes (a matured mining
+reward lost from the wallet after a rollback past its maturity height): known and public, recorded here, not a new
+finding. Since `fork` itself is a `DIFF` on the release, `fork-positive`'s `DIFF` there shows the comparison runs after a
+fork, not that the control alone would produce one.
+
+What failed in earlier rounds and what changed:
+
+| round (run) | variant(s) | got | cause (from the run) | change |
+|---|---|---|---|---|
+| 38185046878 | fork-aa | INCONCLUSIVE | one of three history payments stayed in S's pool and never reached M | after 60 s, a history payment the miner lacks is handed to it from a peer's pool (`wo_push`, the same signed transaction); the wait is 300 s |
+| 38185046878 | restart | INCONCLUSIVE | `not settled: mempools differ`: the pending payment was not mined within 180 s after M's relaunch emptied its pool | `wo_push` for the pending payment when the miner starts |
+| 38185580629 | crash | INCONCLUSIVE | the same; its `re-submitted` line showed an error object being posted (a node without the transaction answers with one) | `wo_push` takes only the transaction itself |
+| 38193970478, 38194909713 | fork, fork-positive | INCONCLUSIVE | M2 and S stayed on their branch after the heal (`LIGHTER_FORK_NOT_SWITCHING`); branches of 14-17 and 30-34 blocks | the fork miners stop at once again, and the `wo_stop_miner` shared-tip wait (20 s, added for older builds) is off by default |
+| 38195830924, 38196671478, 38198199388 | fork-positive, fork, fork-aa | INCONCLUSIVE | S, two hops from M behind M2, stopped syncing below M2 for the whole tip wait (S/M2 full heights 67/201, 95/124, 74/99) | `wo_confirm` stops the miner once it has the blocks and the pending payment is in one, instead of mining on until every follower arrives; the shared-tip wait off |
+
+Two staging changes came from the pull-request runs below rather than from these rounds: links between the followers
+(restart example: S, R and P meshed; fork example: R-P), and `WO_TIP_WAIT`. In the round after the last change (run
+38198808611) every variant met its expectation; each variant has one run there, so this is not a rate. `S`'s stall
+behind `M2` (three of the last five rounds' fork-side INCONCLUSIVEs) is the fork example's open weak point.
+
+### pr-scenario A/A (plumbing)
+
+Run 38186616650 at `f8fd454` (before the follower links): `wallet-oracle-restart`, `aa=true`, `line=v6.0.7`,
+`scenario_env=WO_AT=pending; WO_EVENTS=restart crash`, 3 shards x 1 pair. Base jar = `8616f405…` (the release asset's
+sha256, built from the tag) in both roles. All 6 runs VALID, every one of the 12 events a `DIFF` on
+`balanceUnconfirmed` (e.g. `[wallet-oracle] DIFF@67: balanceUnconfirmed: subject={"balance":3843000000000,"assets":{}}
+reference={"balance":3842699000000,"assets":{}}`); pooled verdict `AGAINST` with the A/A label, as the before/after
+predicates make it for a jar that shows the DIFF in both roles.
+
+### ergoplatform/ergo#2466 (WO_AT=pending, restart and crash)
+
+Head `090fc7cf2694aeb47d851acb15e18e0edf750e85`; the diff does not apply on v6.0.7 (`ErgoWalletActor.scala`), so the
+build base is its merge base `4a7dba059794054fc4c81f5d990dafdeb4f97a49` (v6.0.3-2). Base jar sha256
+`d34a43bdc48f17b4089c8549d97ec87a999e54cb9dc5e259f1403a3e36a96186` (6.0.3-2-4a7dba05-SNAPSHOT); candidate (base + the
+PR's production diff, 7 files, patch sha256 `c0a0b30e…`) `9b6391239e0d5cf37b632df8abb2eb4e21b4a8e0a018026bdf3ddd1557593e7e`.
+
+- Run 38187138750 (`f8fd454`): 10 of 10 runs INCONCLUSIVE before the event: a follower's full height stuck below its
+  headers after M's relaunch (`HEADERS_AHEAD_FULL_STUCK`; locally, 15 minutes without recovery). The follower links came
+  from this run.
+- Run 38196668166 (`9e5a908`), 5 x 1, pooled verdict `SUPPORTS` with the table's own `[pooled n differs: not citable]`:
+  base 4 VALID of 5, each `same=false` with both events `DIFF` on `balanceUnconfirmed` (e.g. `restart: [wallet-oracle]
+  DIFF@46: balanceUnconfirmed: subject={"balance":2425503000000,…} reference={"balance":2425202000000,…}`); the fifth's
+  restart was `DIFF` and its crash INCONCLUSIVE (`M, S, R, P not on one tip after M stopped`). Candidate 3 VALID of 5,
+  each `same=true` with both events `SAME` (e.g. `restart: [wallet-oracle] SAME@52:47`, `crash: [wallet-oracle]
+  SAME@39:33`); of the two INCONCLUSIVE, one had its restart `SAME` before the crash staging failed the same way, the
+  other failed at that staging step before its first event. No candidate event reported `DIFF`.
+
+### ergoplatform/ergo#2514 (the fork example)
+
+Head `b41a94ca3f752650f0f1215a7e763b2cb889cf44`; two merge bases with master (`a772a5cb`, `5528ef56` = v6.0.5). The diff
+from git's pick, `a772a5cb`, would carry v6.0.5's own changes, so the build base is v6.0.5 (`5528ef56`), the other merge
+base, and the candidate takes the diff from it (`5528ef56..pr-2514`: 6 production files, the same six GitHub lists,
+including the synchronisation prerequisites the PR composes; patch sha256 `109747a5…`). Base jar sha256
+`2a7e2978cb09538ed6780d85ae3aa39c1ecce10e5e5a6e0dc3cd8ab087851588` (6.0.5); candidate
+`895698db7c0f3e1367c31a196aa29857594346f5bf480ea057ccae9fd3e059bf` (6.0.5-1-dcb61926-SNAPSHOT).
+
+- Run 38187140324 (`f8fd454`), 5 x 1: base 1 VALID (`DIFF`), 4 INCONCLUSIVE at staging (followers stuck after M's
+  relaunch); candidate 4 VALID (`SAME`), 1 INCONCLUSIVE (`S, R, P and M2 did not reach M's tip after the heal`).
+- Run 38196669727 (`9e5a908`), 5 x 1, pooled verdict `SUPPORTS` with `[pooled n differs: not citable]`: base 2 VALID of
+  5, both `DIFF` (`fork: [wallet-oracle] DIFF@108: balance: subject={"balance":6542303000000,…}
+  reference={"balance":6609803000000,…}` and `DIFF@111: balance: subject={"balance":6744803000000,…}
+  reference={"balance":6812303000000,…}`, each one reward box held only by the reference, in both UTXO sets), 3
+  INCONCLUSIVE (`the five nodes are not on one tip after M stopped`). Candidate 3 VALID of 5, all `SAME` (`SAME@115:104`,
+  `SAME@117:111`, `SAME@116:105`), 2 INCONCLUSIVE (one at the same staging step, one `S, R, P and M2 did not reach M's
+  tip after the heal`). Every VALID run, base and candidate, had one rollback on S.
+
+On both pull requests the base and candidate are older builds than the release, and their INCONCLUSIVE runs are the
+staging failures above, not wallet comparisons. Both PR runs used `9e5a908`, before the last two staging changes.
 
 ## Open ergoplatform/ergo pull requests the examples could check
 

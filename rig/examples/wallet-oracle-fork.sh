@@ -1,9 +1,9 @@
 # wallet-oracle-fork: does the subject's wallet come back from a fork switch with the same view as a reference wallet
 # that never saw the losing fork (rig/WALLET-ORACLE.md)? Two miners hold the default test keys: M (with R and P on its
-# side) and M2 (with S behind it; M2 also links to R, so after a miner's relaunch it has a second source of blocks).
-# S and R hold those keys too, mining switch on with an external miner nobody serves,
+# side; R and P also link to each other) and M2 (with S behind it). S and R hold those keys too, mining switch on with
+# an external miner nobody serves,
 # so both wallets track the miners' rewards and neither mines. Staging: matured rewards, S -> P and P -> S payments,
-# all confirmed. Then M2's links to M and R are cut: M2 mines a short fork that S follows, S pays P on it (confirmed there)
+# all confirmed. Then the M - M2 link is cut: M2 mines a short fork that S follows, S pays P on it (confirmed there)
 # and M2 stops; M mines to a lead of WO_LEAD (3) blocks and stops; S sends one more payment that stays unconfirmed.
 # The heal makes S (and M2) roll back to M's heavier chain: the fork's rewards and the fork-confirmed payment must
 # leave S's confirmed view, the payments return to the pool and confirm on M's chain, and then S must match R.
@@ -32,7 +32,7 @@ wo_stop_miner M S R P M2; wo_redial 60 M R P M2
 wo_same_tip 120 M S R P M2 || { wo_inc STAGING "the five nodes are not on one tip after M stopped"; return 0; }
 h0=$(full_height M); echo "[wo] shared tip at $h0"
 
-[[ "$FORK" == 1 ]] && { { partition M M2 && partition R M2; } || { wo_inc HARNESS "partition of M2 from M and R failed"; return 0; }; }
+[[ "$FORK" == 1 ]] && { partition M M2 || { wo_inc HARNESS "partition M M2 failed"; return 0; }; }
 mark "wallet-oracle-fork start"
 start_mining M2 3s >/dev/null; settle_height_back M2; wo_redial 60 M2 S
 [[ "$FORK" == 0 ]] && wo_redial 60 M M2
@@ -63,7 +63,7 @@ wo_pending S M2 P || { wo_inc NO_PENDING "$WO_WHY"; return 0; }
 s_fork_boxes=$(wallet S '/wallet/boxes/unspent?minConfirmations=0&minInclusionHeight='$((h0 + 1))'&limit=2500' | jq length)
 echo "[wo] at the heal: S at $(full_height S), $s_fork_boxes of S's unspent boxes above the shared tip $h0"
 mark "wallet-oracle-fork heal"
-[[ "$FORK" == 1 ]] && { { heal M M2 && heal R M2; } || { wo_inc HARNESS "heal of M2 with M and R failed"; return 0; }; }
+[[ "$FORK" == 1 ]] && { heal M M2 || { wo_inc HARNESS "heal M M2 failed"; return 0; }; }
 wo_redial 60 M M2
 wo_confirm M 3 S R P M2 || { wo_inc NOT_SETTLED "S, R, P and M2 did not reach M's tip after the heal"; return 0; }
 echo "[wo] after the heal: same_chain(M,S) $(same_chain M S); S at $(full_height S); S's fork payment ${fid:0:8} now at $(tx_height S "$fid") on S, $(tx_height R "$fid") on R; pending ${WO_PENDING:0:8} at $(tx_height R "$WO_PENDING") on R"

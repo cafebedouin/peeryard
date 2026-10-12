@@ -6,7 +6,7 @@
       "conf": { "ergo.node.mining": "true", "ergo.node.useExternalMiner": "true" } },
     { "name": "P", "mining": false, "knownPeers": ["M", "R"],
       "conf": { "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"" } },
-    { "name": "M2", "mining": false, "mine_poll": "3s", "knownPeers": ["M", "R"] },
+    { "name": "M2", "mining": false, "mine_poll": "3s", "knownPeers": ["M"] },
     { "name": "S", "mining": false, "knownPeers": ["M2"],
       "conf": { "ergo.node.mining": "true", "ergo.node.useExternalMiner": "true" } }
   ],
@@ -15,7 +15,6 @@
     { "a": "M", "b": "P", "delay_ms": 0 },
     { "a": "M", "b": "M2", "delay_ms": 0 },
     { "a": "M2", "b": "S", "delay_ms": 0 },
-    { "a": "R", "b": "P", "delay_ms": 0 },
-    { "a": "R", "b": "M2", "delay_ms": 0 }
+    { "a": "R", "b": "P", "delay_ms": 0 }
   ]
 }

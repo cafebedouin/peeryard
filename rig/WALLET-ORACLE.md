@@ -40,8 +40,9 @@ Only `S` spends from K (so no two wallets race for one box); `M` only mines. The
 on the subject's side of the cut (also K, so the subject's wallet holds rewards from the losing fork that it must drop).
 
 Links: in the restart example every node links to `M` and the three followers link to each other; in the fork example
-`R`, `P` and `M2` link to `M`, `S` only to `M2`, and `R` links to `P` and to `M2` (the cut removes `M2`'s links to `M`
-and `R`). The follower links are there because the examples stop and start the miner by relaunching it: on 6.0.3 and
+`R`, `P` and `M2` link to `M`, `S` only to `M2`, and `R` links to `P` (the cut is the `M`-`M2` link). A second link
+`R`-`M2`, cut and healed with the first, was tried once on 6.0.7 (hosted run 38193970478) and left `M2` and `S` on their
+fork after the heal (`M2` at 84, `M` at 229), so it is not used; `S` and `M2` therefore have one source each. The follower links are there because the examples stop and start the miner by relaunching it: on 6.0.3 and
 6.0.5 builds a follower still downloading blocks at that moment stalled with its headers at the miner's tip and its full
 height stuck (15 minutes in one local run, `HEADERS_AHEAD_FULL_STUCK`); with a second source it catches up. The miner is
 also stopped at a moment when every follower holds its tip when one comes within 20 s (`wo_stop_miner`).

@@ -112,6 +112,9 @@ WW_PRESET=aa PEERYARD_JAR=<ergo.jar> bash review/with-lock.sh -- bash rig/rig.sh
 WW_STEPS="mint:500 burn:500" ...                     # any step list
 ```
 
+The example suite (`rig/run-suite.sh`, `rig/examples/suite.tsv`) runs the `aa` list: the full list includes the scan and
+conflict steps, whose verdict on a given release is a finding about that release, not a regression of the rig.
+
 Base against candidate (`diffrun/README.md`; the manifests are `mixed_jars`):
 
 ```
@@ -119,7 +122,9 @@ bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/wallet-workloa
 ```
 
 Hosted (`pr-scenario.yml`): `scenario=wallet-workload` (or `wallet-workload-plain`, `wallet-workload-posctl`), `pr`,
-`head`, `line`, or `aa: true` for the A/A. One pair takes about 15 to 25 minutes of runner time. In the release check
+`head`, `line`, or `aa: true` for the A/A. Measured here (12 cores, v6.0.7): the full list takes about 20 minutes per
+run, the `aa` list about 4, the positive control about 2; a pair is two runs. The manifests' timeouts are 2400, 1500 and
+1200 s. In the release check
 (`review/release-check.sh`) it is one line of `SETS` (with `ref` the branch that carries it until it is on main):
 
 ```

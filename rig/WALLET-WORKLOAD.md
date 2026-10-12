@@ -124,11 +124,11 @@ bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/wallet-workloa
 Hosted (`pr-scenario.yml`): `scenario=wallet-workload` (or `wallet-workload-plain`, `wallet-workload-posctl`), `pr`,
 `head`, `line`, or `aa: true` for the A/A. Measured here (12 cores, v6.0.7): the full list takes about 20 minutes per
 run, the `aa` list about 4, the positive control about 2; a pair is two runs. The manifests' timeouts are 2400, 1500 and
-1200 s. In the release check
-(`review/release-check.sh`) it is one line of `SETS` (with `ref` the branch that carries it until it is on main):
+1200 s. In the release check (`review/release-check.sh`) it is one line of `SETS`, the sequential list only (the full
+list's verdict on a release is a finding about that release; `review/RELEASE-CHECK.md` says how to read it):
 
 ```
-wallet-workload	wallet-workload	2	1	false	main
+wallet-workload	wallet-workload-plain	2	1	false	main
 ```
 
 ## Applies to

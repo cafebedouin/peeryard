@@ -199,21 +199,24 @@ term list you supply. Details, exit codes 4 and 5, and what the lint does not do
 | `interop` | public | the release jar and the candidate jar on one two-node network (rig hook), each mining in turn while the other follows | `all(interop == true)` | `all(interop == true)` |
 | `txload` | public | real payments from a miner's wallet on a two-node network (rig hook): judged on confirmations; acceptance and the count in blocks are recorded | `all(confirmed == 10)` | `all(confirmed == 10)` |
 | `bootstrap-modes` | public | a miner with a digest-mode follower and a pruning follower, three nodes (rig hook): judged on state-root agreement; settling and visible pruning are recorded | `all(state_agree == true)` | `all(state_agree == true)` |
-| `indexer-diff` | public | the extra indexer of both jars on one chain (rig hook `rig/examples/indexer-diff.sh`, `mixed_jars`): a miner, X on this role's jar and Y on the other's, both indexing; `/blockchain` answers compared at settled points after payments and a token issue, a restart of Y and a rollback of Y; a positive control must show DIFF (else INCONCLUSIVE). `rig/INDEXER-DIFF.md` | `all(agree == true)` | `all(agree == true)` |
+| `indexer-diff` | public | the extra indexer of both jars on one chain (rig hook `rig/examples/indexer-diff.sh`, `mixed_jars`): a miner, X on this role's jar and Y on the other's, both indexing; `/blockchain` answers compared at settled points after payments and a token issue, a restart of Y and a rollback of Y; a positive control must show DIFF (else INCONCLUSIVE); a follower that has not switched 60 s after the fork's heal is relaunched once (`fork_follower_restarted`). `rig/INDEXER-DIFF.md` | `all(agree == true)` | `all(agree == true)` |
 | `wallet-oracle-restart`, `wallet-oracle-fork` | public | the wallet oracle (`rig/WALLET-ORACLE.md`), every node on this role's jar: a subject wallet goes through each lifecycle event in `WO_EVENTS` (restart example: `restart`, `crash`, `rescan`, `none`, `rescan-from`; fork example: `fork`, `none`, `rescan-from`), one rig network per event, and is compared field by field with a reference wallet that went through nothing; `WO_AT=pending` (restart example) compares before the pending payment confirms. `same` = every event SAME; an INCONCLUSIVE event makes the run INCONCLUSIVE. Parameters are the manifest's env, overridable per dispatch (`pr-scenario.yml` `scenario_env`, `diffrun/scenario-env.sh`). The predicates are the before/after shape; a change that should leave the wallet alone reads as NULL with both roles `same` | `any(same == false)` | `all(same == true)` |
 | `wallet-workload` | public | the wallet workload ([`rig/WALLET-WORKLOAD.md`](../rig/WALLET-WORKLOAD.md), rig hook `rig/examples/wallet-workload.sh`, `mixed_jars`): a miner on the base jar, the wallet under test on this role's jar, the same wallet restored on a node running the other role's jar; every step's invariants judged (`rig/lib/wallet_check.jq`); `wallet-workload-plain` is the sequential A/A step list, `wallet-workload-posctl` the positive control (`all(control_tripped == true)`) | `all(pass == true)` | `all(pass == true)` |
+| `crash-consistency` | public | a follower S SIGKILLed 3-5 times at random points inside block bursts and restarted from its own disk each time, every node on this role's jar (rig hook `rig/examples/crash-consistency.sh`, classifier `rig/crash-verdict.sh`, `rig/CRASH-CONSISTENCY.md`); `same` = S on the untouched follower's and the miner's best full block and state root, REST up, no unrecoverable log line; fewer than half the kills inside a burst makes the run INCONCLUSIVE. The hook's `CC_*` knobs (role, indexer, kill mode) go in a copy of the manifest's env | `all(same == true)` | `all(same == true)` |
+| `storage-rent-2598` | public | a miner collecting storage rent itself (ergoplatform/ergo#2598) on this role's jar, with a base-jar and a candidate-jar follower (rig hook `rig/examples/storage-rent-2598.sh`, `mixed_jars`, `docs/storage-rent.md`); both jars need the devnet test patches (`pr-scenario.yml` `test_patches="patches/test/storage-period-60.patch patches/test/rent-distinct-outputs-devnet.patch"`). `pass`: a jar that can collect (its `application.conf` has `storageRentCollection`) must put claims in its blocks, all within the rule, claim every holder box and keep both followers on its state root; a jar that cannot (the base role, and both roles of an A/A) must show 0 claims with the same agreement (`c_can_collect`) | `all(pass == true)` | `all(pass == true)` |
 | `matrix-paychain` | public | Matrix line (weak-blocks) only: bursts of 40 wallet payments on a two-node network (the rig example's hook, `rig/examples/matrix-paychain.{json,sh}`); a payment is lost when it ends neither confirmed nor in the miner's pool; fewer than 30 accepted (`MATRIX_PAYCHAIN_FLOOR`) makes the run INCONCLUSIVE. Predicates fitted to one hosted run (base lost in 5/5, base + ergoplatform/ergo#2504 in 0/5), so a SUPPORTS on #2504 re-runs the workflow, not the hypothesis | `count(lost > 0) >= 3` | `all(lost == 0)` |
 | `fork-convergence-smoke`, `sibling-fork-smoke` | public | one pair, no cited verdict: does the scenario still complete with every node answering afterwards (a cheap tier for pull-request CI) | `all(unresponsive_after == 0)` | `all(unresponsive_after == 0)` |
 | `test/output-lint-stub` | public | test only: no nodes; its result carries a lint-listed term built at runtime | | |
 | `test/seq-replay`, `test/precheck-replay` | public | test only: no nodes; replay a scripted per-run pattern (`tests/sequential.sh`, `tests/precheck.sh`) | | |
 
-There are ten node scenarios (counting the three `wallet-workload` manifests as one). `fork-convergence` and `sibling-fork` are standalone scripts (their own namespace
-code plus the `RESULT_JSON` emission); the two `wallet-oracle-*` manifests share `scenarios/wallet-oracle.sh`, which runs
-the rig example once per event and folds the oracle's verdict lines into one `RESULT_JSON`; `interop`, `txload`,
-`bootstrap-modes`, `matrix-paychain`, `indexer-diff` and `wallet-workload` are rig hooks run through `scenarios/lib/rig-scenario.sh`
-(`matrix-paychain` reuses the rig example's topology and hook, which emits `RESULT_JSON` only when `DIFFRUN_ROLE` is set;
-`indexer-diff` reuses its rig example's topology and hook as they are; `wallet-workload` reuses the rig example's hook with its own topology,
-`scenarios/hooks/wallet-workload.json`). The standalone scripts report the `versions` each queries at startup, so
+Of the node scenarios, `fork-convergence` and `sibling-fork` are standalone scripts (their own namespace code plus
+the `RESULT_JSON` emission); the two `wallet-oracle-*` manifests share `scenarios/wallet-oracle.sh`, which runs the rig
+example once per event and folds the oracle's verdict lines into one `RESULT_JSON`; the rest (`interop`, `txload`,
+`bootstrap-modes`, `matrix-paychain`, `indexer-diff`, `crash-consistency`, `storage-rent-2598` and the three
+`wallet-workload` manifests) are rig hooks run through `scenarios/lib/rig-scenario.sh`. `matrix-paychain` reuses the rig
+example's topology and hook, which emits `RESULT_JSON` only when `DIFFRUN_ROLE` is set; `indexer-diff` and
+`crash-consistency` reuse their rig examples' topology and hook as they are; `storage-rent-2598` and `wallet-workload`
+reuse the rig example's hook with their own topology (`scenarios/hooks/<name>.json`, both jars on one network). The standalone scripts report the `versions` each queries at startup, so
 identity is settled while every node is known to be up. `unresponsive_after` counts the nodes whose REST
 no longer answers once the measurement is over. It is recorded but does not void the run, and a nonzero
 count means that node's log is worth reading.
@@ -285,6 +288,26 @@ Known limits:
   separate question, see below.
 
 ## GitHub Actions
+
+`.github/workflows/pr-scenario.yml` runs one public manifest before and after an ergoplatform/ergo pull request on
+GitHub-hosted runners: one build job builds both jars from one build base (the base, and the base plus the PR's
+production diff), `shards` runners each run `pairs` pairs, and `pool.sh` judges the pooled runs once. Inputs:
+
+| input | what |
+|---|---|
+| `pr`, `head` | the pull request and its head commit (40 hex; the run fails if the PR has moved); ignored with `aa` |
+| `line` | the build base: `matrix` (the weak-blocks commit in `patches/ergo-matrix/patches.json`), `matrix-stack` (that commit plus the carried Matrix stack, the PR's diff stacked last), a release tag `vN.N.N`, or a commit (40 hex, e.g. the PR's own merge base when its diff does not apply on a release) |
+| `scenario`, `shards`, `pairs` | the manifest basename (public tier, no `stop_when`/`max_n`), runners (1-20), pairs per runner (1-99) |
+| `aa` | A/A: the base jar in both roles, no PR fetched |
+| `v4` | Matrix lines at block version 4 (rig `PEERYARD_V4`) |
+| `test_patches` | release-tag or commit lines only: space-separated test-only patches under `patches/test/`, applied to both arms as one local commit on the line's commit, which becomes the build base (e.g. `storage-rent-2598` needs the storage-period and rent-distinct-outputs patches) |
+| `scenario_env` | `KEY=VALUE` overrides of the manifest's env, `;`-separated, only keys the manifest declares, values `[A-Za-z0-9._ -]` (`scenario-env.sh`); the effective env is in `verdict.json`'s provenance |
+
+The PR's diff is taken from git's merge base, which must be an ancestor of the line's commit; when the line's commit is
+one of the PR's several merge bases (a PR that merged its base branch in), the diff is taken from that commit itself.
+With `test_patches` these checks still run against the line's commit, not the local test-patch commit. The run's title
+carries `A/A` or `#<pr>`, the line, `shards x pairs`, and ` v4`, ` +test patches` and ` [<scenario_env>]` when set
+(`review/release-check.sh` finds its dispatches by that title).
 
 `ci/diffrun.yml.example` is a `workflow_dispatch` workflow: it lints first, builds base and candidate with
 `build.sh`, runs the public-tier manifests and uploads only `verdict.json` and `table.txt`.

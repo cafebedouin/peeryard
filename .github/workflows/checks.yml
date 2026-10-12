@@ -17,7 +17,7 @@ jobs:
       - name: shellcheck (scripts, then the sourced hooks)
         run: |
           shellcheck -x $(grep -rlE '^#!.*bash' --include='*.sh' --include='comment-lint' . | grep -v '^./.git/')
-          shellcheck -s bash -e SC2148,SC2154 rig/examples/*.sh diffrun/scenarios/precheck/lib.sh rig/lib/phases.sh rig/lib/indexer.sh rig/lib/wallet_oracle.sh rig/lib/wallet_workload.sh
+          shellcheck -s bash -e SC2148,SC2154 rig/examples/*.sh rig/lib/*.sh diffrun/scenarios/precheck/lib.sh diffrun/scenarios/lib/rig-scenario.sh diffrun/scenarios/hooks/*.sh
       - name: bash -n
         run: for f in $(grep -rlE '^#!.*bash' . | grep -v '^./.git/'); do bash -n "$f"; done
       - name: python tests (diagnose, features, sweep, logmap, aa_pool)

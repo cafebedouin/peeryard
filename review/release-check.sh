@@ -2,16 +2,20 @@
 # release-check.sh: the release-candidate check as one command. Dispatches, on GitHub-hosted runners through
 # pr-scenario.yml, the fixed set used for ergoplatform/ergo#2640 (6.0.8 candidate vs v6.0.7): interop (the release
 # and the candidate on one network, each mining in turn), the release with itself (A/A for interop), the
-# extra-indexer differential, fork-convergence-smoke and sibling-fork, all with base = the previous release tag and
-# candidate = that tag + the release PR's production diff. Sizes are fixed here, before any run, so the pooled
+# extra-indexer differential, fork-convergence-smoke and sibling-fork, and since then crash-consistency, the wallet
+# workload's sequential list (wallet-workload-plain) and the wallet oracle through a restart and a crash
+# (wallet-oracle-restart), all with base = the previous release tag and candidate = that tag + the release PR's
+# production diff. Sizes are fixed here, before any run, so the pooled
 # tables are read as dispatched. Writes the run ids to <out>/runs.tsv; `collect` downloads the pooled tables and
 # prints one summary table in the form the #2640 report used (review/RELEASE-CHECK.md says how to read it).
 #
 #   bash review/release-check.sh dispatch --pr N --head <40 hex> --line vX.Y.Z [--out DIR] [--repo owner/name]
 #   bash review/release-check.sh collect  [--out DIR] [--repo owner/name]
 #
-# Cost (measured 2026-10-11 for #2640): 5 builds, ~20 runner jobs, about 6-8 runner-hours. Needs gh (authenticated),
-# jq. A scenario that lives on a branch rather than main is dispatched with --ref on that branch (see SETS below).
+# Cost: the #2640 set (the first five lines) measured 2026-10-11 at 5 builds, ~20 runner jobs, about 6-8 runner-hours;
+# the three lines added since are estimated at 3 builds and 6 run jobs more, about 3-4 runner-hours (not yet measured
+# as a set). Needs gh (authenticated), jq. A scenario that lives on a branch rather than main is dispatched with --ref
+# on that branch (see SETS below).
 set -euo pipefail
 REPO=cafebedouin/peeryard; OUT=release-check.out; cmd="${1:-}"; shift || true
 PR=""; HEAD=""; LINE=""
@@ -22,13 +26,16 @@ while [[ $# -gt 0 ]]; do case "$1" in
 # label | scenario | shards | pairs | aa | ref (main unless the scenario is not on main yet)
 SETS=$'interop\tinterop\t3\t2\tfalse\tmain
 interop-aa\tinterop\t1\t2\ttrue\tmain
-indexer-diff\tindexer-diff\t3\t1\tfalse\tindexer-diff
+indexer-diff\tindexer-diff\t3\t1\tfalse\tmain
 fork-convergence\tfork-convergence-smoke\t5\t2\tfalse\tmain
-sibling-fork\tsibling-fork\t4\t1\tfalse\tmain'
+sibling-fork\tsibling-fork\t4\t1\tfalse\tmain
+crash-consistency\tcrash-consistency\t2\t1\tfalse\tmain
+wallet-workload\twallet-workload-plain\t2\t1\tfalse\tmain
+wallet-oracle-restart\twallet-oracle-restart\t2\t1\tfalse\tmain'
 mkdir -p "$OUT"
 case "$cmd" in
   dispatch)
-    [[ "$PR" =~ ^[0-9]+$ && "$HEAD" =~ ^[0-9a-f]{40}$ && "$LINE" =~ ^v[0-9.]+$ ]] || { sed -n '2,16p' "$0" >&2; exit 2; }
+    [[ "$PR" =~ ^[0-9]+$ && "$HEAD" =~ ^[0-9a-f]{40}$ && "$LINE" =~ ^v[0-9.]+$ ]] || { sed -n '2,18p' "$0" >&2; exit 2; }
     printf 'label\tscenario\tshards\tpairs\taa\tref\trun_id\n' > "$OUT/runs.tsv"
     while IFS=$'\t' read -r label scen shards pairs aa ref; do
       args=(-f "line=$LINE" -f "scenario=$scen" -f "shards=$shards" -f "pairs=$pairs")
@@ -59,5 +66,5 @@ case "$cmd" in
       printf '| %s | %s | %s | %s | %s |\n' "$label" "$id" "$verdict" "$(role base)" "$(role candidate)"
     done
     echo; echo "Per-run metrics are in $OUT/<set>/table.txt; read them with review/RELEASE-CHECK.md before quoting a verdict." ;;
-  *) sed -n '2,16p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,18p' "$0" >&2; exit 2 ;;
 esac

@@ -1,0 +1,54 @@
+{
+ "step": 7,
+ "kind": "resubmit",
+ "arg": "0",
+ "lag_s": 0,
+ "id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+ "submits": [
+  {
+   "node": "A",
+   "reply_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+   "reason": null
+  },
+  {
+   "node": "B",
+   "reply_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+   "reason": null
+  }
+ ],
+ "chain": {
+  "M": [
+   52
+  ],
+  "A": [
+   52
+  ],
+  "B": [
+   52
+  ]
+ },
+ "start_heights": {
+  "M": 50,
+  "A": 50,
+  "B": 49
+ },
+ "end_heights": {
+  "M": 60,
+  "A": 60,
+  "B": 60
+ },
+ "agree": "SAME@60:0123456789abcdef",
+ "pools_end": {
+  "M": [],
+  "A": [],
+  "B": [
+   "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+  ]
+ },
+ "clear_s": {
+  "M": 0,
+  "A": 0,
+  "B": 2
+ },
+ "setup": null
+}

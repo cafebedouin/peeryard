@@ -1,0 +1,26 @@
+{
+ "step": 2,
+ "kind": "mint",
+ "arg": "1000",
+ "request": {
+  "amount": 1000
+ },
+ "tx": null,
+ "input_tokens": {},
+ "submitted": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+ "reason": "bad request",
+ "confirmed": 42,
+ "wallet_after": {
+  "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 1000
+ },
+ "txs": {
+  "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": {
+   "inputs": [
+    "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+   ]
+  }
+ },
+ "scan_boxes": [],
+ "setup": null
+}

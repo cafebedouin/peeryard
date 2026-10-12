@@ -1,0 +1,16 @@
+{
+ "step": 1,
+ "kind": "send-par",
+ "arg": "3",
+ "requests": [
+  {
+   "i": 1,
+   "id": null,
+   "reason": "NotEnoughErgsError"
+  }
+ ],
+ "txs": {},
+ "confirmed": {},
+ "scan_boxes": [],
+ "setup": null
+}

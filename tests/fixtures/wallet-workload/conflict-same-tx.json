@@ -1,0 +1,63 @@
+{
+ "step": 8,
+ "kind": "conflict",
+ "ids": [
+  "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+ ],
+ "box": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+ "submits": [
+  {
+   "node": "A",
+   "reply_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+   "reason": null
+  },
+  {
+   "node": "B",
+   "reply_id": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+   "reason": null
+  }
+ ],
+ "chain": {
+  "M": {
+   "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": [
+    53
+   ],
+   "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2": []
+  },
+  "A": {
+   "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": [
+    53
+   ],
+   "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2": []
+  },
+  "B": {
+   "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1": [
+    53
+   ],
+   "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2": []
+  }
+ },
+ "start_heights": {
+  "M": 50,
+  "A": 50,
+  "B": 49
+ },
+ "end_heights": {
+  "M": 60,
+  "A": 60,
+  "B": 60
+ },
+ "agree": "SAME@60:0123456789abcdef",
+ "pools_end": {
+  "M": [],
+  "A": [],
+  "B": []
+ },
+ "clear_s": {
+  "M": 0,
+  "A": 0,
+  "B": 2
+ },
+ "setup": null
+}

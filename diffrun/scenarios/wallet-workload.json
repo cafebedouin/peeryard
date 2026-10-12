@@ -6,7 +6,9 @@
   "mixed_jars": true,
   "env": {
     "WW_PRESET": "full",
-    "WW_SCENARIO": "wallet-workload"
+    "WW_SCENARIO": "wallet-workload",
+    "WW_STEPS": "",
+    "WW_CONTROL": ""
   },
   "metrics": {
     "pass": "boolean",

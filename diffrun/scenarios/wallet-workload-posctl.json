@@ -6,7 +6,9 @@
   "mixed_jars": true,
   "env": {
     "WW_PRESET": "posctl",
-    "WW_SCENARIO": "wallet-workload-posctl"
+    "WW_SCENARIO": "wallet-workload-posctl",
+    "WW_STEPS": "",
+    "WW_CONTROL": ""
   },
   "metrics": {
     "pass": "boolean",

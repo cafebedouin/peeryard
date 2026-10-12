@@ -13,8 +13,10 @@ Tr="$(realpath -m -- "$T")"; Tmpr="$(realpath -m -- "${TMPDIR:-/tmp}")"
 case "$Tr/" in /tmp/?*/|"$Tmpr"/?*/) ;; *) echo "refusing T='$T': not a scratch dir under /tmp or \$TMPDIR (use T=\$(mktemp -d))" >&2; exit 2 ;; esac
 case "$PWD/" in "$Tr"/*) echo "refusing T='$T': it contains the current directory" >&2; exit 2 ;; esac
 rm -rf "$T"; mkdir -p "$T"
+# WALLET_ORACLE_LIB=<file> tests another copy of the oracle library (the falsifier: a copy whose comparator never
+# reports DIFF must turn the DIFF cases into MISMATCH)
 # shellcheck source=rig/lib/wallet_oracle.sh
-source rig/lib/wallet_oracle.sh
+source "${WALLET_ORACLE_LIB:-rig/lib/wallet_oracle.sh}"
 F=tests/fixtures/wallet-oracle; S=$F/same-subject.json; R=$F/same-reference.json
 fail=0
 # case <name> <subject> <reference> <want exit> <want first line, a prefix>

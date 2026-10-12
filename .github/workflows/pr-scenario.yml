@@ -22,7 +22,7 @@
 # commit, which becomes the build base; the merge-base rules above still run against the line's commit, and the
 # summary names each patch with a sha256 prefix.
 # scenario_env: KEY=VALUE overrides of the manifest's env, ";"-separated (diffrun/scenario-env.sh: only keys the
-# manifest declares, values [A-Za-z0-9._ -]), written into the checked-out manifest so verdict.json's provenance
+# manifest declares, values [A-Za-z0-9._ :,-]), written into the checked-out manifest so verdict.json's provenance
 # records the effective env.
 # run-name markers: "A/A" or "#<pr>", the line, shards x pairs, " v4", " +test patches", " [<scenario_env>]".
 name: peeryard PR scenario
@@ -36,7 +36,7 @@ on:
       shards: { description: 'runners (1-20)', default: '5' }
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
-      scenario_env: { description: 'optional: KEY=VALUE overrides of the manifest env, separated by ";" (keys the manifest declares; values [A-Za-z0-9._ -]), e.g. WO_AT=pending', default: '' }
+      scenario_env: { description: 'optional: KEY=VALUE overrides of the manifest env, separated by ";" (keys the manifest declares; values [A-Za-z0-9._ :,-]), e.g. WO_AT=pending', default: '' }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
       test_patches: { description: 'optional, a release tag or commit line only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the line''s commit plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
 run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"

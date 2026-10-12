@@ -103,6 +103,11 @@ re-judges them offline.
 
 ## Running it
 
+On GitHub-hosted runners, `WW_STEPS`, `WW_PRESET` and `WW_CONTROL` are declared in the manifests' env, so
+`scenario_env` can set them (`-f scenario_env="WW_STEPS=send:3, mint, burn"`); write repeats out
+(`conflict conflict conflict`), since `*` is not accepted there. Hosted A/A: run 38210807199 (`wallet-workload-plain`,
+v6.0.7 in both roles, branch integration) SUPPORTS, 5/5 steps.
+
 Locally (one node network per host; the lock queues behind other agents' runs):
 
 ```

@@ -161,6 +161,11 @@ rate for the same predicate (`diffrun/README.md`).
 
 ## First runs
 
+On GitHub-hosted runners (pr-scenario.yml, v6.0.7 in both roles): run 38196135643 (3x1, branch crash-consistency
+9cda37c), 6/6 VALID SAME, 3-5 kills per run all inside the apply window, max rollback 0; run 38209720295 (1x1, branch
+integration) SUPPORTS. Every `CC_*` knob is declared in the manifest's env (empty = the hook's default), so
+`scenario_env` can set it on a hosted run, e.g. `-f scenario_env="CC_ROLE=digest"`.
+
 Development host (WSL2, 12 CPUs, about 8 GB free), v6.0.7 release jar (sha256 `8616f405…26e9fa`, built from the tag),
 JDK 21, 2026-10-11. One run each; a host A/A rate this is not.
 

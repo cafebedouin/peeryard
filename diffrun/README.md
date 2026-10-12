@@ -301,7 +301,7 @@ production diff), `shards` runners each run `pairs` pairs, and `pool.sh` judges 
 | `aa` | A/A: the base jar in both roles, no PR fetched |
 | `v4` | Matrix lines at block version 4 (rig `PEERYARD_V4`) |
 | `test_patches` | release-tag or commit lines only: space-separated test-only patches under `patches/test/`, applied to both arms as one local commit on the line's commit, which becomes the build base (e.g. `storage-rent-2598` needs the storage-period and rent-distinct-outputs patches) |
-| `scenario_env` | `KEY=VALUE` overrides of the manifest's env, `;`-separated, only keys the manifest declares, values `[A-Za-z0-9._ -]` (`scenario-env.sh`); the effective env is in `verdict.json`'s provenance |
+| `scenario_env` | `KEY=VALUE` overrides of the manifest's env, `;`-separated, only keys the manifest declares, values `[A-Za-z0-9._ :,-]` (`scenario-env.sh`); the effective env is in `verdict.json`'s provenance |
 
 The PR's diff is taken from git's merge base, which must be an ancestor of the line's commit; when the line's commit is
 one of the PR's several merge bases (a PR that merged its base branch in), the diff is taken from that commit itself.

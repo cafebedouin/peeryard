@@ -82,6 +82,10 @@ collector as a background loop; several give the contest. Tunables:
 Modeling many honest collectors is the mechanism's normal, contended state; that is what these examples do.
 
 ## Witnessed (development host, 2026-10-11; one run each, not an A/A rate)
+
+Hosted (GitHub runners, pr-scenario.yml with `test_patches`): smoke 38181351004, main sets 38181977536 and 38182897165
+(5x1 each), A/A 38181983918 and, after the A/A fix, 38209723936 (SUPPORTS: 0 claims in both roles, `c_can_collect`
+false). `SR2598_CONTROL` is declared in the manifest's env, so `scenario_env` can select the control.
 Jars, each built with `diffrun/build.sh <base> <base>..<base + both test patches>` (patch range sha256 `f52369da…`):
 v6.0.7 + test patches, appVersion `6.0.7-1-8d4f8926-SNAPSHOT`, sha256 `4beae3e9…`; ergoplatform/ergo#2598 at
 63639222e + test patches, appVersion `6.0.7-65-72b604a3-SNAPSHOT`, sha256 `66cc1604…`.

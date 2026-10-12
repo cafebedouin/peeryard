@@ -113,7 +113,7 @@ pending payment when the miner starts.
 |---|---|---|---|
 | `restart` | `wallet-oracle-restart` | `relaunch S` (graceful stop, start, chain and wallet kept) | no |
 | `crash` | `wallet-oracle-restart` | `crash S` (SIGKILL), 5 s down, `revive S` | no |
-| `rescan` | `wallet-oracle-restart` | `POST /wallet/rescan` with no body (a full rescan), wait for the wallet to catch up | no |
+| `rescan` | `wallet-oracle-restart` | `POST /wallet/rescan` with `{"fromHeight": 0}` (a full rescan), wait for the wallet to catch up | no |
 | fork | `wallet-oracle-fork` | `S` and `M2` cut from `M`, `R`, `P`; both sides mine; `S` pays `P` on its side; heal so `S` rolls back to the heavier side | yes (`partition`) |
 
 The zero-delay links of `wallet-oracle-restart` install no netem qdisc, so that example runs on a host without

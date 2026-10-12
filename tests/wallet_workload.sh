@@ -99,4 +99,15 @@ for p in full aa posctl conflict; do ww_preset_steps "$p" > /dev/null || mis "pr
 ! ww_preset_steps nosuch > /dev/null && ok "presets: full aa posctl conflict known, others refused" || mis "presets" "an unknown preset was accepted"
 ww_preset_steps aa | grep -qE 'send-par|conflict|resubmit' && mis "preset aa" "has a concurrent step" || ok "preset aa has no concurrent step"
 
+# pr-scenario.yml's scenario_env can reach the scenario's knobs: diffrun/scenario-env.sh sets only keys the manifest
+# declares, so each knob must be declared (empty = the hook's own default)
+cp diffrun/scenarios/wallet-workload.json "$T/m.json"
+se(){ local want=$1 spec=$2 rc r; bash diffrun/scenario-env.sh "$T/m.json" "$spec" > "$T/se.out" 2>&1; rc=$?
+  [[ $rc == "$want" ]] && r=ok || { r="MISMATCH ($(cat "$T/se.out"))"; fail=1; }
+  printf 'scenario-env %-40s want exit %s got %s  %s\n' "'$spec'" "$want" "$rc" "$r"; }
+se 0 'WW_STEPS=send:3 mint burn; WW_CONTROL=positive'
+se 1 'WW_NOT_A_KNOB=1'
+se 1 'WW_STEPS=conflict*3'
+se 1 'WW_STEPS=send:3; WW_CONTROL=$(id)'
+
 [[ $fail == 0 ]] && echo "wallet-workload checker tests: all ok" || { echo "wallet-workload checker tests: MISMATCH (see $T)"; exit 1; }

@@ -43,4 +43,13 @@ case_ "the references disagree with each other -> INCONCLUSIVE"   3 "INCONCLUSIV
 echo 'not json' > "$T/bad.json"
 case_ "an unreadable observation -> exit 2"                       2 "INCONCLUSIVE unreadable observation" "$T/bad.json"
 
+# pr-scenario.yml's scenario_env can reach the scenario's knobs: diffrun/scenario-env.sh sets only keys the manifest
+# declares, so each knob must be declared (empty = the hook's own default)
+cp diffrun/scenarios/crash-consistency.json "$T/m.json"
+se(){ local want=$1 spec=$2 rc r; bash diffrun/scenario-env.sh "$T/m.json" "$spec" > "$T/se.out" 2>&1; rc=$?
+  [[ $rc == "$want" ]] && r=ok || { r="MISMATCH ($(cat "$T/se.out"))"; fail=1; }
+  printf 'scenario-env %-40s want exit %s got %s  %s\n' "'$spec'" "$want" "$rc" "$r"; }
+se 0 'CC_ROLE=digest; CC_INDEXER=1; CC_KILL_ON=indexed; CC_CONTROL=aa'
+se 1 'CC_NOT_A_KNOB=1'
+
 [[ $fail == 0 ]] && echo "crash-consistency classifier tests: all ok" || { echo "crash-consistency classifier tests: MISMATCH (see $T)"; exit 1; }

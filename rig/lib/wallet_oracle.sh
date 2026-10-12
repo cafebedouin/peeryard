@@ -196,11 +196,33 @@ wo_push(){ local m="$1" id="$2" n tx r; shift 2
   done
   echo "[wo] ${id:0:8} is in no pool of $* (not re-submitted)"; }
 
+# wo_stop_miner <miner> <node>...: stop the miner (a relaunch with mining off) at a moment when every node holds its
+# best full block, waiting up to WO_STOP_WAIT (default 20) s for one; prints how far behind each node was when it
+# stopped. Blocks a follower is still downloading when the miner relaunches can stall it on some jars (seen on 6.0.3 and
+# 6.0.5 builds: headers at the miner's tip, full height stuck for 15 minutes); stopping on a shared tip avoids that, and
+# where followers lag the miner steadily (those builds), the examples' links between followers give a stalled one a
+# second source. The wait is short because the miner keeps mining meanwhile (a fork's depth grows with it).
+wo_stop_miner(){ local m="$1" end h n ok lag; shift; end=$((SECONDS + ${WO_STOP_WAIT:-20}))
+  while :; do h=$(applied_header "$m"); ok=1
+    for n in "$@"; do [[ "$(applied_header "$n")" == "$h" ]] || { ok=0; break; }; done
+    [[ $ok == 1 || $SECONDS -ge $end ]] && break; sleep 0.5; done
+  lag=$(for n in "$@"; do printf '%s=%s ' "$n" $(( $(full_height "$m") - $(full_height "$n") )); done)
+  local hb; hb=$(full_height "$m"); stop_mining "$m" >/dev/null; settle_height_back "$m"
+  end=$((SECONDS + 60)); while [[ $SECONDS -lt $end && "$(full_height "$m")" -lt "$hb" ]]; do sleep 1; done   # reloaded its chain
+  [[ $ok == 1 ]] || echo "[wo] $m stopped with followers behind (blocks): $lag"; }
+
 # wo_same_tip <timeout_s> <node>...: wait until every node reports the first node's best full block (no miner running)
-wo_same_tip(){ local end=$((SECONDS + $1)) n t ok; shift
+# WO_TIP_WAIT raises every such window to at least that many seconds (a jar whose block download stalls for a while
+# after a peer's relaunch); on a timeout it prints each node's header and full height
+wo_same_tip(){ local w="$1" t0=$SECONDS end n t ok; shift
+  [[ "${WO_TIP_WAIT:-0}" -gt "$w" ]] && w="$WO_TIP_WAIT"; end=$((SECONDS + w))
   while :; do ok=1; t=$(applied_header "$1"); [[ -n "$t" ]] || ok=0
     for n in "$@"; do [[ "$(applied_header "$n")" == "$t" ]] || ok=0; done
-    [[ $ok == 1 ]] && return 0; [[ $SECONDS -ge $end ]] && return 1; sleep 2; done; }
+    [[ $ok == 1 ]] && { [[ $((SECONDS - t0)) -gt 60 ]] && echo "[wo] one tip after $((SECONDS - t0)) s"; return 0; }
+    if [[ $SECONDS -ge $end ]]; then
+      echo "[wo] no one tip after ${w} s: $(for n in "$@"; do printf '%s headers=%s full=%s; ' "$n" "$(rest "$n" /info | jq -r '.headersHeight // "?"' 2>/dev/null)" "$(full_height "$n")"; done)"
+      return 1; fi
+    sleep 2; done; }
 
 # wo_pending <s> <r> <p>: one payment s -> p that is left unconfirmed (call it with no miner running); WO_PENDING is
 # its id. Returns 1 (WO_WHY set) unless both s's and r's pools list it within 30 s.
@@ -242,7 +264,7 @@ wo_confirm(){ local m="$1" k="$2" h0 end ok=0 n; shift 2
       ok=1; for n in "$@"; do [[ "$(full_height "$n")" -ge $((h0 + k)) ]] || ok=0; done; [[ $ok == 1 ]] && break; fi
     sleep 2
   done
-  stop_mining "$m" >/dev/null; settle_height_back "$m"; wo_redial 60 "$m" "$@"
+  wo_stop_miner "$m" "$@"; wo_redial 60 "$m" "$@"
   wo_same_tip 90 "$m" "$@"; ok=$?
   echo "[wo] $m mined from $h0 to $(full_height "$m"), pool $(mempool_size "$m"); one tip with $*: $([[ $ok == 0 ]] && echo yes || echo no)"
   return $ok; }

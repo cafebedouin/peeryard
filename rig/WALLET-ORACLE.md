@@ -39,6 +39,13 @@ keep `S` and `R` identical in configuration so that the event is the only differ
 Only `S` spends from K (so no two wallets race for one box); `M` only mines. The fork example adds a second miner `M2`
 on the subject's side of the cut (also K, so the subject's wallet holds rewards from the losing fork that it must drop).
 
+Links: in the restart example every node links to `M` and the three followers link to each other; in the fork example
+`R`, `P` and `M2` link to `M`, `S` only to `M2`, and `R` links to `P` and to `M2` (the cut removes `M2`'s links to `M`
+and `R`). The follower links are there because the examples stop and start the miner by relaunching it: on 6.0.3 and
+6.0.5 builds a follower still downloading blocks at that moment stalled with its headers at the miner's tip and its full
+height stuck (15 minutes in one local run, `HEADERS_AHEAD_FULL_STUCK`); with a second source it catches up. The miner is
+also stopped at a moment when every follower holds its tip when one comes within 20 s (`wo_stop_miner`).
+
 ## The wallet view (REST, 6.0.6; read from the jar's `api/openapi.yaml`)
 
 | field | endpoint | compared as |

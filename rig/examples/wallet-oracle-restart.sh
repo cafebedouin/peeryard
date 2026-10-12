@@ -32,7 +32,7 @@ if ! k=$(wallet_same_addresses S R); then wo_inc KEYS "precondition: $k"; return
 echo "[wo] precondition $k (S and R list the same addresses)"
 
 wo_history S R P M || { wo_inc STAGING "$WO_WHY"; return 0; }
-stop_mining M >/dev/null; settle_height_back M; wo_redial 60 M S R P
+wo_stop_miner M S R P; wo_redial 60 M S R P
 wo_same_tip 90 M S R P || { wo_inc STAGING "M, S, R, P not on one tip after M stopped"; return 0; }
 wo_pending S R P || { wo_inc NO_PENDING "$WO_WHY"; return 0; }
 h=$(full_height S); mark "wallet-oracle-event $EV"

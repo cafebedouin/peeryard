@@ -277,6 +277,7 @@ release base rates on GitHub runners, 2026-09-27: `fork-convergence` 17 of 40 ru
 | `flap` | a control that ends on a cut (`FLAP_CONTROL=down-edge`): B stays at A's last-edge height (123) while A climbs | control run, 2026-09-27, release 6.0.6 |
 | `three-body-*` | a control that skips the heal (`THREEBODY_CONTROL=no-heal`): C stays at 23 while A reaches 244 | control run, 2026-09-27, release 6.0.6 |
 | `revive-headroom` | a control that revives B while it is partitioned from A (`REVIVE_CONTROL=partitioned`) | control run, 2026-09-27, release 6.0.6 |
+| `crash-consistency` | controls: `CC_CONTROL=fork` (S mines its own blocks while cut: `DIFF@212 off-chain`), `CC_CONTROL=no-restart` (S left down: `REFUSED`) | control runs, 2026-10-11, release 6.0.7 (sha256 `8616f405…`) |
 | `reorg-mempool` | the 6.0.6 release without `patches/ergo/002`: 3 of 10 payments re-confirmed (10 of 10 with it) | patch witness |
 | `nipopow-bootstrap` | the release without `patches/ergo/005`: stalled 2 of 3 | patch witness |
 | `matrix-tx` | `weak-blocks` without `patches/ergo-matrix/001`: 3 of 3 FAIL | patch witness |

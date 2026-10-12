@@ -158,3 +158,26 @@ manifest with its own `env` (`{"CC_ROLE": "digest"}`) rather than editing the sh
 On GitHub-hosted runners, `pr-scenario.yml` with `scenario: crash-consistency` (public tier, no sequential rule) builds the
 PR's base and the PR and runs the pairs; `aa: true` runs the A/A of the release line there. A verdict is quoted with an A/A
 rate for the same predicate (`diffrun/README.md`).
+
+## First runs
+
+Development host (WSL2, 12 CPUs, about 8 GB free), v6.0.7 release jar (sha256 `8616f405…26e9fa`, built from the tag),
+JDK 21, 2026-10-11. One run each; a host A/A rate this is not.
+
+| run | hook at | seed | kills (in window) | restarts with `inconsistent` at startup | outcome |
+|---|---|---|---|---|---|
+| crash | `b5d1460` | 101 | 4 (4) | 4 of 4 (log count) | `SAME@165` |
+| crash | `b5d1460` | 202 | 4 (4) | 3 of 4 (log count) | `SAME@196` |
+| crash | `b5d1460` | 303 | 4 (4) | 3 of 4 (log count) | `SAME@225` |
+| crash | `19250d9` | 404 | 4 (4) | 2 of 4 | `SAME@182` |
+| A/A (`CC_CONTROL=aa`) | `b5d1460` | 11 | none (3 points) | - | `SAME@168` |
+| A/A (`CC_CONTROL=aa`) | `19250d9` | 12 | none (3 points) | - | `SAME@172` |
+| positive control `fork` | `b5d1460` | 21 | 4 (4) | 3 of 4 (log count) | `DIFF@212 off-chain` (expected DIFF) |
+| positive control `no-restart` | `b5d1460` | 22 | 5 (5) | 3 of 4 (log count) | `REFUSED` (expected REFUSED) |
+| digest (`CC_ROLE=digest`) | `b5d1460` | 31 | 3 (3) | 2 of 3 recovered from headers (log count) | `SAME@209` |
+| indexer (`CC_INDEXER=1 CC_KILL_ON=indexed`) | `ab8b3a4` | 42 | 3 (3) | 2 of 3 | `SAME@163`, indexer `SAME` over 14523 fields |
+| diffrun A/A pair (the release in both roles) | `b5d1460` | 1713684271, 703247530 | 5 (5) each | - | `SUPPORTS` (both VALID, `same: true`) |
+
+"log count" rows predate the per-restart `startup` field and were counted from `node_S.log` afterwards. Nothing in these
+runs logged an unrecoverable line, and S's log held no ERROR line at all (so the log search has not yet been seen to match a real line; the classifier's LOGERR case is covered by its fixture only). The `behind` control and the `pruned` and
+`miner` roles have not been run yet.

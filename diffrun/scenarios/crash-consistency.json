@@ -1,0 +1,16 @@
+{
+  "name": "crash-consistency",
+  "description": "A full follower S is killed with SIGKILL 3-5 times at random points while it applies a burst of blocks from the miner M (each burst after a partition or after S was down), restarted from its own disk each time, then settled: S must match the untouched follower R and M by best full block id and UTXO state root at an equal height, answer REST, and log no unrecoverable error. All nodes run this role's jar. Applies to crash-recovery changes such as ergoplatform/ergo#2675, #2541, #2523, #2548.",
+  "script": "crash-consistency.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "same": "boolean", "diff": "boolean", "stuck": "boolean", "refused": "boolean", "logerr": "boolean",
+               "kills": "number", "kills_in_window": "number", "max_rest_ms": "number", "max_rollback": "number", "seed": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 2400,
+  "expect": {
+    "base":      { "all": { "key": "same", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "same", "op": "==", "value": true } }
+  }
+}

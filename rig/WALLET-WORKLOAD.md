@@ -43,7 +43,9 @@ the preset `WW_PRESET`:
 
 Before the first step the miner matures, pays the funding boxes, and both wallet nodes must reach the miner's tip and
 show the payment (`WW_SYNC_S`, 240 s); a run that cannot get there is INCONCLUSIVE, not FAIL. Every step starts from
-empty pools.
+empty pools (waiting up to 120 s, then going on with a warning). A step that needs n independent inputs (`send`,
+`send-par`, `conflict`) first makes sure the wallet holds n confirmed boxes with no token, the miner paying the missing
+ones: earlier steps leave the wallet's value in token-carrying change, and a step should not inherit that layout.
 
 | kind (arg) | what it does | invariants (each one a line in the output) |
 |---|---|---|
@@ -54,7 +56,7 @@ empty pools.
 | `transfer` (amount, 100) | that token, `A` → `M` | `tx_tokens_conserved` (inputs = outputs for every token); `confirmed`; `sender_delta` = −amount; `receiver_delta` = +amount (wallet balances after the block) |
 | `burn` (amount, 50) | a `BurnTokensRequest` for that token | `tx_burns_exactly`: inputs − outputs is exactly {token: amount}, every other token kept; `tx_erg_conserved` (the fee output counted); `confirmed`; `wallet_burned_exactly`: the wallet's tokens change by exactly that; `wallet_erg_only_fee`: its ERG by exactly the fee |
 | `fee` (n, 6) | n payments with fees 1..n × `WW_FEE` put a load in the pool; at once `/transactions/getFee` (waits 1, 2, 5, 10, 30 min, 200 bytes), `/transactions/waitTime` (fees 0.001 .. 0.1 ERG) and `/transactions/poolHistogram` are read | `present`; `non_negative`; `getFee_monotone` (a longer wait never costs more); `waitTime_monotone` (a higher fee never waits longer); the histogram is well formed |
-| `resubmit` (lag s, 0) | one signed transaction submitted to `A`, then the same bytes to `B` after the lag | `confirmed_once_everywhere` (once on every node's chain, at one height); `gone_from_pools` within `WW_CLEAR_S` (60 s); `no_stall` (every node's height advanced); `one_state_root` (all nodes at one height with one root within `WW_AGREE_S`, 90 s, else `same_state` against `M`: `SAME` or `LAG … same-chain`) |
+| `resubmit` (lag s, 0) | one signed transaction submitted to `A`, then the same bytes to `B` after the lag | `confirmed_once_everywhere` (once on every node's chain, at one height); `gone_from_pools` within `WW_CLEAR_S` (60 s); `no_stall` (every node's height advanced); `one_state_root` (every node's best full block is on `M`'s chain and its state root is the root in `M`'s header at that height, so a follower a few blocks behind the moving tip still agrees; re-read for up to `WW_AGREE_S`, 90 s, when a read races a block) |
 | `conflict` | one confirmed box both nodes hold; `A`'s wallet builds a payment from it (`inputsRaw`), `B`'s wallet builds a different payment from the same box; the two are submitted to `A` and `B` at the same moment | `exactly_one_confirmed` (on every node, one of the two once, the other never, the same one everywhere); `gone_from_pools` (neither left in any pool); `no_stall`; `one_state_root` |
 
 A step that could not be exercised (nothing accepted, no token minted yet, a scan that did not register `off`, the two
@@ -67,13 +69,17 @@ flight; 1 = one node had already heard of the other's) and whether the resubmitt
 One line per step and per invariant, then the verdict line and `RESULT_JSON`:
 
 ```
-[ww] step 12 conflict: PASS
-[ww]     ok   exactly_one_confirmed: per node: M=1/0 A=1/0 B=1/0 (t1/t2 occurrences in its chain)
-[ww]     ok   gone_from_pools: no pool holds 1a2b3c4d,5e6f7a8b (cleared after s: {"M":0,"A":0,"B":0})
+[ww] step 8 resubmit:0: PASS
+[ww]     ok   confirmed_once_everywhere: in every node's chain once, at height 118
+[ww]     ok   gone_from_pools: no pool holds e90ec94d (cleared after s: {"M":0,"A":0,"B":0})
+[ww]     ok   no_stall: every node advanced: {"M":116,"A":109,"B":109} -> {"M":125,"A":118,"B":118}
+[ww]     ok   one_state_root: SAME@125:c29ee1bdbf87766e (each node's root = the miner's at its height: M@125 A@118 B@118)
+[ww]     info {"lag_s":0,"two_accepted":true,"second_reply":"e90ec94dc308f91e20b254c4fb4805af9a8e52a9503a100db421d7dfae91c3b1"}
 ...
-[wallet-workload] === WALLET-WORKLOAD: PASS (steps 14: 14 pass, 0 fail, 0 inconclusive; control none; conflict two-in-flight 2/3, resubmit both-accepted 1/3) ===
-RESULT_JSON {"schema_version":1,"scenario":"wallet-workload","versions":{"M":"6.0.7","A":"6.0.7","B":"6.0.7"},"metrics":{"pass":true,...}}
+[wallet-workload] === WALLET-WORKLOAD: PASS (steps 5: 5 pass, 0 fail, 0 inconclusive; control none; conflict two-in-flight 0/0, resubmit both-accepted 0/0) ===
+RESULT_JSON {"schema_version":1,"scenario":"wallet-workload","versions":{"M":"6.0.7","A":"6.0.7","B":"6.0.7"},"metrics":{"pass":true,"control_tripped":false,"steps":5,...}}
 ```
+(lines from runs on the v6.0.7 release jar: a resubmit step of the full list, and the verdict of the `aa` list)
 
 The verdict is PASS when every step passes, FAIL when any invariant fails, INCONCLUSIVE when a step or the funding could
 not be exercised (no `RESULT_JSON` then: diffrun counts the run INCONCLUSIVE). Metrics: `pass`, `control_tripped`,
@@ -141,7 +147,8 @@ is about; the mechanism has nothing specific to any of them.
   `burn` step uses an explicit `BurnTokensRequest`, so it checks the burn arithmetic, not the whitelist policy.
 - The conflict is two honest wallets racing on one box; no node is told anything false and no transaction is
   malformed. Fee competition between the two (replacement by fee) is not staged: both pay the default fee.
-- Timing: on clean links and 2 s blocks, `B` often hears `A`'s transaction before its own submission (`in_flight` 1).
-  The invariants hold either way; link delay (`link_netem`) widens the window if a question needs both in flight.
+- Timing: whether both conflicting transactions are in flight depends on the two submissions beating relay between
+  `A` and `B`; `in_flight` records it per step (1 means one node had already heard of the other's transaction). The
+  invariants hold either way; link delay (`link_netem`) widens the window if a question needs both in flight.
 - Wallet state across restarts, rescans, and digest-mode or pruned wallet nodes.
 - The fee checks are about shape and direction, not accuracy: a monotone answer can still be a poor estimate.

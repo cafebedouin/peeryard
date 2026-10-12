@@ -20,7 +20,8 @@ on:
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
-run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}"
+      test_patches: { description: 'optional, release lines only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the tag plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
+run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}"
 permissions:
   contents: read
 env:
@@ -32,6 +33,7 @@ env:
   PAIRS: ${{ inputs.pairs }}
   AA: ${{ inputs.aa }}
   PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
+  TEST_PATCHES: ${{ inputs.test_patches }}
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -54,6 +56,8 @@ jobs:
           [[ "$LINE" == matrix || "$LINE" == matrix-stack || "$LINE" =~ ^v[0-9.]+$ ]] || fail "line: matrix, matrix-stack or a release tag vN.N.N"
           { [[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] && [ "$SHARDS" -le 20 ]; } || fail "shards: 1-20"
           [[ "$PAIRS" =~ ^[1-9][0-9]?$ ]] || fail "pairs: 1-99"
+          for t in $TEST_PATCHES; do [[ "$t" =~ ^patches/test/[A-Za-z0-9._-]+\.patch$ && -f "$t" ]] || fail "test patch $t: not a file under patches/test/"; done
+          [ -z "$TEST_PATCHES" ] || [[ "$LINE" =~ ^v[0-9.]+$ ]] || fail "test_patches: release lines only"
           if [ "$AA" = true ]; then echo "A/A control: pr and head are ignored"
           else
             [[ "$PR" =~ ^[0-9]+$ ]] || fail "pr: a number"
@@ -85,8 +89,17 @@ jobs:
             BASE="$LINE"; git -C "$C" fetch -q origin "refs/tags/$LINE:refs/tags/$LINE"
           fi
           BSHA="$(git -C "$C" rev-parse --verify "$BASE^{commit}")" || fail "build base $BASE not found"
+          TPLINE=""
+          if [ -n "$TEST_PATCHES" ]; then
+            # test-only patches on BOTH arms: one local commit on the tag becomes the build base, so the pair still
+            # differs only in the PR's diff; the tag commit stays the merge-base ancestor the check below needs
+            git -C "$C" -c advice.detachedHead=false checkout -q "$BSHA"
+            for t in $TEST_PATCHES; do git -C "$C" apply --index "$GITHUB_WORKSPACE/$t" || fail "test patch $t does not apply on $BASE"; TPLINE="$TPLINE $t($(sha256sum "$t" | cut -c1-16))"; done
+            git -C "$C" -c user.name=pr-scenario -c user.email=pr-scenario@localhost commit -q -m "TEST ONLY: $TEST_PATCHES"
+            BSHA="$(git -C "$C" rev-parse HEAD)"; BASE="$BSHA"
+          fi
           { echo "BASE=$BASE"; echo "BSHA=$BSHA"; } >> "$GITHUB_ENV"
-          { echo '```'; echo "build base: $BASE ($BSHA)"; } > summary.txt
+          { echo '```'; echo "build base: $LINE${TPLINE:+ + test patches:$TPLINE} ($BSHA)"; } > summary.txt
           if [ "$AA" != true ]; then
             B="$(gh api "repos/ergoplatform/ergo/pulls/$PR" --jq .base.ref)"
             [[ "$B" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "unexpected base branch name"

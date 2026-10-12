@@ -58,6 +58,9 @@
 #                                   no internal miner (an arkadianet node with "mining": true): at difficulty 1
 #                                   every nonce solves, so the loop submits a fixed solution per candidate
 #   mempool_ids <node> / mempool_size <node>   the unconfirmed pool's tx ids (in listed order) / its count
+#   rent_box / rent_issue / rent_expired / rent_claim / rent_blocks / rent_audit / rent_bot   storage rent (demurrage):
+#                                   holder boxes, their expiry, honest claims and an audit of the claims in blocks
+#                                   (rig/lib/storage_rent.sh; needs a short-period test build, docs/storage-rent.md)
 #   mark <label>                    a labelled event in $RIG_LOG_DIR/events.jsonl, beside the rig's own (partition,
 #                                   heal, link_netem, crash, revive, relaunch, launch), each with a sample taken then
 #   and the variables NODES, RIG_LOG_DIR, SCRATCH, CONF_OVR (per-node extra HOCON for a deferred launch).
@@ -651,6 +654,8 @@ solve_stop(){ local n="$1" p="${SOLVER_PID[$1]:-}"
 
 # shellcheck source=rig/lib/faults.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/faults.sh"
+# shellcheck source=rig/lib/storage_rent.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/storage_rent.sh"
 
 # ---- mining control ----
 # The node has no runtime mining switch (/mining/* serves candidates and solutions only). Two controls exist: the

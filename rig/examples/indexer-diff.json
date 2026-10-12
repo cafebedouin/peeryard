@@ -1,0 +1,13 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "M", "mining": true, "mine_poll": "1s", "knownPeers": ["X", "Y"] },
+    { "name": "X", "mining": false, "knownPeers": ["M"],
+      "conf": { "ergo.node.extraIndex": "true",
+                "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"" } },
+    { "name": "Y", "mining": false, "jar": "${PEERYARD_JAR_B}", "knownPeers": ["M"],
+      "conf": { "ergo.node.extraIndex": "true",
+                "ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\"" } }
+  ],
+  "links": [ { "a": "M", "b": "X", "delay_ms": 0 }, { "a": "M", "b": "Y", "delay_ms": 0 } ]
+}

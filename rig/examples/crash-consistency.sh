@@ -91,11 +91,13 @@ RE_IDX='Buffered block ([0-9]+) /'; RE_HDR='New best header [0-9a-f]+ with score
 TRIG_RE=${CC_TRIGGER_RE:-$([ "$KILL_ON" = indexed ] && echo "$RE_IDX" || echo "$RE_FULL")}
 log_off(){ stat -c %s "$LOG_S" 2>/dev/null || echo 0; }
 # log_heights <offset> <ERE with one group>: the heights the pattern captured in S's log after <offset>, in order
-log_heights(){ tail -c +$(( $1 + 1 )) "$LOG_S" 2>/dev/null | sed -nE "s/.*$2.*/\1/p"; }
+# (sed's s command with \001 as its delimiter: a pattern may hold "/", as the indexer's does)
+SD=$'\001'
+log_heights(){ tail -c +$(( $1 + 1 )) "$LOG_S" 2>/dev/null | sed -nE "s${SD}.*$2.*${SD}\1${SD}p"; }
 log_last(){ local h; h=$(log_heights "$1" "$2" | tail -1); echo "${h:--1}"; }
 # the watcher: a background tail of S's log that prints each trigger height as the node writes it
 kill_tree(){ local c; for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$c"; done; kill "$1" 2>/dev/null; return 0; }
-watch_start(){ exec {WFD}< <(exec timeout "$SYNC_WAIT_S" tail -n0 -F "$LOG_S" 2>/dev/null | sed -u -nE "s/.*${TRIG_RE}.*/\1/p"); WPID=$!; }
+watch_start(){ exec {WFD}< <(exec timeout "$SYNC_WAIT_S" tail -n0 -F "$LOG_S" 2>/dev/null | sed -u -nE "s${SD}.*${TRIG_RE}.*${SD}\1${SD}p"); WPID=$!; }
 watch_stop(){ exec {WFD}<&-; kill_tree "$WPID"; }
 # watch_until <target> <deadline epoch ms>: returns 0 with HIT set once the watcher prints a height >= target
 watch_until(){ local h left; HIT=""
@@ -127,11 +129,15 @@ restart(){ local k=$1 t0 up ok
   up=$(( $(now_ms) - t0 )); RESTART_OK=$ok; RS_K=$k; RS_UP=$up; RS_PF=$KILL_PF
   cc "restart after kill $k: came_back=$ok rest_after=${up}ms"; }
 # restart_report: once the burst after a restart is over, the restart's record (restored height from the log)
-restart_report(){ local f1
+restart_report(){ local f1 rec
   f1=$(log_heights "$RS_OFF" "$RE_FULL" | head -1); [ -n "$f1" ] && f1=$(( f1 - 1 )) || f1=-1
-  cc "restart after kill $RS_K: restored full height $f1 (first block applied after the restart, minus one; last applied before the kill: $RS_PF)"
-  jq -cn --argjson k "$RS_K" --argjson ok "$RESTART_OK" --argjson up "$RS_UP" --argjson h "$f1" --argjson pf "$RS_PF" \
-    '{restart_after_kill: $k, came_back: $ok, rest_ms: $up, restored_full: $h, full_at_kill: $pf}' >> "$KILLS_JSONL"; }
+  # did the node find its state and history out of step at startup (its own recovery path), as its log says
+  rec=none; tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null | grep -q 'State and history are inconsistent' && rec=inconsistent
+  [ $rec = inconsistent ] && tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null | grep -q 'Recovering state' && rec=inconsistent-recovered-from-headers
+  [ $rec = inconsistent ] && tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null | grep -qE 'Rollback (UtxoState|Digest State) to version' && rec=inconsistent-rolled-back
+  cc "restart after kill $RS_K: resumed at full height $f1 (first block applied after the restart, minus one; last applied before the kill: $RS_PF); startup: $rec"
+  jq -cn --argjson k "$RS_K" --argjson ok "$RESTART_OK" --argjson up "$RS_UP" --argjson h "$f1" --argjson pf "$RS_PF" --arg rec "$rec" \
+    '{restart_after_kill: $k, came_back: $ok, rest_ms: $up, restored_full: $h, full_at_kill: $pf, startup: $rec}' >> "$KILLS_JSONL"; }
 # burst <k> <lo> <hi> <start command...>: run the start command (a heal, or a restart) and kill S at the kill point
 # inside the burst that follows (or, under the A/A control, only record the point). lo = S's height before the
 # burst, hi = M's. Every draw is made for every kill, whatever the mode, so a seed fixes the same choices in either.
@@ -176,7 +182,8 @@ burst 1 "$(full_height S)" "$(full_height M)" heal_s
 for ((k = 2; k <= K; k++)); do
   if [ "$CONTROL" = aa ]; then
     [ "$KILL_ON" = indexed ] && KILL_IDX=$(indexed_of S)
-    partition M S; wait_backlog "$(full_height S)"; burst "$k" "$(full_height S)" "$(full_height M)" heal_s
+    # S may still be applying blocks it received before the cut: give it 5 s before measuring the backlog
+    partition M S; sleep 5; wait_backlog "$(full_height S)"; burst "$k" "$(full_height S)" "$(full_height M)" heal_s
   else
     wait_backlog "$KILL_PF"
     # S did not come back: no further kill can be staged, and the outcome is S's (REFUSED unless it answers later)
@@ -252,18 +259,19 @@ VLINE="$(bash "$here_cc/../crash-verdict.sh" "$CC_OUT/obs.json")"
 echo "$VLINE"; echo "$VLINE" > "$CC_OUT/verdict.txt"
 OUTC="$(cut -d' ' -f2 <<< "$VLINE")"; OUTC="${OUTC%%@*}"
 cc "seed=$SEED kills: $(jq -r -s 'map(select(.k) | "#\(.k) \(.trigger) S=\(.s_applied)/\(.s_header) in=\(.in_window)") | join(", ")' "$KILLS_JSONL")"
-cc "restarts: $(jq -r -s 'map(select(.restart_after_kill) | "after #\(.restart_after_kill) back=\(.came_back) rest=\(.rest_ms)ms restored=\(.restored_full) (killed at \(.full_at_kill))") | join(", ")' "$KILLS_JSONL")"
+cc "restarts: $(jq -r -s 'map(select(.restart_after_kill) | "after #\(.restart_after_kill) back=\(.came_back) rest=\(.rest_ms)ms resumed=\(.restored_full) (killed at \(.full_at_kill)) \(.startup)") | join(", ")' "$KILLS_JSONL")"
 want=SAME; case "$CONTROL" in no-restart) want=REFUSED ;; behind) want=STUCK ;; fork) want=DIFF ;; esac
-[ "$CONTROL" != none ] && cc "control $CONTROL: expected $want, got $OUTC: $([ "$OUTC" = "$want" ] && echo fired || echo 'DID NOT FIRE')"
+[ "$CONTROL" != none ] && cc "control $CONTROL: expected $want, got $OUTC: $([ "$OUTC" = "$want" ] && echo 'as expected' || echo 'NOT AS EXPECTED')"
 case "$OUTC" in SAME) rig_verdict=PASS ;; INCONCLUSIVE) rig_verdict=INCONCLUSIVE; rig_cause=STAGING ;; *) rig_verdict=FAIL ;; esac
 if [ "$OUTC" = INCONCLUSIVE ]; then echo "INCONCLUSIVE: crash-consistency ${VLINE#CRASH-CONSISTENCY INCONCLUSIVE }"
 else
   b(){ [ "$OUTC" = "$1" ] && echo true || echo false; }
   echo "RESULT_JSON $(jq -cn --argjson v "$VERSIONS" --argjson same "$(b SAME)" --argjson diff "$(b DIFF)" --argjson stuck "$(b STUCK)" \
-    --argjson refused "$(b REFUSED)" --argjson logerr "$(b LOGERR)" --argjson kd "$done_k" --argjson ki "$in_k" --argjson seed "$SEED" \
+    --argjson refused "$(b REFUSED)" --argjson logerr "$(b LOGERR)" --argjson kd "$([ "$CONTROL" = aa ] && echo 0 || echo "$done_k")" --argjson ki "$in_k" --argjson seed "$SEED" \
     --argjson upmax "$(jq -s '[.[] | select(.restart_after_kill) | .rest_ms] | max // 0' "$KILLS_JSONL")" \
+    --argjson ri "$(jq -s '[.[] | select(.restart_after_kill and ((.startup // "none") | startswith("inconsistent")))] | length' "$KILLS_JSONL")" \
     --argjson rb "$(jq -s '[.[] | select(.restart_after_kill and .came_back and .restored_full >= 0) | .full_at_kill - .restored_full] | max // 0' "$KILLS_JSONL")" \
     '{schema_version: 1, scenario: "crash-consistency", versions: $v,
       metrics: {same: $same, diff: $diff, stuck: $stuck, refused: $refused, logerr: $logerr, kills: $kd, kills_in_window: $ki,
-                max_rest_ms: $upmax, max_rollback: $rb, seed: $seed}}')"
+                max_rest_ms: $upmax, max_rollback: $rb, restarts_inconsistent: $ri, seed: $seed}}')"
 fi

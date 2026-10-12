@@ -5,7 +5,7 @@
   "tier": "public",
   "env": {},
   "metrics": { "same": "boolean", "diff": "boolean", "stuck": "boolean", "refused": "boolean", "logerr": "boolean",
-               "kills": "number", "kills_in_window": "number", "max_rest_ms": "number", "max_rollback": "number", "seed": "number" },
+               "kills": "number", "kills_in_window": "number", "max_rest_ms": "number", "max_rollback": "number", "restarts_inconsistent": "number", "seed": "number" },
   "n": 1,
   "min_valid_runs": 1,
   "timeout_seconds": 2400,

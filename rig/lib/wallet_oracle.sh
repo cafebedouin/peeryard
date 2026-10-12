@@ -249,8 +249,8 @@ wo_redial(){ local end=$((SECONDS + $1)) m="$2" n ok next=$((SECONDS + 10)); shi
     sleep 2; done; }
 
 # wo_confirm <miner> <blocks> <node>...: mine (poll WO_POLL, default 2s) until the miner's pool is empty, it is at least
-# <blocks> blocks higher, and every node has reached that height (so the blocks reached them); then stop it, re-dial the nodes to the relaunched
-# miner and wait for one tip again. Prints the heights; returns 1 when the nodes never reached one tip.
+# <blocks> blocks higher and the pending payment (WO_PENDING, when set) is in a block; then stop it (wo_stop_miner), re-dial the nodes to the relaunched miner and wait for one tip
+# again. Prints the heights; returns 1 when the nodes never reached one tip.
 wo_confirm(){ local m="$1" k="$2" h0 end ok=0 n; shift 2
   h0=$(full_height "$m"); start_mining "$m" "${WO_POLL:-2s}" >/dev/null; settle_height_back "$m"; wo_redial 60 "$m" "$@"
   # start_mining relaunched the miner with an empty pool: the pending payment (WO_PENDING) goes back to it from a peer
@@ -260,8 +260,13 @@ wo_confirm(){ local m="$1" k="$2" h0 end ok=0 n; shift 2
   while [[ $SECONDS -lt $end ]]; do
     if [[ $pushed == 0 && $SECONDS -ge $((end - 150)) && -n "${WO_PENDING:-}" ]]; then pushed=1
       [[ "$(wallet "$m" "/wallet/transactionById?id=$WO_PENDING" | jq -r '.inclusionHeight // empty' 2>/dev/null)" =~ ^[0-9]+$ ]] || wo_push "$m" "$WO_PENDING" "$@"; fi
+    # the miner stops as soon as it has <blocks> more, an empty pool and (WO_PENDING set) the pending payment in its
+    # wallet's chain view; a follower still behind then gets
+    # wo_stop_miner's wait and the shared-tip wait below (waiting for every follower while the miner mines on let a
+    # follower two hops away fall 28 blocks behind and stall there, hosted run 38196671478)
     if [[ "$(full_height "$m")" -ge $((h0 + k)) && "$(mempool_size "$m")" == 0 ]]; then
-      ok=1; for n in "$@"; do [[ "$(full_height "$n")" -ge $((h0 + k)) ]] || ok=0; done; [[ $ok == 1 ]] && break; fi
+      [[ -z "${WO_PENDING:-}" ]] && break
+      [[ "$(wallet "$m" "/wallet/transactionById?id=$WO_PENDING" | jq -r '.inclusionHeight // empty' 2>/dev/null)" =~ ^[0-9]+$ ]] && break; fi
     sleep 2
   done
   wo_stop_miner "$m" "$@"; wo_redial 60 "$m" "$@"

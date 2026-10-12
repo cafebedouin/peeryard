@@ -109,10 +109,25 @@ ww_input_view(){ local b; b=$(ww_boxes "$1" "$(jq -c '[.inputs[].boxId]' <<< "$2
   jq -c '{in_tokens: (reduce (.[]?.assets[]?) as $a ({}; .[$a.tokenId] += $a.amount)), in_erg: ([.[]?.value] | add // 0), n: length}' <<< "${b:-[]}"; }
 ww_out_view(){ jq -c '{out_tokens: (reduce (.outputs[]?.assets[]?) as $a ({}; .[$a.tokenId] += $a.amount)), out_erg: ([.outputs[]?.value] | add // 0)}' <<< "$1"; }
 
+# ww_plain_boxes [min conf]: the wallet's confirmed boxes with no token and at least 0.4 ERG, as a JSON array of ids
+ww_plain_boxes(){ wallet "$WW_WALLET" "/wallet/boxes/unspent?minConfirmations=${1:-1}&limit=2500" | jq -c '[.[]? | select((.box.assets | length) == 0 and .box.value >= 400000000) | .box.boxId]' 2>/dev/null || echo '[]'; }
+# ww_ensure_boxes <n>: at least n such boxes, confirmed and seen by every node; else the miner pays the missing ones
+# (earlier steps consolidate the wallet's boxes into token-carrying change, so a step that needs n independent inputs
+# makes sure they exist instead of inheriting whatever layout the previous step left)
+ww_ensure_boxes(){ local n="$1" have r h0 conf h
+  have=$(ww_plain_boxes 1 | jq length); [[ "$have" -ge "$n" ]] && return 0
+  h0=$(full_height "$WW_MINER")
+  r=$(ww_reply "$(wallet "$WW_MINER" /wallet/payment/send "$(jq -nc --arg a "$WW_ADDR" --argjson k $((n - have)) '[range($k) | {address: $a, value: 2000000000}]')")")
+  [[ "$r" == ID* ]] || { ww_say "WARN could not add boxes: ${r#NO }"; return 1; }
+  conf=$(ww_wait_confirm "$h0" "[\"${r#ID }\"]"); h=$(jq -r '.[]' <<< "$conf")
+  [[ "$h" =~ ^[0-9]+$ ]] || { ww_say "WARN the box top-up did not confirm"; return 1; }
+  ww_sync "${NODES[@]}"; ww_wallet_at "$WW_WALLET" "$h"; ww_wallet_at "$WW_TWIN" "$h"
+  ww_say "topped up: $((n - have)) boxes of 2 ERG at height $h ($have were there)"; }
+
 # ---- steps ------------------------------------------------------------------------------------------------------
 # send / send-par <n>: n payments from the wallet to the miner (distinct amounts), one at a time or all at once
 ww_step_send(){ local kind="$1" n="${2:-3}" h0 i pids=() f reply ids txs='{}' id b conf reqs
-  ww_quiet; h0=$(full_height "$WW_MINER")
+  ww_quiet; ww_ensure_boxes "$n"; h0=$(full_height "$WW_MINER")
   for ((i = 1; i <= n; i++)); do f="$WW_DIR/send_${WW_STEP}_$i.txt"
     if [[ "$kind" == send-par ]]; then ( wallet "$WW_WALLET" /wallet/payment/send "[{\"address\":\"$WW_MINER_ADDR\",\"value\":$((100000000 + WW_STEP * 1000 + i))}]" > "$f" ) & pids+=($!)
     else wallet "$WW_WALLET" /wallet/payment/send "[{\"address\":\"$WW_MINER_ADDR\",\"value\":$((100000000 + WW_STEP * 1000 + i))}]" > "$f"; sleep 0.5; fi
@@ -242,9 +257,9 @@ ww_step_resubmit(){ local lag="${1:-0}" st h0 tx id r1 r2 conf pc et
 # conflict: one box, two different transactions spending it, built by the wallet on two nodes holding the same
 # mnemonic and submitted to the two nodes at the same moment
 ww_step_conflict(){ local st h0 box raw t1 t2 i1 i2 p1 p2 r1 r2 ids pc
-  ww_quiet; ww_sync "${NODES[@]}" || ww_say "WARN not every node at the miner's tip before the step"
+  ww_quiet; ww_ensure_boxes 1; ww_sync "${NODES[@]}" || ww_say "WARN not every node at the miner's tip before the step"
   st=$(ww_heights "${NODES[@]}"); h0=$(full_height "$WW_MINER")
-  box=$(wallet "$WW_WALLET" "/wallet/boxes/unspent?minConfirmations=2&limit=2500" | jq -r '[.[]? | select((.box.assets | length) == 0 and .box.value >= 400000000) | .box.boxId] | .[0] // empty')
+  box=$(ww_plain_boxes 1 | jq -r '.[0] // empty')
   raw=$([[ -n "$box" ]] && rest "$WW_WALLET" "/utxo/byIdBinary/$box" | jq -r '.bytes // empty')
   [[ -n "$raw" && -n "$(rest "$WW_TWIN" "/utxo/byId/$box" | jq -r '.boxId // empty')" ]] || {
     ww_record "$(jq -nc --arg b "$box" '{kind: "conflict", ids: [], reason: "no confirmed box both nodes hold (\($b))"}')"; return; }

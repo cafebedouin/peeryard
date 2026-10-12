@@ -4,7 +4,11 @@
 # dirs), so the pair differs only in the patch. The base is the Matrix commit peeryard carries
 # (patches/ergo-matrix/patches.json, line=matrix), that commit plus the carried Matrix stack (line=matrix-stack: the
 # base jar is patches/stack.sh --build ergo-matrix, and the candidate stacks the PR's diff last through stack.sh's
-# overlay, so the pair still differs only in the PR's diff), or a release tag. Each of `shards` runners then runs
+# overlay, so the pair still differs only in the PR's diff), a release tag, or a commit (40 hex: e.g. the PR's own
+# merge base, so the pair is that commit and that commit plus the PR's diff from it). When the build base is one of
+# the PR's merge bases (`git merge-base --all`; a PR that merged its base branch in has several), the diff is taken from
+# the build base itself; otherwise from git's merge base, which must be an ancestor of the build base. scenario_env
+# overrides keys of the manifest's env (only keys it declares), recorded in the run's provenance. Each of `shards` runners then runs
 # `pairs` pairs (base run, candidate run, alternating, run.sh's order), and diffrun/pool.sh judges the pooled runs once
 # (role_summary/decide over shards x pairs; a lost shard counts as INCONCLUSIVE runs). With aa=true the base jar runs
 # in both roles (an A/A control, labelled so; no PR is fetched). Runs by hand.
@@ -14,14 +18,15 @@ on:
     inputs:
       pr: { description: 'ergoplatform/ergo pull request number (ignored when aa is true)', default: '' }
       head: { description: 'the PR head commit, 40 hex (the run fails if the PR has moved; ignored when aa is true)', default: '' }
-      line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack) or a release tag, e.g. v6.0.6', default: 'v6.0.6' }
+      line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack), a release tag, e.g. v6.0.6, or a commit (40 hex, e.g. the PR''s merge base)', default: 'v6.0.6' }
       scenario: { description: 'manifest basename under diffrun/scenarios/ (without .json); public tier, no stop_when/max_n', default: 'matrix-paychain' }
       shards: { description: 'runners (1-20)', default: '5' }
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
+      scenario_env: { description: 'optional: KEY=VALUE overrides of the manifest env, separated by ";" (keys the manifest declares; values [A-Za-z0-9._ -]), e.g. WO_AT=pending', default: '' }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
       test_patches: { description: 'optional, release lines only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the tag plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
-run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}"
+run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
 permissions:
   contents: read
 env:
@@ -34,6 +39,7 @@ env:
   AA: ${{ inputs.aa }}
   PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
   TEST_PATCHES: ${{ inputs.test_patches }}
+  SCENARIO_ENV: ${{ inputs.scenario_env }}
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -53,7 +59,7 @@ jobs:
           fail(){ echo "::error::$*"; exit 1; }
           [[ "$SCENARIO" =~ ^[a-z0-9-]+$ ]] || fail "scenario: [a-z0-9-] only"
           m="diffrun/scenarios/$SCENARIO.json"; [ -f "$m" ] || fail "no manifest $m"
-          [[ "$LINE" == matrix || "$LINE" == matrix-stack || "$LINE" =~ ^v[0-9.]+$ ]] || fail "line: matrix, matrix-stack or a release tag vN.N.N"
+          [[ "$LINE" == matrix || "$LINE" == matrix-stack || "$LINE" =~ ^v[0-9.]+$ || "$LINE" =~ ^[0-9a-f]{40}$ ]] || fail "line: matrix, matrix-stack, a release tag vN.N.N or a 40-hex commit"
           { [[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] && [ "$SHARDS" -le 20 ]; } || fail "shards: 1-20"
           [[ "$PAIRS" =~ ^[1-9][0-9]?$ ]] || fail "pairs: 1-99"
           for t in $TEST_PATCHES; do [[ "$t" =~ ^patches/test/[A-Za-z0-9._-]+\.patch$ && -f "$t" ]] || fail "test patch $t: not a file under patches/test/"; done
@@ -67,6 +73,7 @@ jobs:
               [ -z "$in_stack" ] || fail "line=matrix-stack: #$PR is already in the Matrix stack (patch $in_stack); the candidate is the stack plus a PR outside it"
             fi
           fi
+          bash diffrun/scenario-env.sh "$m" "$SCENARIO_ENV" || fail "scenario_env: see the line above"
           jq -L diffrun/lib -e 'include "diffrun"; validate_manifest | length == 0' "$m" >/dev/null || fail "manifest does not validate"
           [ "$(jq -r .tier "$m")" = public ] || fail "tier: only public manifests run here"
           jq -e 'has("stop_when") or has("max_n") | not' "$m" >/dev/null || fail "stop_when/max_n: a sequential stop inside a shard breaks the pairs-per-shard accounting"
@@ -85,6 +92,8 @@ jobs:
           git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$C"
           if [ "$LINE" = matrix ] || [ "$LINE" = matrix-stack ]; then
             BASE="$(jq -r .base patches/ergo-matrix/patches.json)"; git -C "$C" fetch -q origin weak-blocks
+          elif [[ "$LINE" =~ ^[0-9a-f]{40}$ ]]; then
+            BASE="$LINE"; git -C "$C" cat-file -e "$LINE^{commit}" 2>/dev/null || git -C "$C" fetch -q origin "$LINE"
           else
             BASE="$LINE"; git -C "$C" fetch -q origin "refs/tags/$LINE:refs/tags/$LINE"
           fi
@@ -99,7 +108,7 @@ jobs:
             BSHA="$(git -C "$C" rev-parse HEAD)"; BASE="$BSHA"
           fi
           { echo "BASE=$BASE"; echo "BSHA=$BSHA"; } >> "$GITHUB_ENV"
-          { echo '```'; echo "build base: $LINE${TPLINE:+ + test patches:$TPLINE} ($BSHA)"; } > summary.txt
+          { echo '```'; echo "build base: $LINE${TPLINE:+ + test patches:$TPLINE} ($BSHA)"; [ -z "$SCENARIO_ENV" ] || echo "scenario env overrides: $SCENARIO_ENV"; } > summary.txt
           if [ "$AA" != true ]; then
             B="$(gh api "repos/ergoplatform/ergo/pulls/$PR" --jq .base.ref)"
             [[ "$B" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "unexpected base branch name"
@@ -107,12 +116,17 @@ jobs:
             head="$(git -C "$C" rev-parse "pr-$PR")"
             [ "$head" = "$HEAD_SHA" ] || fail "#$PR head is $head, expected $HEAD_SHA: re-dispatch with head=$head after reading the change"
             TIP="$(git -C "$C" rev-parse "origin/$B")"; MB="$(git -C "$C" merge-base "origin/$B" "pr-$PR")"
+            ALL_MB="$(git -C "$C" merge-base --all "origin/$B" "pr-$PR" | tr '\n' ' ')"; RANGE="origin/$B...pr-$PR"
+            # the build base is one of several merge bases (the PR merged its base branch in): the diff is taken from
+            # the build base itself, so the candidate is the build base plus exactly what the PR adds to it
+            if [[ " $ALL_MB" == *" $BSHA "* ]]; then MB="$BSHA"; RANGE="$BSHA..pr-$PR"; fi
             { echo "PR #$PR base branch: $B (tip $TIP)"; echo "PR head: $HEAD_SHA"; echo "merge-base: $MB"
+              [ "$(wc -w <<< "$ALL_MB")" -le 1 ] || echo "merge bases (--all): $ALL_MB; diff range $RANGE"
               echo "merge-base == build base: $([ "$MB" = "$BSHA" ] && echo true || echo false)"; } >> summary.txt
             # a PR branched from a newer commit than the build base can still apply cleanly, and "build base + PR diff"
             # would then be a false label
             git -C "$C" merge-base --is-ancestor "$MB" "$BSHA" || { cat summary.txt >> "$GITHUB_STEP_SUMMARY"; fail "merge-base $MB is not an ancestor of the build base $BSHA"; }
-            echo "RANGE=origin/$B...pr-$PR" >> "$GITHUB_ENV"
+            echo "RANGE=$RANGE" >> "$GITHUB_ENV"
           fi
       - name: Cache the sigma-state snapshot the weak-blocks line depends on
         if: env.LINE == 'matrix' || env.LINE == 'matrix-stack'
@@ -185,6 +199,7 @@ jobs:
         env:
           K: ${{ matrix.shard }}
         run: |
+          bash diffrun/scenario-env.sh "diffrun/scenarios/$SCENARIO.json" "$SCENARIO_ENV" || exit 1
           o="$RUNNER_TEMP/out/shard-$K"; cand="$PWD/jars/candidate.jar"; [ "$AA" = true ] && cand="$PWD/jars/base.jar"
           bash diffrun/run.sh "diffrun/scenarios/$SCENARIO.json" --base "$PWD/jars/base.jar" --candidate "$cand" -n "$PAIRS" --out "$o" || echo "run.sh exit $?"
           # the shard's outputs minus run_meta.json (local paths) and node data: pool.sh reads verdict.json and manifest.json

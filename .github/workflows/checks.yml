@@ -17,7 +17,7 @@ jobs:
       - name: shellcheck (scripts, then the sourced hooks)
         run: |
           shellcheck -x $(grep -rlE '^#!.*bash' --include='*.sh' --include='comment-lint' . | grep -v '^./.git/')
-          shellcheck -s bash -e SC2148,SC2154 rig/examples/*.sh diffrun/scenarios/precheck/lib.sh rig/lib/phases.sh rig/lib/indexer.sh
+          shellcheck -s bash -e SC2148,SC2154 rig/examples/*.sh diffrun/scenarios/precheck/lib.sh rig/lib/phases.sh rig/lib/indexer.sh rig/lib/wallet_oracle.sh
       - name: bash -n
         run: for f in $(grep -rlE '^#!.*bash' . | grep -v '^./.git/'); do bash -n "$f"; done
       - name: python tests (diagnose, features, sweep, logmap, aa_pool)
@@ -36,6 +36,8 @@ jobs:
         run: T=$(mktemp -d) bash tests/indexer_diff.sh
       - name: crash-consistency classifier (rig/crash-verdict.sh on fixture observations)
         run: T=$(mktemp -d) bash tests/crash_consistency.sh
+      - name: wallet-oracle comparator (rig/lib/wallet_oracle.sh on fixture snapshots)
+        run: T=$(mktemp -d) bash tests/wallet_oracle.sh
       - name: tooling (check.sh, stack.sh, register.sh, provenance.sh, post.sh)
         run: |
           git config --global user.email ci@example.invalid

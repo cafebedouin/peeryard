@@ -1,0 +1,20 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "M", "mining": true, "mine_poll": "2s", "knownPeers": [] },
+    { "name": "S", "mining": false, "knownPeers": ["M", "R", "P"],
+      "conf": { "ergo.node.mining": "true", "ergo.node.useExternalMiner": "true" } },
+    { "name": "R", "mining": false, "knownPeers": ["M", "P"],
+      "conf": { "ergo.node.mining": "true", "ergo.node.useExternalMiner": "true" } },
+    { "name": "P", "mining": false, "knownPeers": ["M"],
+      "conf": { "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"" } }
+  ],
+  "links": [
+    { "a": "M", "b": "S", "delay_ms": 0 },
+    { "a": "M", "b": "R", "delay_ms": 0 },
+    { "a": "M", "b": "P", "delay_ms": 0 },
+    { "a": "S", "b": "R", "delay_ms": 0 },
+    { "a": "R", "b": "P", "delay_ms": 0 },
+    { "a": "P", "b": "S", "delay_ms": 0 }
+  ]
+}

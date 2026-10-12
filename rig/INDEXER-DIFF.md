@@ -75,10 +75,15 @@ In this order, in one run (`rig/examples/indexer-diff.sh`):
 4. **positive control**: X0 against Y's snapshot from point 3, with `--positive-control` (the tips may differ; each side
    must still be settled on its own). It must come out DIFF; if it does not, the run is INCONCLUSIVE.
 5. **fork** (skip with `INDEXER_DIFF_FORK=0`): the M-Y link is cut; Y mines its own branch from the shared tip, with a
-   payment Y -> X confirmed on it; M mines a longer branch; the link is healed and M is relaunched mining (it re-dials Y)
-   until Y holds M's block at the first forked height and M's height; M pauses; compare. `fork_rolled_back` records
-   that Y's header id at the first forked height changed from its own to M's. When no fork formed (the two ids at that
-   height are not different before the heal), the point is INCONCLUSIVE.
+   payment Y -> X confirmed on it; M mines a longer branch; the link is healed and M mines on until Y holds M's block
+   at the first forked height and M's height (up to 180 s); M pauses; compare. `fork_rolled_back` records that Y's
+   header id at the first forked height changed from its own to M's. When no fork formed (the two ids at that height
+   are not different before the heal), the point is INCONCLUSIVE. A release can stay on the lighter branch it already
+   holds after the heal (Y never asks for M's heavier chain), which left the point unsettled (INCONCLUSIVE); so when Y
+   has not switched `INDEXER_DIFF_SWITCH_S` seconds (default 60) after the heal, Y is relaunched once (graceful, data
+   kept), the 180 s wait starts again, and the run records it (`fork_follower_restarted: true` in `RESULT_JSON`, and
+   `Y relaunched after the heal: true` in the fork and points lines). A fork point compared after such a relaunch shows
+   the indexer across a rollback Y took after a restart, not one it took while running: read it with that flag.
 
 Rig verdict: FAIL on a DIFF at any point; PASS when the settled point is SAME, the positive control DIFF and no point
 DIFF; INCONCLUSIVE otherwise. Every verdict line is printed with the prefix `[indexer-diff]` and kept in

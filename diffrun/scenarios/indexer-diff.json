@@ -6,7 +6,7 @@
   "mixed_jars": true,
   "env": {},
   "metrics": { "agree": "boolean", "settled_same": "boolean", "restart_same": "boolean", "fork_same": "boolean",
-               "fork_rolled_back": "boolean", "posctl_diff": "boolean", "points_same": "number", "points_diff": "number",
+               "fork_rolled_back": "boolean", "fork_follower_restarted": "boolean", "posctl_diff": "boolean", "points_same": "number", "points_diff": "number",
                "points_inconclusive": "number", "unresponsive_after": "number" },
   "n": 1,
   "min_valid_runs": 1,

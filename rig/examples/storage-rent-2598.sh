@@ -22,6 +22,10 @@
 # on, F1 the base jar, F2 the candidate jar. The base role (a release jar + the test patches, which has no
 # storageRentCollection setting and ignores the key) is held to the control's expectations, the candidate role to
 # collection's; the hook prints one RESULT_JSON whose "pass" is that verdict, with the counts beside it.
+# Whether C's jar can collect at all is read from the jar: a jar whose application.conf has no storageRentCollection
+# setting (a release without #2598) ignores the key and never claims. Under diffrun such a jar in the candidate role (an
+# A/A, pr-scenario.yml aa=true, runs the base jar in both roles) is held to the control's expectations too, and
+# RESULT_JSON says so (c_can_collect false); outside diffrun it is a setup error (INCONCLUSIVE: nothing to test).
 P=${PEERYARD_STORAGE_PERIOD:-60}; export PEERYARD_STORAGE_PERIOD=$P
 WIN=${SR2598_WINDOW_S:-180}
 note(){ echo "[sr2598] $*"; }
@@ -29,10 +33,15 @@ COLLECT=true; EXPECT=claims; NAME=STORAGE-RENT-2598
 if [ "${SR2598_CONTROL:-}" = off ]; then COLLECT=false; EXPECT=none; NAME="STORAGE-RENT-2598 CONTROL"; fi
 if [ "${DIFFRUN_ROLE:-}" = base ]; then EXPECT=none; NAME="STORAGE-RENT-2598 (diffrun base)"; fi
 inconclusive(){ echo "$NAME: INCONCLUSIVE ($*)"; rig_verdict=INCONCLUSIVE; }
+CAN=true; unzip -p "${NODE_JAR[C]}" application.conf 2>/dev/null | grep -q 'storageRentCollection' || CAN=false
+if [ "$CAN" = false ] && [ "$EXPECT" = claims ]; then
+  if [ -n "${DIFFRUN_ROLE:-}" ]; then EXPECT=none; NAME="STORAGE-RENT-2598 (diffrun $DIFFRUN_ROLE, C's jar cannot collect)"
+  else inconclusive "C's jar $(basename "${NODE_JAR[C]}") has no storageRentCollection setting: it cannot collect"; return 0; fi
+fi
 CONF_OVR[C]="ergo.node.extraIndex=true
 ergo.node.storageRentCollection=$COLLECT"
 launch C; wait_up C || { inconclusive "C never answered"; return 0; }
-note "C launched: extraIndex=true storageRentCollection=$COLLECT; versions C=$(rest C /info | jq -r .appVersion) F1=$(rest F1 /info | jq -r .appVersion) F2=$(rest F2 /info | jq -r .appVersion); storage period $P"
+note "C launched: extraIndex=true storageRentCollection=$COLLECT (C's jar can collect: $CAN; expecting $EXPECT); versions C=$(rest C /info | jq -r .appVersion) F1=$(rest F1 /info | jq -r .appVersion) F2=$(rest F2 /info | jq -r .appVersion); storage period $P"
 end=$((SECONDS+120)); while [ $SECONDS -lt $end ]; do case "$(same_chain C F1)$(same_chain C F2)" in SAME@*SAME@*) break;; esac; sleep 2; done
 note "floor: C-F1 $(same_chain C F1 | cut -c1-14), C-F2 $(same_chain C F2 | cut -c1-14)"
 wait_balance C 40000000000 300 >/dev/null || { inconclusive "C unfunded"; return 0; }
@@ -130,9 +139,9 @@ fi
 if [ -n "${DIFFRUN_ROLE:-}" ]; then
   echo "RESULT_JSON $(jq -cn --arg C "$(rest C /info | jq -r '.appVersion // "null"')" --arg F1 "$(rest F1 /info | jq -r '.appVersion // "null"')" \
     --arg F2 "$(rest F2 /info | jq -r '.appVersion // "null"')" --argjson s "$sum" --argjson h "$held" --argjson nb "$nb" \
-    --argjson ag "$agree" --argjson ll "$bad" --argjson cd "$cachedup" --argjson sb "$sizebad" --argjson pass "$([ "$rig_verdict" = PASS ] && echo true || echo false)" \
+    --argjson ag "$agree" --argjson ll "$bad" --argjson cd "$cachedup" --argjson sb "$sizebad" --argjson pass "$([ "$rig_verdict" = PASS ] && echo true || echo false)" --argjson can "$CAN" \
     '{schema_version: 1, scenario: "storage-rent-2598", versions: {C: $C, F1: $F1, F2: $F2},
       metrics: {claims: $s.claim_inputs, claim_txs: $s.claim_txs, rule_failures: ($s.failed + $s.unknown + $s.younger_than_period),
-                holders: $nb, holders_claimed: $h, agreement: $ag, log_lines: $ll, cache_duplicates: $cd, size_mismatches: $sb, pass: $pass}}')"
+                holders: $nb, holders_claimed: $h, agreement: $ag, log_lines: $ll, cache_duplicates: $cd, size_mismatches: $sb, c_can_collect: $can, pass: $pass}}')"
 fi
 [ "$sf" = 0 ] || note "settle_follow returned $sf"

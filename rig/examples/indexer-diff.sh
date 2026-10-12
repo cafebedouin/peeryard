@@ -13,8 +13,11 @@
 #             blocks) against Y's snapshot here, with the comparator's --positive-control (tips may differ); it must
 #             come out DIFF, or the run is INCONCLUSIVE (the comparator did not show it can see a difference).
 #   fork      Y is cut from M and mines its own branch, with one payment Y -> X confirmed on it; M mines a longer branch;
-#             the link is healed and M relaunched (it re-dials Y) and mines on until Y has M's block at the fork height;
+#             the link is healed and M mines on until Y has M's block at the fork height;
 #             settle and compare. Y's rollback is checked by its header id at the first forked height before and after.
+#             If Y has not switched to M's heavier branch INDEXER_DIFF_SWITCH_S seconds (default 60) after the heal (a
+#             release can stay on a lighter fork it already holds), Y is relaunched once (graceful, data kept) and
+#             the wait goes on; the relaunch is recorded (`fork_follower_restarted`, and in the fork line).
 #             Skipped with INDEXER_DIFF_FORK=0.
 # Verdict lines (also in $RIG_LOG_DIR/indexer-verdicts.log): `[indexer-diff] INDEXER-DIFF <point> SAME@..|DIFF@..|
 # INCONCLUSIVE ..`. PASS = settled SAME, positive control DIFF, no DIFF at any point; FAIL = a DIFF at any point;
@@ -112,7 +115,7 @@ posctl=false; [[ "$(head -1 <<< "$POS" | cut -d' ' -f3)" == DIFF@* ]] && posctl=
 [[ $posctl == true ]] || { inconclusive "positive control (X before the restart-point payment vs Y after) did not come out DIFF" POSCTL; return 0; }
 
 # ---- fork (Y on a losing branch)
-rolled=false; PT[fork]=SKIPPED
+rolled=false; yrestart=false; PT[fork]=SKIPPED
 if [[ "${INDEXER_DIFF_FORK:-1}" == 1 ]]; then
   h0=$(full_height M); partition M Y
   start_mining Y 3s >/dev/null; wait_h Y $((h0 + 1)) 90 >/dev/null
@@ -126,11 +129,16 @@ if [[ "${INDEXER_DIFF_FORK:-1}" == 1 ]]; then
     PT[fork]=INCONCLUSIVE; tee_v "INDEXER-DIFF fork INCONCLUSIVE no fork staged ($sc)"
   else
     heal M Y; start_mining M 3s >/dev/null
+    sw=${INDEXER_DIFF_SWITCH_S:-60}; t0=$SECONDS
     end=$((SECONDS + 180)); while [[ $SECONDS -lt $end ]]; do
-      [[ "$(header_at Y $((h0 + 1)))" == "$mid" && "$(full_height Y)" -ge "$hm" ]] && break; sleep 3; done
+      [[ "$(header_at Y $((h0 + 1)))" == "$mid" && "$(full_height Y)" -ge "$hm" ]] && break
+      if [[ $yrestart == false && $((SECONDS - t0)) -ge $sw && "$(header_at Y $((h0 + 1)))" != "$mid" ]]; then
+        say "fork: Y still on its own branch ${sw}s after the heal (at $((h0 + 1)): $(header_at Y $((h0 + 1)) | cut -c1-16)); relaunching Y once"
+        relaunch Y; yrestart=true; end=$((SECONDS + 180)); fi
+      sleep 3; done
     stop_mining M >/dev/null
     yid1=$(header_at Y $((h0 + 1))); [[ "$yid1" == "$mid" && "$yid1" != "$yid0" ]] && rolled=true
-    say "fork: after the heal Y has ${yid1:0:16} at $((h0 + 1)) (rolled back to M's branch: $rolled)"
+    say "fork: after the heal Y has ${yid1:0:16} at $((h0 + 1)) (rolled back to M's branch: $rolled; Y relaunched after the heal: $yrestart)"
     compare_point fork
   fi
 fi
@@ -139,12 +147,12 @@ fi
 ns=0; nd=0; ni=0
 for p in settled restart fork; do case "${PT[$p]:-}" in SAME) ns=$((ns + 1)) ;; DIFF) nd=$((nd + 1)) ;; INCONCLUSIVE) ni=$((ni + 1)) ;; esac; done
 unr=0; for n in M X Y; do [ "$(rest $n /info | jq -r '.appVersion // "null"')" = null ] && unr=$((unr + 1)); done
-say "points: settled=${PT[settled]} restart=${PT[restart]:-} fork=${PT[fork]} (Y rolled back: $rolled); positive control DIFF: $posctl"
+say "points: settled=${PT[settled]} restart=${PT[restart]:-} fork=${PT[fork]} (Y rolled back: $rolled; Y relaunched after the heal: $yrestart); positive control DIFF: $posctl"
 if [[ $nd -gt 0 ]]; then rig_verdict=FAIL; elif [[ "${PT[settled]}" == SAME ]]; then rig_verdict=PASS; else rig_verdict=INCONCLUSIVE; fi
 b(){ [[ "${PT[$1]:-}" == SAME ]] && echo true || echo false; }
 echo "RESULT_JSON $(jq -cn --arg M "$VM" --arg X "$VX" --arg Y "$VY" --argjson s "$(b settled)" --argjson r "$(b restart)" --argjson f "$(b fork)" \
-  --argjson pc "$posctl" --argjson rb "$rolled" --argjson ns $ns --argjson nd $nd --argjson ni $ni --argjson u $unr --arg jv "$(${PEERYARD_JAVA:-java} -version 2>&1 | head -1)" \
+  --argjson pc "$posctl" --argjson rb "$rolled" --argjson yr "$yrestart" --argjson ns $ns --argjson nd $nd --argjson ni $ni --argjson u $unr --arg jv "$(${PEERYARD_JAVA:-java} -version 2>&1 | head -1)" \
   '{schema_version: 1, scenario: "indexer-diff", runtime: {java: $jv}, versions: {M: $M, X: $X, Y: $Y},
-    metrics: {agree: ($nd == 0), settled_same: $s, restart_same: $r, fork_same: $f, fork_rolled_back: $rb, posctl_diff: $pc,
+    metrics: {agree: ($nd == 0), settled_same: $s, restart_same: $r, fork_same: $f, fork_rolled_back: $rb, fork_follower_restarted: $yr, posctl_diff: $pc,
               points_same: $ns, points_diff: $nd, points_inconclusive: $ni, unresponsive_after: $u}}')"
 echo "[indexer-diff] === INDEXER-DIFF: $rig_verdict ==="

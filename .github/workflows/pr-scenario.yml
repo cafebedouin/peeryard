@@ -1,17 +1,30 @@
 # One diffrun scenario, before and after an ergoplatform/ergo pull request, on GitHub-hosted runners (a verdict rests on
 # a runner class anyone can re-run). The build job builds BOTH jars here with diffrun/build.sh from one base commit: the
 # base alone, and the base plus the PR's production diff (<PR base branch>...<head>, restricted to the production
-# dirs), so the pair differs only in the patch. The base is the Matrix commit peeryard carries
-# (patches/ergo-matrix/patches.json, line=matrix), that commit plus the carried Matrix stack (line=matrix-stack: the
-# base jar is patches/stack.sh --build ergo-matrix, and the candidate stacks the PR's diff last through stack.sh's
-# overlay, so the pair still differs only in the PR's diff), a release tag, or a commit (40 hex: e.g. the PR's own
-# merge base, so the pair is that commit and that commit plus the PR's diff from it). When the build base is one of
-# the PR's merge bases (`git merge-base --all`; a PR that merged its base branch in has several), the diff is taken from
-# the build base itself; otherwise from git's merge base, which must be an ancestor of the build base. scenario_env
-# overrides keys of the manifest's env (only keys it declares), recorded in the run's provenance. Each of `shards` runners then runs
-# `pairs` pairs (base run, candidate run, alternating, run.sh's order), and diffrun/pool.sh judges the pooled runs once
-# (role_summary/decide over shards x pairs; a lost shard counts as INCONCLUSIVE runs). With aa=true the base jar runs
-# in both roles (an A/A control, labelled so; no PR is fetched). Runs by hand.
+# dirs), so the pair differs only in the patch. Each of `shards` runners then runs `pairs` pairs (base run, candidate
+# run, alternating, run.sh's order), and diffrun/pool.sh judges the pooled runs once (role_summary/decide over
+# shards x pairs; a lost shard counts as INCONCLUSIVE runs). With aa=true the base jar runs in both roles (an A/A
+# control, labelled so; no PR is fetched). Runs by hand.
+#
+# line (the build base):
+#   matrix         the weak-blocks commit peeryard carries (patches/ergo-matrix/patches.json)
+#   matrix-stack   that commit plus the carried Matrix stack: the base jar is patches/stack.sh --build ergo-matrix, and
+#                  the candidate stacks the PR's diff last through stack.sh's overlay, so the pair still differs only in
+#                  the PR's diff
+#   vN.N.N         a release tag
+#   <40 hex>       a commit, e.g. the PR's own merge base, so the pair is that commit and that commit plus the PR's diff
+# The PR's diff: when the line's commit is one of the PR's merge bases (`git merge-base --all`; a PR that merged its
+# base branch in has several), the diff is taken from that commit itself; otherwise from git's merge base, which must
+# be an ancestor of the line's commit (a PR branched from a newer commit fails the build job).
+#
+# test_patches (a release tag or a commit line only): space-separated files under patches/test/ (test-only changes
+# such as a short storage period, never proposed upstream) applied to BOTH arms as one local commit on the line's
+# commit, which becomes the build base; the merge-base rules above still run against the line's commit, and the
+# summary names each patch with a sha256 prefix.
+# scenario_env: KEY=VALUE overrides of the manifest's env, ";"-separated (diffrun/scenario-env.sh: only keys the
+# manifest declares, values [A-Za-z0-9._ -]), written into the checked-out manifest so verdict.json's provenance
+# records the effective env.
+# run-name markers: "A/A" or "#<pr>", the line, shards x pairs, " v4", " +test patches", " [<scenario_env>]".
 name: peeryard PR scenario
 on:
   workflow_dispatch:
@@ -25,7 +38,7 @@ on:
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
       scenario_env: { description: 'optional: KEY=VALUE overrides of the manifest env, separated by ";" (keys the manifest declares; values [A-Za-z0-9._ -]), e.g. WO_AT=pending', default: '' }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
-      test_patches: { description: 'optional, release lines only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the tag plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
+      test_patches: { description: 'optional, a release tag or commit line only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the line''s commit plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
 run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
 permissions:
   contents: read
@@ -63,7 +76,7 @@ jobs:
           { [[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] && [ "$SHARDS" -le 20 ]; } || fail "shards: 1-20"
           [[ "$PAIRS" =~ ^[1-9][0-9]?$ ]] || fail "pairs: 1-99"
           for t in $TEST_PATCHES; do [[ "$t" =~ ^patches/test/[A-Za-z0-9._-]+\.patch$ && -f "$t" ]] || fail "test patch $t: not a file under patches/test/"; done
-          [ -z "$TEST_PATCHES" ] || [[ "$LINE" =~ ^v[0-9.]+$ ]] || fail "test_patches: release lines only"
+          [ -z "$TEST_PATCHES" ] || [[ "$LINE" =~ ^v[0-9.]+$ || "$LINE" =~ ^[0-9a-f]{40}$ ]] || fail "test_patches: a release tag or a commit line only (the matrix lines build through patches/stack.sh)"
           if [ "$AA" = true ]; then echo "A/A control: pr and head are ignored"
           else
             [[ "$PR" =~ ^[0-9]+$ ]] || fail "pr: a number"
@@ -98,16 +111,17 @@ jobs:
             BASE="$LINE"; git -C "$C" fetch -q origin "refs/tags/$LINE:refs/tags/$LINE"
           fi
           BSHA="$(git -C "$C" rev-parse --verify "$BASE^{commit}")" || fail "build base $BASE not found"
+          LSHA="$BSHA"   # the line's own commit (tag, commit or Matrix base), before any test patch
           TPLINE=""
           if [ -n "$TEST_PATCHES" ]; then
-            # test-only patches on BOTH arms: one local commit on the tag becomes the build base, so the pair still
-            # differs only in the PR's diff; the tag commit stays the merge-base ancestor the check below needs
+            # test-only patches on BOTH arms: one local commit on the line's commit becomes the build base, so the pair
+            # still differs only in the PR's diff; the merge-base checks below run against the line's commit (LSHA)
             git -C "$C" -c advice.detachedHead=false checkout -q "$BSHA"
             for t in $TEST_PATCHES; do git -C "$C" apply --index "$GITHUB_WORKSPACE/$t" || fail "test patch $t does not apply on $BASE"; TPLINE="$TPLINE $t($(sha256sum "$t" | cut -c1-16))"; done
             git -C "$C" -c user.name=pr-scenario -c user.email=pr-scenario@localhost commit -q -m "TEST ONLY: $TEST_PATCHES"
             BSHA="$(git -C "$C" rev-parse HEAD)"; BASE="$BSHA"
           fi
-          { echo "BASE=$BASE"; echo "BSHA=$BSHA"; } >> "$GITHUB_ENV"
+          { echo "BASE=$BASE"; echo "BSHA=$BSHA"; echo "LSHA=$LSHA"; } >> "$GITHUB_ENV"
           { echo '```'; echo "build base: $LINE${TPLINE:+ + test patches:$TPLINE} ($BSHA)"; [ -z "$SCENARIO_ENV" ] || echo "scenario env overrides: $SCENARIO_ENV"; } > summary.txt
           if [ "$AA" != true ]; then
             B="$(gh api "repos/ergoplatform/ergo/pulls/$PR" --jq .base.ref)"
@@ -117,15 +131,15 @@ jobs:
             [ "$head" = "$HEAD_SHA" ] || fail "#$PR head is $head, expected $HEAD_SHA: re-dispatch with head=$head after reading the change"
             TIP="$(git -C "$C" rev-parse "origin/$B")"; MB="$(git -C "$C" merge-base "origin/$B" "pr-$PR")"
             ALL_MB="$(git -C "$C" merge-base --all "origin/$B" "pr-$PR" | tr '\n' ' ')"; RANGE="origin/$B...pr-$PR"
-            # the build base is one of several merge bases (the PR merged its base branch in): the diff is taken from
-            # the build base itself, so the candidate is the build base plus exactly what the PR adds to it
-            if [[ " $ALL_MB" == *" $BSHA "* ]]; then MB="$BSHA"; RANGE="$BSHA..pr-$PR"; fi
+            # the line's commit is one of several merge bases (the PR merged its base branch in): the diff is taken from
+            # that commit itself, so the candidate is the build base plus exactly what the PR adds to it
+            if [[ " $ALL_MB" == *" $LSHA "* ]]; then MB="$LSHA"; RANGE="$LSHA..pr-$PR"; fi
             { echo "PR #$PR base branch: $B (tip $TIP)"; echo "PR head: $HEAD_SHA"; echo "merge-base: $MB"
               [ "$(wc -w <<< "$ALL_MB")" -le 1 ] || echo "merge bases (--all): $ALL_MB; diff range $RANGE"
-              echo "merge-base == build base: $([ "$MB" = "$BSHA" ] && echo true || echo false)"; } >> summary.txt
-            # a PR branched from a newer commit than the build base can still apply cleanly, and "build base + PR diff"
-            # would then be a false label
-            git -C "$C" merge-base --is-ancestor "$MB" "$BSHA" || { cat summary.txt >> "$GITHUB_STEP_SUMMARY"; fail "merge-base $MB is not an ancestor of the build base $BSHA"; }
+              echo "merge-base == line commit${TPLINE:+ (before the test patches)}: $([ "$MB" = "$LSHA" ] && echo true || echo false)"; } >> summary.txt
+            # a PR branched from a newer commit than the line's can still apply cleanly, and "build base + PR diff"
+            # would then be a false label (the test-patch commit's parent is LSHA, so this is the same test on BSHA)
+            git -C "$C" merge-base --is-ancestor "$MB" "$LSHA" || { cat summary.txt >> "$GITHUB_STEP_SUMMARY"; fail "merge-base $MB is not an ancestor of the line's commit $LSHA"; }
             echo "RANGE=$RANGE" >> "$GITHUB_ENV"
           fi
       - name: Cache the sigma-state snapshot the weak-blocks line depends on

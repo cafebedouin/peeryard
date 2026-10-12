@@ -161,8 +161,9 @@ burst(){ local k=$1 lo=$2 hi=$3 frac jit delay span target trig="" t0 tk off sl 
   [ "$sl" -lt 0 ] && sl=$lo; mh=$(full_height M)
   # inside the burst: S's last applied block past where the burst started and at least two blocks below M's height at
   # the kill (a follower of a live miner is often one block behind; that is not a burst). With CC_KILL_ON=indexed: the
-  # indexer past where it stood before the burst and behind S's own last applied block.
-  if [ "$KILL_ON" = indexed ]; then inw=$([ "$si" -gt "$KILL_IDX" ] && [ "$si" -lt "$sl" ] && echo true || echo false)
+  # same for the indexer's last buffered block, against where the indexer stood before the burst (the indexer reads full
+  # blocks from history, which after a restart can be ahead of the state, so it is not compared with S's applied block)
+  if [ "$KILL_ON" = indexed ]; then inw=$([ "$si" -gt "$KILL_IDX" ] && [ $(( si + 2 )) -le "${mh:-0}" ] && echo true || echo false)
   else inw=$([ "$sl" -gt "$lo" ] && [ $(( sl + 2 )) -le "${mh:-0}" ] && echo true || echo false); fi
   done_k=$((done_k + 1)); [ "$inw" = true ] && in_k=$((in_k + 1))
   cc "kill $k/$K: trigger=$trig at t=$tk (+$(( tk - t0 ))ms from the burst's start): S last applied=$sl best header=$([ "$sh" -ge 0 ] && echo "$sh" || echo "none logged in the burst")$([ "$IDX" = 1 ] && echo " indexed=$si") M=$mh in_window=$inw"

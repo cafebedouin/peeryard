@@ -59,14 +59,26 @@ the choices, not the moments: the block S is writing when the signal arrives dep
 **Inside the window**: after the kill, the hook reads from S's log what S had written since the burst started: its last
 applied block, best header and indexer height. A kill counts as inside the burst when that last applied block is above
 the burst's start and at least two blocks below M's height at the kill (two blocks of ordinary follower lag behind a live
-miner do not count as a burst); with `CC_KILL_ON=indexed`, when the indexer's last buffered height is above where it
-stood before the burst and below S's last applied block. Fewer than `CC_MIN_IN_WINDOW` (ceil(K/2)) kills inside makes the run INCONCLUSIVE.
+miner do not count as a burst); with `CC_KILL_ON=indexed`, the same for the indexer's last buffered height, against where
+the indexer stood before the burst (not against S's applied block: the indexer reads full blocks from history, which after
+a kill can be ahead of the state; seen: indexer at 128 while the state's last applied block was 76, 2026-10-11). Fewer than `CC_MIN_IN_WINDOW` (ceil(K/2)) kills inside makes the run INCONCLUSIVE.
 
 **Per kill** the hook prints and keeps (`<log dir>/crash-consistency/kills.jsonl`): the trigger (`height@<h logged>`,
 `time` or `timeout`), the target or delay, the jitter, the epoch-ms moment and the ms from the burst's start, S's last
 applied block, best header and indexer height as its log shows them, M's height, and `in_window`. **Per restart**:
-whether S came back (answered REST within `CC_UP_S`, 180 s), the ms to REST, and the height it restored from disk (the
-first block it applies after the restart, minus one) against its last applied block before the kill.
+whether S came back (answered REST within `CC_UP_S`, 180 s), the ms to REST, the height it resumed from (the first block
+it applies after the restart, minus one) against its last applied block before the kill, and `startup`: whether its log
+says the node found state and history out of step at startup (`State and history are inconsistent`) and what it did
+(`inconsistent-rolled-back`, `inconsistent-recovered-from-headers` for a digest node, `none`). That last field is what
+shows a kill really landed between the node's history and state writes: on the v6.0.7 release (2026-10-11, development
+host) most restarts of a full follower reported it (3 or 4 of the 4 restarts in each run), and the digest run's restarts
+recovered from headers. A digest node that recovers from headers resumes above the last block it logged (seen: killed at
+125 and 139, resumed at 138 and 192, its best header), since it takes the state roots from the headers it already holds.
+
+**Where a kill lands.** The trigger is a log line the node writes after a block's state is applied, and the kill follows
+within the jitter (0-50 ms), during which S applies a few more blocks (seen: 0-7). So the kills fall at arbitrary points of
+the next few blocks' writes, not uniformly over everything the node does: a kill inside a single large write (a big
+block, a snapshot, an indexer flush) needs `CC_KILL=time` or another `CC_TRIGGER_RE`.
 
 ## S's role and the indexer
 
@@ -102,14 +114,16 @@ root), plus R's and M's header ids at S's full height. All samples, the kills, t
 Every ERROR line in S's log is also counted and the five most frequent are printed (reported, not judged). The rig verdict
 is PASS on SAME, FAIL on DIFF, LOGERR, STUCK or REFUSED, INCONCLUSIVE otherwise. The `RESULT_JSON` metrics are `same`,
 `diff`, `stuck`, `refused`, `logerr`, `kills`, `kills_in_window`, `max_rest_ms`, `max_rollback` (the largest drop from
-the last block applied before a kill to the height restored after it) and `seed`; an INCONCLUSIVE outcome prints an
+the last block applied before a kill to the height resumed from after it), `restarts_inconsistent` (restarts whose log
+shows the startup recovery) and `seed`; an INCONCLUSIVE outcome prints an
 `INCONCLUSIVE:` line instead, so diffrun counts the run as setup, not evidence.
 
 ## Controls
 
-`CC_CONTROL` selects one; each prints `[cc] control <name>: expected <OUTCOME>, got <OUTCOME>: fired | DID NOT FIRE`.
+`CC_CONTROL` selects one; each prints `[cc] control <name>: expected <OUTCOME>, got <OUTCOME>: as expected | NOT AS EXPECTED`.
 
-- `aa`: the same bursts (burst 1 as above; each later burst is a cut and heal of the same backlog instead of a restart)
+- `aa`: the same bursts (burst 1 as above; each later burst is a cut, 5 s for S to apply what it holds, the same
+  backlog and a heal, instead of a restart)
   and the same kill points, but nothing is killed. It must be SAME: a non-SAME here is the staging or the comparison, not
   a crash.
 - `no-restart`: S is left down after the last kill (the settle runs on R). Must be REFUSED.

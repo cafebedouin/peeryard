@@ -48,3 +48,4 @@ flap	FLAP: PASS	900	-	-
 reorder-dup-phases	REORDER-DUP-PHASES: PASS	900	-	-
 mixed-roles-phases	MIXED-ROLES-PHASES: PASS	900	-	-
 wallet-oracle-restart	WALLET-ORACLE-RESTART \(restart\): PASS	1200	-	-
+wallet-workload	WALLET-WORKLOAD: PASS	900	WW_PRESET=aa	-

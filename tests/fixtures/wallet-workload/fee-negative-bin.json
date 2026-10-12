@@ -1,0 +1,51 @@
+{
+ "step": 6,
+ "kind": "fee",
+ "arg": "6",
+ "getFee": [
+  {
+   "wait": 1,
+   "size": 200,
+   "fee": 3000000
+  },
+  {
+   "wait": 5,
+   "size": 200,
+   "fee": 1000000
+  },
+  {
+   "wait": 2,
+   "size": 200,
+   "fee": 2000000
+  }
+ ],
+ "waitTime": [
+  {
+   "fee": 1000000,
+   "size": 200,
+   "ms": 9000
+  },
+  {
+   "fee": 10000000,
+   "size": 200,
+   "ms": 0
+  },
+  {
+   "fee": 2000000,
+   "size": 200,
+   "ms": 4000
+  }
+ ],
+ "hist": [
+  {
+   "nTxns": 2,
+   "totalFee": 3000000
+  },
+  {
+   "nTxns": -1,
+   "totalFee": 0
+  }
+ ],
+ "pool_size": 6,
+ "setup": null
+}

@@ -1,0 +1,45 @@
+{
+ "step": 4,
+ "kind": "burn",
+ "arg": "50",
+ "token": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+ "amount": 50,
+ "fee": 1000000,
+ "tx": {
+  "id": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
+ },
+ "txs": {
+  "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3": {
+   "inputs": [
+    "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5"
+   ]
+  }
+ },
+ "scan_boxes": [],
+ "tx_in_tokens": {
+  "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 900,
+  "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": 7
+ },
+ "tx_out_tokens": {
+  "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 850,
+  "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": 7
+ },
+ "tx_in_erg": 4998000000,
+ "tx_out_erg": 4997000000,
+ "confirmed": 46,
+ "wallet_before": {
+  "erg": 60000000000,
+  "tokens": {
+   "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 900,
+   "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": 7
+  }
+ },
+ "wallet_after": {
+  "erg": 59999000000,
+  "tokens": {
+   "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 850,
+   "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2": 7
+  }
+ },
+ "setup": null
+}

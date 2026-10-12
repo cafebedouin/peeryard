@@ -1,0 +1,33 @@
+{
+ "step": 3,
+ "kind": "transfer",
+ "arg": "100",
+ "token": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+ "amount": 100,
+ "fee": 1000000,
+ "tx": {
+  "id": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+ },
+ "txs": {
+  "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2": {
+   "inputs": [
+    "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
+   ]
+  }
+ },
+ "scan_boxes": [],
+ "tx_in_tokens": {
+  "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 1000
+ },
+ "tx_out_tokens": {
+  "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1": 990
+ },
+ "tx_in_erg": 5000000000,
+ "tx_out_erg": 5000000000,
+ "confirmed": 44,
+ "sender_before": 1000,
+ "sender_after": 900,
+ "receiver_before": 0,
+ "receiver_after": 100,
+ "setup": null
+}

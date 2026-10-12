@@ -1,0 +1,42 @@
+{
+  "name": "wallet-workload",
+  "description": "Scripted wallet workload with an invariant check after every step (rig/WALLET-WORKLOAD.md): a miner on the base jar, the wallet under test on this role's jar and the same wallet restored on a second node running the other role's jar. Steps (preset full): a scan the wallet must not spend from, concurrent and sequential sends, token issue / transfer / burn, the fee-estimation endpoints, one signed transaction resubmitted to the second node (three lags), and three conflicting spends of one box built by the wallet on both nodes. PASS = every step's invariants hold. Applies to ergoplatform/ergo #2407, #2518, #2510, #2453/#2451, #2450, #2526.",
+  "script": "wallet-workload.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {
+    "WW_PRESET": "full",
+    "WW_SCENARIO": "wallet-workload"
+  },
+  "metrics": {
+    "pass": "boolean",
+    "control_tripped": "boolean",
+    "steps": "number",
+    "steps_pass": "number",
+    "steps_fail": "number",
+    "conflict_runs": "number",
+    "conflict_two_in_flight": "number",
+    "resubmit_runs": "number",
+    "resubmit_two_accepted": "number",
+    "unresponsive_after": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 2400,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "pass",
+        "op": "==",
+        "value": true
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "pass",
+        "op": "==",
+        "value": true
+      }
+    }
+  }
+}

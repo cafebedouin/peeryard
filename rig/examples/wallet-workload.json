@@ -1,0 +1,16 @@
+{
+  "chain": "current",
+  "workload": { "steps": "" },
+  "nodes": [
+    { "name": "M", "mining": true, "mine_poll": "3s", "knownPeers": [] },
+    { "name": "A", "mining": false, "knownPeers": ["M"],
+      "conf": { "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"" } },
+    { "name": "B", "mining": false, "knownPeers": ["M", "A"],
+      "conf": { "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"" } }
+  ],
+  "links": [
+    { "a": "M", "b": "A", "delay_ms": 0 },
+    { "a": "M", "b": "B", "delay_ms": 0 },
+    { "a": "A", "b": "B", "delay_ms": 0 }
+  ]
+}

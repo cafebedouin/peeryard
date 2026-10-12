@@ -196,13 +196,13 @@ wo_push(){ local m="$1" id="$2" n tx r; shift 2
   done
   echo "[wo] ${id:0:8} is in no pool of $* (not re-submitted)"; }
 
-# wo_stop_miner <miner> <node>...: stop the miner (a relaunch with mining off) at a moment when every node holds its
-# best full block, waiting up to WO_STOP_WAIT (default 20) s for one; prints how far behind each node was when it
-# stopped. Blocks a follower is still downloading when the miner relaunches can stall it on some jars (seen on 6.0.3 and
-# 6.0.5 builds: headers at the miner's tip, full height stuck for 15 minutes); stopping on a shared tip avoids that, and
-# where followers lag the miner steadily (those builds), the examples' links between followers give a stalled one a
-# second source. The wait is short because the miner keeps mining meanwhile (a fork's depth grows with it).
-wo_stop_miner(){ local m="$1" end h n ok lag; shift; end=$((SECONDS + ${WO_STOP_WAIT:-20}))
+# wo_stop_miner <miner> <node>...: stop the miner (a relaunch with mining off), first waiting up to WO_STOP_WAIT (default 0)
+# s for a moment when every node holds its best full block, and print how far behind each node was when it stopped.
+# Blocks a follower is still downloading when the miner relaunches can stall it on some jars (seen on 6.0.3 and 6.0.5
+# builds: headers at the miner's tip, full height stuck for 15 minutes). The wait was 20 s by default for three hosted
+# rounds and rarely found such a moment (followers 5-20 blocks behind at almost every stop) while the miner mined on,
+# deepening the fork example's branches and leaving its subject further behind, so it is off unless asked for.
+wo_stop_miner(){ local m="$1" end h n ok lag; shift; end=$((SECONDS + ${WO_STOP_WAIT:-0}))
   while :; do h=$(applied_header "$m"); ok=1
     for n in "$@"; do [[ "$(applied_header "$n")" == "$h" ]] || { ok=0; break; }; done
     [[ $ok == 1 || $SECONDS -ge $end ]] && break; sleep 0.5; done

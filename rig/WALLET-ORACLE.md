@@ -45,12 +45,15 @@ are there because the examples stop and start the miner by relaunching it: on 6.
 downloading blocks at that moment stalled with its headers at the miner's tip and its full height stuck (15 minutes in
 one local run, `HEADERS_AHEAD_FULL_STUCK`); with a second source it caught up in the restart example (twice locally on a
 6.0.3 build), though not always in the fork example on a 6.0.5 build (one local run: `R` stuck five blocks below its
-three peers). At the end of the history staging and after the confirming blocks the miner is stopped at a moment when
-every follower holds its tip, if one comes within 20 s (`wo_stop_miner`, `WO_STOP_WAIT`). The two fork miners stop at
-once: each second they keep mining deepens the fork. With that 20 s wait on them too, the branches from the shared tip
-were 14-17 blocks (`M2`) and 30-34 (`M`), and in all four fork runs of hosted runs 38193970478 and 38194909713 (6.0.7)
-`M2` and `S` stayed on their branch after the heal (`LIGHTER_FORK_NOT_SWITCHING`); in the six fork runs before them
-(branches of 3-9 and 4-12 blocks) they switched.
+three peers). `wo_stop_miner` can wait up to `WO_STOP_WAIT` seconds (default 0) for a
+moment when every follower holds the miner's tip before stopping it, and prints how far behind each follower was. A 20 s
+default was tried for three hosted rounds: it rarely found such a moment (followers 5-20 blocks behind at almost every
+stop) and the miner mined on meanwhile. With it on the fork miners too, the branches from the shared tip were 14-17
+blocks (`M2`) and 30-34 (`M`), and in all four fork runs of hosted runs 38193970478 and 38194909713 (6.0.7) `M2` and `S`
+stayed on their branch after the heal (`LIGHTER_FORK_NOT_SWITCHING`); in the six fork runs before them (branches of 3-9
+and 4-12 blocks) they switched. `S`, two hops from `M` behind `M2`, is the fork example's weak point: in hosted runs
+38196671478 and 38198199388 it stopped syncing from `M2` (29 and 25 blocks behind it, no movement for 90-120 s) while
+every other node was on `M`'s tip.
 
 ## The wallet view (REST, 6.0.6; read from the jar's `api/openapi.yaml`)
 

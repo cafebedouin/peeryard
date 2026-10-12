@@ -1,0 +1,42 @@
+{
+  "name": "wallet-workload-plain",
+  "description": "The wallet workload's A/A step list (preset aa): sequential sends, token issue / transfer / burn and the fee endpoints, no concurrency and no conflicting spend; every step's invariants must hold on any honest node.",
+  "script": "wallet-workload.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {
+    "WW_PRESET": "aa",
+    "WW_SCENARIO": "wallet-workload-plain"
+  },
+  "metrics": {
+    "pass": "boolean",
+    "control_tripped": "boolean",
+    "steps": "number",
+    "steps_pass": "number",
+    "steps_fail": "number",
+    "conflict_runs": "number",
+    "conflict_two_in_flight": "number",
+    "resubmit_runs": "number",
+    "resubmit_two_accepted": "number",
+    "unresponsive_after": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1500,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "pass",
+        "op": "==",
+        "value": true
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "pass",
+        "op": "==",
+        "value": true
+      }
+    }
+  }
+}

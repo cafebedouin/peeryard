@@ -11,6 +11,7 @@ can observe its effect. This table is the fit; it is a starting point, not a rul
 | `.../nodeView/history/**` with reorg or rollback logic, `.../nodeView/state/**` | rollback and re-application | `fork-convergence` (a switch is a rollback) | switched, margin, rollbacks in the node log |
 | `.../mining/**`, `.../settings/**` (chain parameters) | block production, difficulty | rig `soak` (rate across the retarget), `mining` | block rate, retarget, quiescence |
 | `.../nodeView/mempool/**`, `.../nodeView/wallet/**`, `.../modifiers/mempool/**` | transaction validation, relay, wallet | `txload` | payments accepted, confirmed, counted in blocks, on each jar |
+| `.../nodeView/wallet/**`, `ergo-wallet/src/main/**`, `.../http/api/{Wallet,Scan,Transactions}ApiRoute*`, `.../nodeView/mempool/**` | wallet box selection, transaction building (issue, burn), scans, fee estimation, mempool conflict handling | `wallet-workload` (`-plain` for the sequential steps only) | per step: inputs never shared by accepted sends, token id = first input, exactly the burned amount gone, no scan-only box spent, fee answers monotone, a resubmitted or conflicting spend confirmed once everywhere and gone from every pool, one state root across both versions |
 | `.../nodeView/state/**Snapshot**`, `.../modifierprocessors/UtxoSetSnapshotProcessor*`, `.../state/DigestState*` | UTXO-set snapshot bootstrap, digest state across restart | `bootstrap-modes` (one pair, no smoke manifest needed; digest and pruned followers), plus the node's own `*SnapshotProcessorSpecification`/`*NetworkSpecification` through the revert check | followers settle on the same state root; the added specs guard the change | no diffrun scenario stages `utxoBootstrap`; the rig example `utxo-bootstrap` does (convert it through `lib/rig-scenario.sh` when the PR's question is the bootstrap itself) |
 | `.../http/api/**` | REST only | none; the scenarios poll `/info` and `/blocks/at`, so an API change can VOID runs (versions) or break polling, which shows as INCONCLUSIVE | — |
 | `src/it/**`, `src/test/**`, docs | tests and docs only | none (nothing to compare on a network) | — |
@@ -19,7 +20,7 @@ can observe its effect. This table is the fit; it is a starting point, not a rul
 A mempool change that alters *which* transactions are kept (conflict cleanup, eviction, re-validation) is answered by
 the revert check on its spec plus a read of the pool path; `txload` only shows the benign payment path still works.
 A conflict needs two valid spends of one box; the honest form (one wallet on two nodes, each paying from the same box)
-is in scope (CONTRIBUTING.md) but not built yet.
+is `wallet-workload`'s `conflict` step (`WW_PRESET=conflict` runs only the resubmit and conflict steps).
 
 If no row fits, say so in the review instead of running the nearest scenario: a verdict on the wrong scenario
 is evidence about nothing.

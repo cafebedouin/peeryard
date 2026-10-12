@@ -8,8 +8,12 @@ that they guard correctly), and that alone does not keep it out.
 - **In scope:** what anyone can already do with standard node and wallet software, used to check that nodes behave:
   delay, loss, partitions, crashes and restarts, mining control, honest votes, different versions side by side,
   payments, conflicting spends from one wallet on two nodes, honest storage-rent collection.
-- **Not here until fixed:** anything that demonstrates a specific weakness. A scenario that reproduces a defect names
-  the public issue or pull request it reproduces; a defect that is not public yet goes where `SECURITY.md` says.
+- **Not here until publicly disclosed:** anything that demonstrates a specific weakness, until it is fixed or disclosed
+  in a public issue or pull request. A scenario that reproduces a defect names the public issue or pull request it
+  reproduces; a defect that is not public yet goes where `SECURITY.md` says.
+- **A public pull request is public.** What an open pull request discloses can be tested and discussed openly here,
+  and the useful thing to bring to it is evidence that steers it toward the broader, more secure fix. Anything you
+  know beyond what it discloses stays private.
 - **Not here:** tooling whose main gain is offensive capability beyond standard software: crafted or malformed
   messages, wire fuzzers, lying or withholding peers, eclipse or peer-slot tooling.
 

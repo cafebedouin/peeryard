@@ -40,12 +40,17 @@ Only `S` spends from K (so no two wallets race for one box); `M` only mines. The
 on the subject's side of the cut (also K, so the subject's wallet holds rewards from the losing fork that it must drop).
 
 Links: in the restart example every node links to `M` and the three followers link to each other; in the fork example
-`R`, `P` and `M2` link to `M`, `S` only to `M2`, and `R` links to `P` (the cut is the `M`-`M2` link). A second link
-`R`-`M2`, cut and healed with the first, was tried once on 6.0.7 (hosted run 38193970478) and left `M2` and `S` on their
-fork after the heal (`M2` at 84, `M` at 229), so it is not used; `S` and `M2` therefore have one source each. The follower links are there because the examples stop and start the miner by relaunching it: on 6.0.3 and
-6.0.5 builds a follower still downloading blocks at that moment stalled with its headers at the miner's tip and its full
-height stuck (15 minutes in one local run, `HEADERS_AHEAD_FULL_STUCK`); with a second source it catches up. The miner is
-also stopped at a moment when every follower holds its tip when one comes within 20 s (`wo_stop_miner`).
+`R`, `P` and `M2` link to `M`, `S` only to `M2`, and `R` links to `P` (the cut is the `M`-`M2` link). The follower links
+are there because the examples stop and start the miner by relaunching it: on 6.0.3 and 6.0.5 builds a follower still
+downloading blocks at that moment stalled with its headers at the miner's tip and its full height stuck (15 minutes in
+one local run, `HEADERS_AHEAD_FULL_STUCK`); with a second source it caught up in the restart example (twice locally on a
+6.0.3 build), though not always in the fork example on a 6.0.5 build (one local run: `R` stuck five blocks below its
+three peers). At the end of the history staging and after the confirming blocks the miner is stopped at a moment when
+every follower holds its tip, if one comes within 20 s (`wo_stop_miner`, `WO_STOP_WAIT`). The two fork miners stop at
+once: each second they keep mining deepens the fork. With that 20 s wait on them too, the branches from the shared tip
+were 14-17 blocks (`M2`) and 30-34 (`M`), and in all four fork runs of hosted runs 38193970478 and 38194909713 (6.0.7)
+`M2` and `S` stayed on their branch after the heal (`LIGHTER_FORK_NOT_SWITCHING`); in the six fork runs before them
+(branches of 3-9 and 4-12 blocks) they switched.
 
 ## The wallet view (REST, 6.0.6; read from the jar's `api/openapi.yaml`)
 

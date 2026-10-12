@@ -42,7 +42,9 @@ sleep 2; fid=$(pay S P 400000000)
 end=$((SECONDS + 120)); while [[ $SECONDS -lt $end ]]; do [[ "$(tx_height S "$fid")" =~ ^[0-9]+$ ]] && break; sleep 2; done
 fh=$(tx_height S "$fid"); [[ "$fh" =~ ^[0-9]+$ ]] || { wo_inc STAGING "S's payment ${fid:0:8} never confirmed on S's side"; return 0; }
 wait_h M2 $((h0 + 3)) 120
-f2=(S); [[ "$FORK" == 0 ]] && f2+=(M R P); wo_stop_miner M2 "${f2[@]}"; wo_redial 60 M2 S
+# the fork miners stop at once (no wo_stop_miner wait): a longer branch on either side makes a deeper fork, and a deep
+# one was not switched at the heal (hosted run 38194909713: M2 and S stayed on their branch, LIGHTER_FORK_NOT_SWITCHING)
+h2=$(full_height M2); stop_mining M2 >/dev/null; settle_height_back M2; wait_h M2 "$h2" 60; wo_redial 60 M2 S
 h2=$(full_height M2); echo "[wo] S's side: payment ${fid:0:8} confirmed at $fh; M2 stopped at $h2"
 # with no cut, M must hold M2's blocks before it mines: else it builds a competing branch from where it stopped and the
 # "no event" control holds a reorg after all (seen once: S rolled back three blocks)
@@ -50,7 +52,7 @@ if [[ "$FORK" == 0 ]]; then wo_redial 60 M M2; wo_same_tip 90 M2 M R P || { wo_i
 start_mining M 1500ms >/dev/null; settle_height_back M; wo_redial 60 M R P
 [[ "$FORK" == 0 ]] && wo_redial 60 M M2
 wait_h M $((h2 + LEAD)) 180
-f1=(R P); [[ "$FORK" == 0 ]] && f1+=(M2 S); wo_stop_miner M "${f1[@]}"; wo_redial 60 M R P
+h1=$(full_height M); stop_mining M >/dev/null; settle_height_back M; wait_h M "$h1" 60; wo_redial 60 M R P
 [[ "$FORK" == 0 ]] && wo_redial 60 M M2
 h1=$(full_height M); echo "[wo] M stopped at $h1"
 wo_same_tip 90 M2 S || { wo_inc STAGING "S is not on M2's tip before the heal"; return 0; }

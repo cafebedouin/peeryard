@@ -88,7 +88,10 @@ Each event happens while the wallet holds mined rewards past the reward delay (t
 few received payments (`P` pays `S` three times), at least one spent box (`S` paid `P` three times), and one payment
 from `S` that is still unconfirmed at the moment of the event (the miner is stopped, the payment is sent, and both
 `S`'s and `R`'s mempools are seen to hold it). After the event the miner mines a few blocks so the pending payment
-confirms, stops, and the oracle settles and compares.
+confirms, stops, and the oracle settles and compares. Restarting the miner to mine empties its pool, and a pool is not
+re-gossiped on a timer, so a payment the miner lacks is handed back to it from a peer's pool (`wo_push`: the same signed
+transaction, `POST /transactions`; one `[wo] re-submitted` line each time), in the history staging after 60 s and for the
+pending payment when the miner starts.
 
 | `WO_EVENT` | example | what happens to `S` | needs netem |
 |---|---|---|---|
@@ -112,6 +115,37 @@ The zero-delay links of `wallet-oracle-restart` install no netem qdisc, so that 
   fork example's positive control (`WO_CONTROL=rescan-from`) applies the same rescan after the heal.
 - **Comparator self-test:** `tests/wallet_oracle.sh` runs `wallet_cmp` on fixture snapshots under
   `tests/fixtures/wallet-oracle/` for SAME, DIFF (each field), and each not-settled reason; no node.
+
+## Before and after a change: the diffrun scenarios
+
+The oracle needs one jar per run: subject and reference run the same code, and the event is the only difference
+between them. To ask what a change does to it, `diffrun/scenarios/wallet-oracle.sh` runs the rig example on each role's
+jar (every node of the network on that jar), one fresh network per event, and folds the oracle's verdict lines into one
+`RESULT_JSON` (`events`, `events_same`, `events_diff`, `same`). Two manifests, parameters in their env:
+
+| manifest | example | env (defaults) | needs netem |
+|---|---|---|---|
+| `wallet-oracle-restart` | `wallet-oracle-restart` | `WO_EVENTS="restart crash"` (also `rescan`, `none`, `rescan-from`), `WO_AT=confirmed` (or `pending`) | no |
+| `wallet-oracle-fork` | `wallet-oracle-fork` | `WO_EVENTS=fork` (also `none`: no cut; `rescan-from`: fork + positive control) | yes |
+
+Each event keeps the oracle's own verdict line in the run's stdout (`[wallet-oracle-scenario] <event>: [wallet-oracle]
+SAME@...` or `DIFF@...`, with its per-field and `explain:` lines); an INCONCLUSIVE event makes the run INCONCLUSIVE and
+stops it. The manifests' predicates are the before/after shape: base `any(same == false)`, candidate `all(same == true)`,
+so SUPPORTS reads "the base shows a wallet difference after the event, the candidate does not", AGAINST "the candidate
+shows one", and NULL with both roles `same` "neither does". On GitHub-hosted runners:
+```
+gh workflow run pr-scenario.yml -R cafebedouin/peeryard --ref <branch> -f scenario=wallet-oracle-restart \
+  -f pr=<N> -f head=<40-hex head> -f line=<release tag or the PR's merge base, 40 hex> \
+  -f scenario_env='WO_AT=pending; WO_EVENTS=restart crash' -f shards=5 -f pairs=1
+```
+`scenario_env` overrides only keys the manifest's env declares (`diffrun/scenario-env.sh`); the effective env is in
+`verdict.json`'s provenance. `aa=true` puts the base jar in both roles (the plumbing check, and the release's own rate).
+`line` may be a commit: a PR that does not apply on a release is built on its own merge base; when the PR merged its
+base branch in and has several merge bases, a `line` that is one of them takes the diff from it.
+
+Applies to (first applications): ergoplatform/ergo#2466 (`wallet-oracle-restart`, `WO_AT=pending`, restart and crash),
+ergoplatform/ergo#2514 (`wallet-oracle-fork`). Other open wallet pull requests the examples reach are listed in
+[WALLET-ORACLE-REPORT.md](WALLET-ORACLE-REPORT.md).
 
 ## Open questions
 

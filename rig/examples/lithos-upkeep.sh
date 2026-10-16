@@ -46,8 +46,10 @@ while [[ -z "$BOX" && $SECONDS -lt $end ]]; do sleep 5; BOX=$(boxes_at_tree | jq
 [[ -n "$BOX" ]] || { echo "[lu] FAIL: the index never listed the due-job box"; return 0 2>/dev/null || exit 0; }
 echo "[lu] box $BOX listed by the index at height $(full_height A)"
 # 4. the client, inside A's namespace so node.url = 127.0.0.1:$PROXY_PORT resolves to the proxy
-cd "$WD"; companion_start client --in A -- env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" \
-  "$LITHOS_STAGE/bin/lithos-client" -Dconfig.file="$LITHOS_CONF" -Dhttp.port=9100 -Dpidfile.path=/dev/null; cd - >/dev/null
+# companion_start runs in this shell (its pid file and run event), so cd there and back instead of a subshell
+# shellcheck disable=SC2103
+cd "$WD" || exit 1; companion_start client --in A -- env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" \
+  "$LITHOS_STAGE/bin/lithos-client" -Dconfig.file="$LITHOS_CONF" -Dhttp.port=9100 -Dpidfile.path=/dev/null; cd - >/dev/null || exit 1
 CLIENT_LOG="$(companion_log client)"
 # 5. the client builds the beat and the node's check accepts it
 end=$((SECONDS + 600)); ok=no

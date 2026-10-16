@@ -68,8 +68,10 @@ echo "[lk] token $TOKEN; three payments at the address (tx $ptx), height $(full_
 # 4. the proxy and the client, inside A's namespace
 companion_start proxy --in A -- python3 "$HERE_LIB/appkit-proxy.py" --listen "127.0.0.1:$PROXY_PORT" \
   --upstream "http://127.0.0.1:${REST[A]}" --record-checks "$CHECKS" --mirror; sleep 2
-cd "$WD"; companion_start client --in A -- env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" \
-  "$LITHOS_STAGE/bin/lithos-client" -Dconfig.file="$LITHOS_CONF" -Dhttp.port=9100 -Dpidfile.path=/dev/null; cd - >/dev/null
+# companion_start runs in this shell (its pid file and run event), so cd there and back instead of a subshell
+# shellcheck disable=SC2103
+cd "$WD" || exit 1; companion_start client --in A -- env JAVA_HOME="$JAVA_HOME" PATH="$JAVA_HOME/bin:$PATH" \
+  "$LITHOS_STAGE/bin/lithos-client" -Dconfig.file="$LITHOS_CONF" -Dhttp.port=9100 -Dpidfile.path=/dev/null; cd - >/dev/null || exit 1
 CLIENT_LOG="$(companion_log client)"
 # 5. the merge, accepted by the node's check, then mined
 end=$((SECONDS + 600)); ok=no

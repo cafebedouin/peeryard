@@ -20,7 +20,7 @@ latest_tag(){ gh release list -R "$REPO" --limit 20 --json tagName,isPrerelease 
 default_tag(){ [[ -L "$JARS/default.jar" ]] && basename "$(readlink "$JARS/default.jar")" .jar | sed 's/^ergo-/v/' || echo ""; }
 vernum(){ echo "${1#v}" | awk -F. '{printf "%d%03d%03d\n", $1, $2, $3}'; }
 case "${1:-}" in
-  latest) t="$(latest_tag)"; echo "latest stable: $t"; d="$(default_tag)"; echo "rig default:   ${d:-none} ($JARS/default.jar)"; ls "$JARS" 2>/dev/null | grep -E '^ergo-.*\.jar$' | sed 's/^/cached:        /' ;;
+  latest) t="$(latest_tag)"; echo "latest stable: $t"; d="$(default_tag)"; echo "rig default:   ${d:-none} ($JARS/default.jar)"; for f in "$JARS"/ergo-*.jar; do [[ -e "$f" ]] || continue; echo "cached:        $(basename "$f")"; done ;;
   fetch) t="${2:-$(latest_tag)}"; jar="ergo-${t#v}.jar"
     if [[ ! -f "$JARS/$jar" ]]; then gh release download "$t" -R "$REPO" -p "$jar" -D "$JARS"; fi
     sha="$(sha256sum "$JARS/$jar" | cut -c1-64)"; echo "$sha  $jar  $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$JARS/SHA256SUMS"

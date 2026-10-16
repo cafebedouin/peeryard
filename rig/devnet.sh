@@ -58,6 +58,13 @@ case "$cmd" in
   curl)
     n="${1:?usage: devnet.sh curl <node> <path> [name]}"; p="${2:?path}"; setdir "${3:-}"; alive "$d" || die "devnet is down"
     enter "$d" "$n" curl -s --max-time 10 "http://127.0.0.1:$(rest_of "$d" "$n")$p"; echo ;;
+  post)
+    # post <node> <path> <json> [name]: a POST with the rig's api key, for the wallet and mining endpoints a hook or
+    # an operator drives from the host (e.g. /wallet/transaction/send). The body is one argument; '-' reads stdin.
+    n="${1:?usage: devnet.sh post <node> <path> <json|-> [name]}"; p="${2:?path}"; body="${3:?json body}"; setdir "${4:-}"
+    alive "$d" || die "devnet is down"; [[ "$body" == "-" ]] && body="$(cat)"
+    enter "$d" "$n" curl -s --max-time 30 -X POST -H "api_key: ${PEERYARD_API_KEY:-hello}" -H 'Content-Type: application/json' \
+      --data "$body" "http://127.0.0.1:$(rest_of "$d" "$n")$p"; echo ;;
   logs)
     n="${1:?usage: devnet.sh logs <node> [name]}"; setdir "${2:-}"; tail -n "${LINES_TO_SHOW:-40}" "$d/out/node_$n.log" ;;
   down)

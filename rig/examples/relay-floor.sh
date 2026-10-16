@@ -12,6 +12,7 @@
 # gives the declines (its `Processing mempool transaction: <id>` lines for low-fee ids, repeats included) and its inv
 # processing from R, per interval. Env (defaults): RELAY_FLOOR_INTERVALS (8), RELAY_FLOOR_LOW (60), RELAY_FLOOR_VALID (10),
 # RELAY_FLOOR_QVALID (10), RELAY_FLOOR_LOW_FEE (500000), RELAY_FLOOR_VALID_FEE (1100000), RELAY_FLOOR_WAIT_S (120).
+# Per budget period of S (between its block applications): R's low-fee declines (declines_period_max, per_period).
 # Records in $RIG_LOG_DIR: payments.jsonl, seen.jsonl, mined.jsonl, blocks.jsonl, s_declines.jsonl, s_invs.jsonl, summary.json.
 # The last line is machine-readable: RELAY-FLOOR <key=value ...> verdict=<PASS|FAIL>; under diffrun one RESULT_JSON.
 INTERVALS=${RELAY_FLOOR_INTERVALS:-8}; LOW=${RELAY_FLOOR_LOW:-60}; VALID=${RELAY_FLOOR_VALID:-10}; QVALID=${RELAY_FLOOR_QVALID:-10}
@@ -161,10 +162,18 @@ def ms_of(line):
     h, mi, s, ms = map(int, m.groups())
     return int(datetime.datetime.combine(day, datetime.time(h, mi, s, ms * 1000)).timestamp() * 1000)
 decl, invs = [], []
+# S's per-peer budgets are reset when its synchronizer gets the block-applied event, which UtxoState publishes right
+# after logging "... applied to UtxoState at height N", in the view holder actor, which also logs each
+# "Processing mempool transaction:" and publishes its result, one message at a time; so splitting S's log at those
+# lines, in file order,
+# gives R's declines per budget period of S (period 0 is before the first block applied in the log)
+period, applied = 0, re.compile(r"applied to UtxoState at height \d+")
 for line in open(slog, errors="replace"):
-    if "Processing mempool transaction:" in line:
+    if applied.search(line):
+        period += 1
+    elif "Processing mempool transaction:" in line:
         m = re.search(r"Processing mempool transaction: .*?([0-9a-f]{64})", line)
-        if m and m.group(1) in lowids: decl.append({"t_ms": ms_of(line), "id": m.group(1)})
+        if m and m.group(1) in lowids: decl.append({"t_ms": ms_of(line), "id": m.group(1), "period": period})
     elif "tx invs from" in line and raddr != "none" and ("remote=/" + raddr + ":") in line:
         m = re.search(r"Processing (\d+) tx invs from .*?(\d+) of them are unknown, requesting (.*)$", line.strip())
         invs.append({"t_ms": ms_of(line), "n": int(m.group(1)) if m else -1, "unknown": int(m.group(2)) if m else -1,
@@ -193,6 +202,15 @@ out = {"low_sent": len(low), "low_declined_at_s": len(decl), "declines_interval_
        "p_valid_sent": len(pv), "p_valid_mined": sum(1 for p in pv if p["id"] in mined), "q_valid_sent": len(qv), "q_valid_mined": sum(1 for p in qv if p["id"] in mined),
        "r_invs_total": len(invs), "r_invs_intervals_zero": zero_inv, "load_intervals": len(load_keys), "blocks_in_load": len([b for b in blocks if b["t_ms"] >= t0]), "r_sync_lag_s_max": rlag_max,
        "per_interval": {str(k): per.get(k) for k in load_keys}}
+per_period = {}
+for r in decl: per_period[r["period"]] = per_period.get(r["period"], 0) + 1
+seen_ids, repeats = set(), 0
+for r in decl:
+    if r["id"] in seen_ids: repeats += 1
+    seen_ids.add(r["id"])
+out.update({"declines_period_max": max(per_period.values() or [0]), "declines_periods_over_50": sum(1 for v in per_period.values() if v > 50),
+            "declines_period_sum": sum(per_period.values()), "s_budget_periods": period, "low_declined_repeats": repeats,
+            "per_period": [per_period.get(k, 0) for k in range(min(per_period or [0]), max(per_period or [0]) + 1)]})
 sp, sq = stats(dp), stats(dq)
 out.update({"p_" + k: v for k, v in sp.items()}); out.update({"q_" + k: v for k, v in sq.items()})
 print(json.dumps(out))
@@ -202,6 +220,7 @@ echo "[relay-floor] per interval (A block: sent low+valid / declines at S / inv 
 echo "[relay-floor] valid via R: sent $(jq .p_valid_sent <<< "$S") mined $(jq .p_valid_mined <<< "$S") delayed-past-block $(jq .p_delayed_past_block <<< "$S") missing $(jq .p_missing <<< "$S") delay-to-S p50 $(jq .p_delay_s_p50 <<< "$S")s max $(jq .p_delay_s_max <<< "$S")s unseen-at-S $(jq .p_unseen_at_s <<< "$S")"
 echo "[relay-floor] Q valid: sent $(jq .q_valid_sent <<< "$S") mined $(jq .q_valid_mined <<< "$S") delayed-past-block $(jq .q_delayed_past_block <<< "$S") missing $(jq .q_missing <<< "$S") delay-to-S p50 $(jq .q_delay_s_p50 <<< "$S")s max $(jq .q_delay_s_max <<< "$S")s unseen-at-S $(jq .q_unseen_at_s <<< "$S")"
 echo "[relay-floor] low: sent $(jq .low_sent <<< "$S") declined at S $(jq .low_declined_at_s <<< "$S") (max per interval $(jq .declines_interval_max <<< "$S")); R inv batches at S $(jq .r_invs_total <<< "$S"), load intervals with none $(jq .r_invs_intervals_zero <<< "$S")/$(jq .load_intervals <<< "$S"); sync lag max $(jq .r_sync_lag_s_max <<< "$S")s"
+echo "[relay-floor] per budget period at S (R's low-fee declines between S's block applications, from the first period with one): $(jq -c .per_period <<< "$S"); max $(jq .declines_period_max <<< "$S"), over 50 in $(jq .declines_periods_over_50 <<< "$S") of $(jq .s_budget_periods <<< "$S") periods; repeated ids $(jq .low_declined_repeats <<< "$S")"
 echo "[relay-floor] same_chain(A,S): $(same_chain A S); pools at end R $(mempool_size R) S $(mempool_size S) A $(mempool_size A)"
 # activity floor: at least 50 declines at S in at least 4 load intervals, and the sends happened
 floor_ok=$(jq '[.per_interval[] | select(.declines >= 50)] | length >= 4' <<< "$S")
@@ -209,9 +228,9 @@ sends_ok=$(jq --argjson v "$VALID" '(($v == 0) or .p_valid_sent >= 40) and .q_va
 res=FAIL
 if [[ "$floor_ok" == true && "$sends_ok" == true ]]; then [[ "$(jq '.p_missing == 0 and .q_missing == 0' <<< "$S")" == true ]] && res=PASS; fi
 rig_verdict=$res
-echo "RELAY-FLOOR $(jq -r 'del(.per_interval) | to_entries | map("\(.key)=\(.value)") | join(" ")' <<< "$S") verdict=$res"
+echo "RELAY-FLOOR $(jq -r 'del(.per_interval, .per_period) | to_entries | map("\(.key)=\(.value)") | join(" ")' <<< "$S") verdict=$res"
 if [[ -n "${DIFFRUN_ROLE:-}" ]]; then
   if [[ "$floor_ok" != true || "$sends_ok" != true ]]; then echo "[relay-floor] INCONCLUSIVE: activity floor missed (declines>=50 in 4 intervals: $floor_ok; sends: $sends_ok)"; rig_verdict=INCONCLUSIVE; return; fi
-  echo "RESULT_JSON $(jq -cn --arg name "${RELAY_FLOOR_NAME:-relay-floor}" --arg A "$VA" --arg S "$VS" --arg R "$VR" --argjson m "$(jq 'del(.per_interval)' <<< "$S")" \
+  echo "RESULT_JSON $(jq -cn --arg name "${RELAY_FLOOR_NAME:-relay-floor}" --arg A "$VA" --arg S "$VS" --arg R "$VR" --argjson m "$(jq 'del(.per_interval, .per_period)' <<< "$S")" \
     '{schema_version: 1, scenario: $name, versions: {A: $A, S: $S, R: $R}, metrics: ($m | with_entries(select(.value | type == "number")))}')"
 fi

@@ -1,0 +1,6 @@
+# shellcheck settings for review/ci-red/ (this file replaces the repository's .shellcheckrc for this directory).
+#   SC2001  recount.sh escapes the parentheses of a test name with `sed 's/[()]/\\&/g'`; a parameter expansion would
+#           do the same. The script is kept byte-identical to the one whose output is quoted (README.md), so the
+#           style note is disabled here instead of editing it.
+# The repository-wide exceptions, kept so a script added here later is checked the same way:
+disable=SC2001,SC2086,SC2015,SC2016,SC2012,SC2317,SC2034

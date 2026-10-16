@@ -13,7 +13,7 @@
       "title": "MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors",
       "origin": "ours",
       "upstream_pr": 2573,
-      "upstream_head": "709e04eb22",
+      "upstream_head": "817f992763",
       "status": "proposed",
       "added": "2026-09-24",
       "fixes": "a transaction announced before its unconfirmed parent is declined by the receiving peer; after a rollback, a chain of wallet payments returns to the pool and the rebroadcast checks each announced window of 3 only against the state and itself, so a chained set reaches the next miner as a random walk. Since v6.0.8 (#2641 clears the declined table every block) it gets there in about 130-190 s, often after a test deadline; with the ancestors announced together it takes one round (26-112 s)",
@@ -24,7 +24,8 @@
       "responses": [
         "2026-09-25: filed as issue #2572 + PR #2573 (v6.0.7)",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
-        "2026-10-15: v6.0.8 carries #2641, which clears the receiving side's declined table on every applied block (was a 20-minute TTL): the window after a declined child shrinks to one block; reorg-mempool on plain v6.0.8 to be re-measured to see whether the scenario still needs this patch"
+        "2026-10-15: v6.0.8 carries #2641, which clears the receiving side's declined table on every applied block (was a 20-minute TTL): the window after a declined child shrinks to one block; reorg-mempool on plain v6.0.8 to be re-measured to see whether the scenario still needs this patch",
+        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff"
       ]
     },
     {
@@ -42,9 +43,10 @@
       "added": "2026-09-27",
       "responses": [
         "2026-09-27: issue #2595 and PR #2596 opened against v6.0.7",
-        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8"
+        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
+        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff"
       ],
-      "upstream_head": "d3f3b79381"
+      "upstream_head": "579851198a"
     },
     {
       "id": "005",
@@ -72,7 +74,7 @@
       "title": "Check a header's age against its parent's own height, not the height index",
       "origin": "ours",
       "upstream_pr": 2580,
-      "upstream_head": "1ec321f69d",
+      "upstream_head": "d0b1d4761f",
       "status": "proposed",
       "added": "2026-09-26",
       "fixes": "a valid header validated while its parent's indexes are unwritten (HistoryStorage.insert writes objects first) is rejected as invalid, its sender penalized, and it is not requested again (seen at 2 CPUs: a follower stuck at height 2)",
@@ -83,7 +85,8 @@
       "responses": [
         "2026-09-26: filed as issue #2578 + PR #2580 (v6.0.7)",
         "2026-09-26: third commit (guard test for the age check) pushed",
-        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8"
+        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
+        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff"
       ]
     },
     {
@@ -92,7 +95,7 @@
       "title": "Do not request announced ADProofs on a node that stores the UTXO set",
       "origin": "ours",
       "upstream_pr": 2585,
-      "upstream_head": "a30cc6a371",
+      "upstream_head": "4384e27ca1",
       "status": "proposed",
       "added": "2026-09-26",
       "fixes": "a UTXO node downloads, through announcements, the ADProofs it regenerates itself (93% of ADProofs + transaction bytes on mainnet over 30 blocks)",
@@ -100,7 +103,8 @@
       "witness": "unit ErgoNodeViewSynchronizerSpecification 'a node that stores the UTXO set does not request announced ADProofs' fails on v6.0.7, passes with the fix; whole spec 32/32; relay witness 4/4",
       "responses": [
         "2026-09-26: filed as issue #2584 + PR #2585 (v6.0.7)",
-        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8"
+        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
+        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff"
       ]
     },
     {
@@ -109,7 +113,7 @@
       "title": "Drop a requested copy of a modifier already in history instead of penalizing the sender",
       "origin": "ours",
       "upstream_pr": 2592,
-      "upstream_head": "0afe5897c0",
+      "upstream_head": "f85b04cc06",
       "status": "proposed",
       "added": "2026-09-26",
       "fixes": "a reply for a modifier the node already applied is judged invalid and the answering peer penalized (seen on weak-blocks: 5 of 12 Matrix devnet runs)",
@@ -118,7 +122,8 @@
       "responses": [
         "2026-09-26: filed as issue #2589 + PR #2592 (v6.0.7)",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
-        "2026-10-15: on v6.0.8 the old export collided with #2711 (a new version-mismatch branch in validateAndSetStatus); the duplicate case is matched first, as on the rebased PR head. jozanek review 2026-10-15 asks for a comment sentence and an info log: re-export if the PR changes"
+        "2026-10-15: on v6.0.8 the old export collided with #2711 (a new version-mismatch branch in validateAndSetStatus); the duplicate case is matched first, as on the rebased PR head. jozanek review 2026-10-15 asks for a comment sentence and an info log: re-export if the PR changes",
+        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff"
       ]
     },
     {

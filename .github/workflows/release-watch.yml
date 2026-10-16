@@ -27,15 +27,24 @@ jobs:
           tag="$(gh release view -R ergoplatform/ergo --json tagName --jq .tagName)"
           asset="$(gh release view -R ergoplatform/ergo "$tag" --json assets --jq '.assets[] | select(.name | test("^ergo-[0-9.]+\\.jar$")) | .name' | head -1)"
           have="$(gh run list -R "$GITHUB_REPOSITORY" --workflow aa.yml --limit 50 --json displayTitle --jq "[.[] | select(.displayTitle | contains(\"$tag\"))] | length")"
-          echo "tag=$tag asset=$asset aa_runs=$have force=${{ inputs.force || 'false' }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          { echo "tag=$tag"; echo "asset=$asset"; echo "have=$have"; } >> "$GITHUB_OUTPUT"
+          # the newest A/A run for this tag: a failed one is not retried (have > 0), so it is reported below instead
+          last="$(gh run list -R "$GITHUB_REPOSITORY" --workflow aa.yml --limit 50 --json displayTitle,conclusion,databaseId --jq "[.[] | select(.displayTitle | contains(\"$tag\"))][0] | select(. != null) | \"\(.conclusion) \(.databaseId)\"")"
+          echo "tag=$tag asset=$asset aa_runs=$have last=${last:-none} force=${{ inputs.force || 'false' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo "tag=$tag"; echo "asset=$asset"; echo "have=$have"; echo "last=$last"; } >> "$GITHUB_OUTPUT"
+      - name: Open an issue when this release's A/A run failed (once per release; re-dispatch with force after the fix)
+        if: startsWith(steps.rel.outputs.last, 'failure ')
+        run: |
+          t="release ${{ steps.rel.outputs.tag }}: the A/A calibration run failed"
+          n="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$t\" in:title" --json number --jq length)"
+          [ "$n" != 0 ] || gh issue create -R "$GITHUB_REPOSITORY" --title "$t" \
+            --body "aa.yml run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$(echo "${{ steps.rel.outputs.last }}" | cut -d" " -f2) failed. release-watch does not retry it; fix the cause, then run release-watch by hand with force=true." 
       - name: Carried patches against the new release
         if: steps.rel.outputs.have == '0' || inputs.force == 'true'
         id: chk
         run: |
           git clone -q --filter=blob:none https://github.com/ergoplatform/ergo "$HOME/ergo-clone"
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone"
-          set +e; bash patches/check.sh ergo "${{ steps.rel.outputs.tag }}" | tee check.txt; rc=$?; set -e
+          set +e; bash patches/check.sh ergo "${{ steps.rel.outputs.tag }}" | tee check.txt; rc=${PIPESTATUS[0]}; set -e   # check.sh's status, not tee's
           { echo '```'; cat check.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
       - name: Open an issue when the stack needs an edit (once per release)
@@ -47,5 +56,5 @@ jobs:
       - name: Dispatch the A/A calibration on the new release
         if: steps.rel.outputs.have == '0' || inputs.force == 'true'
         run: |
-          gh workflow run aa.yml -R "$GITHUB_REPOSITORY" --ref "${GITHUB_REF_NAME}" -f tag="${{ steps.rel.outputs.tag }}" -f sha256=""
+          gh workflow run aa.yml -R "$GITHUB_REPOSITORY" --ref "${GITHUB_REF_NAME}" -f tag="${{ steps.rel.outputs.tag }}"   # sha256 left empty: aa.yml checks the release's own .sha256 asset (an explicit "" fell back to a stale pinned default)
           echo "dispatched aa.yml for ${{ steps.rel.outputs.tag }}" | tee -a "$GITHUB_STEP_SUMMARY"

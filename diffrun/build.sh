@@ -144,10 +144,13 @@ JARNAME="$(basename "${jars[0]}")"; VER="${JARNAME#ergo-}"; VER="${VER%.jar}"   
 
 STAGE="$TMP/entry"; mkdir "$STAGE"
 cp "${jars[0]}" "$STAGE/$JARNAME"
+# sbt-reproducible-builds also writes a stripped copy (sorted manifest, normalized zip metadata). ergo's release asset is
+# that copy since v6.0.8 (its class files equal the plain jar's), so its sha256 is what a release's .sha256 names.
+STRIPPED="$WT/target/scala-2.12/stripped/$JARNAME"; SSHA=""; [[ -f "$STRIPPED" ]] && SSHA="$(sha256sum "$STRIPPED" | cut -d' ' -f1)"
 git -C "$WT" diff "$BASE_SHA" HEAD -- "${PROD_DIRS[@]}" > "$STAGE/$JARNAME.patch"
 cp "$TMP/build.log" "$STAGE/build.log"
 jq -n --arg src_ref "$BASE_REF" --arg src "$BASE_SHA" --arg ptype "$PATCH_TYPE" --arg pref "$PATCH_REF" --arg psha "$PATCH_SHA" \
-      --arg head "$HEAD_SHA" --arg jsha "$(sha256sum "$STAGE/$JARNAME" | cut -d' ' -f1)" --arg ver "$VER" \
+      --arg head "$HEAD_SHA" --arg jsha "$(sha256sum "$STAGE/$JARNAME" | cut -d' ' -f1)" --arg ssha "$SSHA" --arg ver "$VER" \
       --arg javav "$("$J8/bin/java" -version 2>&1 | head -1)" \
       --arg sbtjdk "$(grep -m3 -iE 'welcome to sbt|java.*1\.8\.0' "$TMP/build.log" | sed 's/\x1b\[[0-9;]*m//g' || true)" \
       --arg prodsha "$(sha256sum "$STAGE/$JARNAME.patch" | cut -d' ' -f1)" \
@@ -155,7 +158,7 @@ jq -n --arg src_ref "$BASE_REF" --arg src "$BASE_SHA" --arg ptype "$PATCH_TYPE" 
       --argjson paths "$( (for p in ${PATHS[@]+"${PATHS[@]}"}; do printf '%s\n' "$p"; done) | jq -R . | jq -s .)" \
       '{sidecar_schema_version: 1, kind: "build", source_ref: $src_ref, source_sha: $src,
         patch: {type: $ptype, ref: (if $pref == "" then null else $pref end), sha256: $psha, paths: $paths},
-        build_commit: $head, jar_sha256: $jsha, expected_app_version: $ver,
+        build_commit: $head, jar_sha256: $jsha, stripped_jar_sha256: (if $ssha == "" then null else $ssha end), expected_app_version: $ver,
         java_version: $javav, sbt_jdk_lines: ($sbtjdk | split("\n") | map(select(length > 0))),
         production_dirs: $dirs, production_patch_sha256: $prodsha, built_at: $at}' > "$STAGE/$JARNAME.json"
 

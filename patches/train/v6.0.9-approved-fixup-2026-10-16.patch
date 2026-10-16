@@ -723,9 +723,18 @@ index b83e155fe..fd711bf43 100644
      case class EliminateTransactions(ids: Seq[ModifierId])
  
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
-index f31608959..9a9308e3a 100644
+index f31608959..9b9ae4d93 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
+@@ -1,7 +1,7 @@
+ package org.ergoplatform.nodeView.history
+ 
+ import akka.actor.ActorContext
+-import org.ergoplatform.consensus.ProgressInfo
++import org.ergoplatform.consensus.{ModifierSemanticValidity, ProgressInfo}
+ 
+ import java.io.File
+ import java.nio.{ByteBuffer, ByteOrder}
 @@ -211,7 +211,7 @@ trait ErgoHistory
      * @return
      */

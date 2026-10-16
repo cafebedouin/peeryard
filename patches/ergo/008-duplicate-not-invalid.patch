@@ -1,20 +1,15 @@
 # peeryard patch ergo/008: Drop a requested copy of a modifier already in history instead of penalizing the sender
 # upstream: ergoplatform/ergo#2592 (proposed); origin, witness and responses in patches.json
-commit 0afe5897c025a5ba4f72a823e28023fa7fb94ec5
+commit f85b04cc0654181edd2c4a11c90c3db4c7941891
 Author: cafebedouin <cafebedouin@gmail.com>
-Date:   Sat Sep 26 12:55:52 2026 -0500
+Date:   Thu Oct 15 20:21:11 2026 -0500
 
-    Drop a requested modifier that is already in history instead of judging it invalid
-    
-    A reply can arrive for a modifier the node has already applied, when it was applied from another source while the
-    request was outstanding (and the event that marks it held had not been handled yet). validateAndSetStatus then failed
-    the fatal alreadyApplied rule, marked the modifier id invalid and penalized the peer that answered the request. When
-    that failure is for a modifier already in history, it is now dropped as a duplicate, without a penalty.
+    Log a dropped copy of a modifier in history at info, and say the wider match is intended
     
     Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
-index 7907ddea7..fdddbcb5e 100644
+index 7907ddea7..b610f6290 100644
 --- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 +++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 @@ -1271,7 +1271,8 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
@@ -27,14 +22,16 @@ index 7907ddea7..fdddbcb5e 100644
      */
    @SuppressWarnings(Array("org.wartremover.warts.IsInstanceOf"))
    def validateAndSetStatus(hr: ErgoHistory, remote: ConnectedPeer, pmod: BlockSection): Boolean = {
-@@ -1281,6 +1282,12 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+@@ -1281,6 +1282,14 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
      }
  
      hr.applicableTry(pmod) match {
 +      case Failure(e) if e.isInstanceOf[MalformedModifierError] && hr.contains(pmod.id) =>
 +        // already in history, e.g. applied from another source while this request was outstanding: a duplicate of a
-+        // valid modifier, not an invalid one, so it is dropped without penalizing the peer that answered the request
-+        log.debug(s"Modifier ${pmod.encodedId} is already in history, dropping the copy from $remote")
++        // valid modifier, not an invalid one, so it is dropped without penalizing the peer that answered the request.
++        // Any fatal failure is matched, not only `alreadyApplied`, on purpose: the node needs nothing from a copy of a
++        // modifier it already holds, so the copy is dropped whichever rule rejects it.
++        log.info(s"Modifier ${pmod.encodedId} is already in history, dropping the copy from $remote: ${e.getMessage}")
 +        deliveryTracker.setHeld(pmod.id, pmod.modifierTypeId)
 +        false
        case Failure(e) if e.isInstanceOf[MalformedModifierError] =>

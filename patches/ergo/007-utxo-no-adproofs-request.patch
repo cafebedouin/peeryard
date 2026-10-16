@@ -1,28 +1,25 @@
 # peeryard patch ergo/007: Do not request announced ADProofs on a node that stores the UTXO set
 # upstream: ergoplatform/ergo#2585 (proposed); origin, witness and responses in patches.json
-commit 2e04bf995672d71b1a332abd53c38dbb013ecb23
+commit e3e2584c7d435536aa76a563b6cd001833fe94fe
 Author: cafebedouin <cafebedouin@gmail.com>
-Date:   Sat Sep 26 08:44:06 2026 -0500
+Date:   Thu Oct 15 20:11:14 2026 -0500
 
-    Do not request announced ADProofs on a node that stores the UTXO set
+    Name the ADProofs announcement rule holdsUtxoSet, as the transaction filter above does
     
-    The scheduler leaves UTXO set transformation proofs out when the UTXO set is stored (requiredModifiersForHeader):
-    such a node regenerates them when it applies a block and keeps them for the recent suffix (UtxoState). The
-    announcement path still requested them from peers, so a UTXO node downloaded proofs it would generate itself. It
-    now ignores ADProofs announcements. Announcements are unchanged: the node holds the regenerated proofs and serves
-    them.
+    StateType.holdsUtxoSet is defined as !requireProofs, so behaviour is unchanged; the method
+    now uses one name for one rule (review suggestion).
     
     Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
-index 7907ddea7..92f8a285b 100644
+index 7907ddea7..93a1bb6b6 100644
 --- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 +++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 @@ -1196,6 +1196,11 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
          if (utxoBootstrapInProgress) {
            log.debug(s"Ignoring ${invData.ids.length} non-tx invs (of type $modifierTypeId) from $peer: UTXO snapshot bootstrap in progress")
            Seq.empty
-+        } else if (modifierTypeId == ADProofs.modifierTypeId && !settings.nodeSettings.stateType.requireProofs) {
++        } else if (modifierTypeId == ADProofs.modifierTypeId && settings.nodeSettings.stateType.holdsUtxoSet) {
 +          // a node that stores the UTXO set regenerates these proofs when it applies the block (UtxoState),
 +          // so it does not download them (see requiredModifiersForHeader)
 +          log.debug(s"Ignoring ${invData.ids.length} ADProofs invs from $peer: the UTXO set is stored")

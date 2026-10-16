@@ -1,22 +1,22 @@
 # peeryard patch ergo/002: MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors
 # upstream: ergoplatform/ergo#2573 (proposed); origin, witness and responses in patches.json
-commit 709e04eb220e074a9761421a4a3564cffa84ace4
+commit 817f99276338c70424fe6f1c9252addbd9ed5b9b
 Author: cafebedouin <cafebedouin@gmail.com>
-Date:   Thu Sep 24 12:04:52 2026 -0500
+Date:   Thu Oct 15 22:04:02 2026 -0500
 
-    MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors
+    MempoolAuditor: announce a rebroadcast transaction only after its in-pool parents
     
-    The rebroadcast selection is a window of the pool. A pooled transaction whose inputs are neither in the state
-    nor in the selection is not announced, while its children, whose inputs the selection holds, are; a peer
-    declines those children (their inputs are unknown to it) and does not request them again for at least 20
-    minutes. A chain of wallet payments returned to the pool by a rollback hits this whenever the window starts
-    inside the chain. Add the selection's in-pool ancestors, parents first, walking at most 500 levels deep (the
-    bound the pool puts on updateFamily).
+    The ancestor walk puts the in-pool parents of each selected transaction ahead of it, but the input check
+    counted the outputs of every transaction in the round, including a parent it had just skipped. In a pooled
+    chain whose root has inputs in neither the state nor the pool, the root was skipped and its descendants were
+    announced without it, and a peer declines those as before. Walk the round parents first and accept a
+    transaction only if each input is in the state or is created by a transaction already accepted in this round,
+    so a transaction is never announced without its in-pool parents, also when the depth bound cuts the walk short.
     
     Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala b/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
-index d46670287..f40a1821e 100644
+index d46670287..6e8b76d95 100644
 --- a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
 +++ b/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
 @@ -12,8 +12,9 @@ import scorex.core.network.NetworkController.ReceivableMessages.SendToNetwork
@@ -30,7 +30,7 @@ index d46670287..f40a1821e 100644
  import scala.concurrent.duration._
  
  /**
-@@ -95,7 +96,8 @@ class MempoolAuditor(nodeViewHolderRef: ActorRef,
+@@ -95,14 +96,19 @@ class MempoolAuditor(nodeViewHolderRef: ActorRef,
    private def rebroadcastTransactions(): Unit = {
      log.debug("Rebroadcasting transactions")
      poolReaderOpt.foreach { pr =>
@@ -39,8 +39,21 @@ index d46670287..f40a1821e 100644
 +        pr.random(settings.nodeSettings.rebroadcastCount).toSeq, pr.getAllPrioritized)
        stateReaderOpt match {
          case Some(utxoState: UtxoStateReader) =>
-           val stateToCheck = utxoState.withUnconfirmedTransactions(toBroadcast)
-@@ -121,6 +123,51 @@ object MempoolAuditor {
+-          val stateToCheck = utxoState.withUnconfirmedTransactions(toBroadcast)
++          // toBroadcast is parents first: an input counts if it is in the state or is created by a transaction
++          // already announced in this round, so no transaction goes out without its in-pool parents
++          val announcedOutputs = mutable.Set[ModifierId]()
+           toBroadcast.foreach { unconfirmedTx =>
+-            if (unconfirmedTx.transaction.inputIds.forall(inputBoxId => stateToCheck.boxById(inputBoxId).isDefined)) {
++            if (unconfirmedTx.transaction.inputIds.forall(inputBoxId =>
++                  announcedOutputs.contains(bytesToId(inputBoxId)) || utxoState.boxById(inputBoxId).isDefined)) {
+               log.info(s"Rebroadcasting $unconfirmedTx")
+               broadcastTx(unconfirmedTx)
++              announcedOutputs ++= unconfirmedTx.transaction.outputs.map(out => bytesToId(out.id))
+             } else {
+               log.info(s"Not rebroadcasting $unconfirmedTx as not all the inputs are in place")
+             }
+@@ -121,6 +127,51 @@ object MempoolAuditor {
  
    case object CleanupDone
  

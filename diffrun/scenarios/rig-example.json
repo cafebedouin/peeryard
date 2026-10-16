@@ -1,0 +1,14 @@
+{
+  "name": "rig-example",
+  "description": "Any rig example of rig/examples/suite.tsv (env RIG_EXAMPLE), unchanged, every node on this role's jar; pass = the example's PASS marker and rig exit 0 (rig/run-suite.sh's PASS), timed_out = the suite timeout was hit (pass false), rig_exit = rig.sh's status; RIG_EXAMPLE_ENV ('KEY:VALUE ...') overrides keys of the example's suite.tsv env. Both roles all(pass): a no-regression reading. Which examples run: rig-example.check.sh --list",
+  "script": "rig-example.sh",
+  "tier": "public",
+  "env": { "RIG_EXAMPLE": "", "RIG_EXAMPLE_ENV": "" },
+  "metrics": { "pass": "boolean", "timed_out": "boolean", "rig_exit": "number" },
+  "n": 5,
+  "timeout_seconds": 1900,
+  "expect": {
+    "base":      { "all": { "key": "pass", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "pass", "op": "==", "value": true } }
+  }
+}

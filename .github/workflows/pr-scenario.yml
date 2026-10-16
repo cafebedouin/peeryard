@@ -35,6 +35,12 @@
 # scenario_env: KEY=VALUE overrides of the manifest's env, ";"-separated (diffrun/scenario-env.sh: only keys the
 # manifest declares, values [A-Za-z0-9._ :,-]), written into the checked-out manifest so verdict.json's provenance
 # records the effective env.
+# scenario=rig-example runs any rig example of rig/examples/suite.tsv whose nodes all run one jar, named in scenario_env
+# (RIG_EXAMPLE=<name>; RIG_EXAMPLE_ENV='KEY:VALUE ...' overrides keys of its suite.tsv env), judged as rig/run-suite.sh
+# judges it, on both arms; diffrun/scenarios/rig-example.check.sh --list lists them. A scenario's own dispatch-time
+# check (diffrun/scenario-check.sh; rig-example has one) runs in the inputs step, before the build.
+# The line for a PR: review/pr-line.sh --pr N prints it (a release tag when the PR's merge base is one, else the merge
+# base commit) and this workflow's dispatch command with the PR's head as read then.
 # run-name markers: "A/A" or "#<pr>", " + <extra_patch>", the line, shards x pairs, " v4", " +test patches", " [<scenario_env>]".
 name: peeryard PR scenario
 on:
@@ -43,7 +49,7 @@ on:
       pr: { description: 'ergoplatform/ergo pull request number (ignored when aa is true; empty with extra_patch: patch mode, candidate = line + patch)', default: '' }
       head: { description: 'the PR head commit, 40 hex (the run fails if the PR has moved; ignored when aa is true)', default: '' }
       line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack), a release tag, e.g. v6.0.8, or a commit (40 hex). The line must contain the PR''s merge base: for a PR on a branch ahead of the release, give the merge base itself', default: 'v6.0.8' }
-      scenario: { description: 'manifest basename under diffrun/scenarios/ (without .json); public tier, no stop_when/max_n', default: 'matrix-paychain' }
+      scenario: { description: 'manifest basename under diffrun/scenarios/ (without .json); public tier, no stop_when/max_n; rig-example runs the rig example named in scenario_env (RIG_EXAMPLE=<name>)', default: 'matrix-paychain' }
       shards: { description: 'runners (1-20)', default: '5' }
       pairs: { description: 'pairs per runner (1-99)', default: '1' }
       aa: { description: 'A/A control: the base jar in both roles, no candidate built', type: boolean, default: false }
@@ -110,6 +116,7 @@ jobs:
           jq -L diffrun/lib -e 'include "diffrun"; validate_manifest | length == 0' "$m" >/dev/null || fail "manifest does not validate"
           [ "$(jq -r .tier "$m")" = public ] || fail "tier: only public manifests run here"
           jq -e 'has("stop_when") or has("max_n") | not' "$m" >/dev/null || fail "stop_when/max_n: a sequential stop inside a shard breaks the pairs-per-shard accounting"
+          DIFFRUN_LINE="$LINE" bash diffrun/scenario-check.sh "$m" || fail "scenario check (diffrun/scenario-check.sh): see the line above"
           echo "shards=$(jq -nc --argjson n "$SHARDS" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
           echo "run_minutes=$(jq -r --argjson k "$PAIRS" '(2 * $k * ((.timeout_seconds // 900) + (if has("precheck") then .precheck_timeout_seconds // 300 else 0 end)) / 60 | floor) + 30' "$m")" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4

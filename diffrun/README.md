@@ -11,6 +11,7 @@ bash diffrun/register.sh <jar> <expected-appVersion>          # or register a pr
 bash diffrun/run.sh <manifest.json> --base <jar> --candidate <jar> [-n N] [--out DIR]
 bash diffrun/pool.sh --out DIR --shards S --pairs K <dir>    # one verdict over S runners' run.sh outputs
 bash diffrun/lint.sh [file ...]                               # term-list lint (no args: public-tier scenarios)
+bash diffrun/scenario-check.sh <manifest.json>                # a scenario's own check of its env (pr-scenario runs it first)
 ```
 
 A scenario is **an executable script that follows a contract, plus a small manifest**. There is no
@@ -206,6 +207,7 @@ term list you supply. Details, exit codes 4 and 5, and what the lint does not do
 | `storage-rent-2598` | public | a miner collecting storage rent itself (ergoplatform/ergo#2598) on this role's jar, with a base-jar and a candidate-jar follower (rig hook `rig/examples/storage-rent-2598.sh`, `mixed_jars`, `docs/storage-rent.md`); both jars need the devnet test patches (`pr-scenario.yml` `test_patches="patches/test/storage-period-60.patch patches/test/rent-distinct-outputs-devnet.patch"`). `pass`: a jar that can collect (its `application.conf` has `storageRentCollection`) must put claims in its blocks, all within the rule, claim every holder box and keep both followers on its state root; a jar that cannot (the base role, and both roles of an A/A) must show 0 claims with the same agreement (`c_can_collect`) | `all(pass == true)` | `all(pass == true)` |
 | `relay-floor`, `relay-floor-12`, `floor-spam`, `floor-spam-360` | public | the per-peer transaction budget of ergoplatform/ergo#2641 under real wallet load (rig hook `rig/examples/relay-floor.{json,sh}`, four nodes, one jar): a relay R with a lower fee floor (100,000) forwards payments that the strict node S declines, interleaved with valid ones; `relay-floor` eight bursts, `relay-floor-12` twelve (sustained load); `floor-spam` the same relay forwarding only sub-floor payments (120 per block; `floor-spam-360` 360), the shape the per-peer quota is for. Measured: valid payments through R and from an unrelated peer Q that reach S only after the next block, unmined payments, declines per interval at S; below the activity floor (fewer than 4 intervals with 50 declines at S, or fewer than 40 valid sends per payer) a run is INCONCLUSIVE. The `relay-floor*` expectations encode the hypothesis of #2641's thread (the candidate delays R's valid payments past a block); `floor-spam*` hold both jars to `q_missing == 0` | `relay-floor*`: `all(p_delayed_past_block == 0)`; `floor-spam*`: `all(q_missing == 0)` | `relay-floor*`: `count(p_delayed_past_block > 0) >= 3`; `floor-spam*`: `all(q_missing == 0)` |
 | `matrix-paychain` | public | Matrix line (weak-blocks) only: bursts of 40 wallet payments on a two-node network (the rig example's hook, `rig/examples/matrix-paychain.{json,sh}`); a payment is lost when it ends neither confirmed nor in the miner's pool; fewer than 30 accepted (`MATRIX_PAYCHAIN_FLOOR`) makes the run INCONCLUSIVE. Predicates fitted to one hosted run (base lost in 5/5, base + ergoplatform/ergo#2504 in 0/5), so a SUPPORTS on #2504 re-runs the workflow, not the hypothesis | `count(lost > 0) >= 3` | `all(lost == 0)` |
+| `rig-example` | public | any rig example of `rig/examples/suite.tsv` whose nodes all run one jar, named by `RIG_EXAMPLE` (in `pr-scenario.yml`: `scenario_env='RIG_EXAMPLE=<name>'`), run unchanged with every node on this role's jar (`PEERYARD_MATRIX_JAR` too, for a Matrix example) and judged as `rig/run-suite.sh` judges it: `pass` = the example's PASS marker in the rig's output and rig exit 0; `timed_out` = the suite timeout was hit (pass false); `rig_exit`. `RIG_EXAMPLE_ENV='KEY:VALUE ...'` overrides keys the example's suite row declares (`rig/suite-env.sh`), e.g. `REORG_CONFIRM_WAIT_S:600`. A rig that could not stage the example (exit 2, 3, 10) makes the run INCONCLUSIVE with the hook's or the classifier's cause. Refused (the check fails the dispatch): examples that need another artifact (`mixed`: the release jar; the Rust followers), another node kind, or two jars on one network (`matrix-mixed`, the mixed `matrix-compat-*`); `bash diffrun/scenarios/rig-example.check.sh --list` prints which run. The predicates are a no-regression reading: a change the example does not target should leave both roles passing | `all(pass == true)` | `all(pass == true)` |
 | `fork-convergence-smoke`, `sibling-fork-smoke` | public | one pair, no cited verdict: does the scenario still complete with every node answering afterwards (a cheap tier for pull-request CI) | `all(unresponsive_after == 0)` | `all(unresponsive_after == 0)` |
 | `test/output-lint-stub` | public | test only: no nodes; its result carries a lint-listed term built at runtime | | |
 | `test/seq-replay`, `test/precheck-replay` | public | test only: no nodes; replay a scripted per-run pattern (`tests/sequential.sh`, `tests/precheck.sh`) | | |
@@ -214,7 +216,9 @@ Of the node scenarios, `fork-convergence` and `sibling-fork` are standalone scri
 the `RESULT_JSON` emission); the two `wallet-oracle-*` manifests share `scenarios/wallet-oracle.sh`, which runs the rig
 example once per event and folds the oracle's verdict lines into one `RESULT_JSON`; the rest (`interop`, `txload`,
 `bootstrap-modes`, `matrix-paychain`, `indexer-diff`, `crash-consistency`, `storage-rent-2598`, the four `relay-floor`/`floor-spam` manifests and the three
-`wallet-workload` manifests) are rig hooks run through `scenarios/lib/rig-scenario.sh`. `matrix-paychain` reuses the rig
+`wallet-workload` manifests) are rig hooks run through `scenarios/lib/rig-scenario.sh`; `rig-example` runs any suite example's own topology and
+hook through the same library (`run_rig_example`), with the shim hook `scenarios/hooks/rig-example.sh` recording each
+node's appVersion at the hand-off and after the example's hook (the version check needs them). `matrix-paychain` reuses the rig
 example's topology and hook, which emits `RESULT_JSON` only when `DIFFRUN_ROLE` is set; `indexer-diff` and
 `crash-consistency` reuse their rig examples' topology and hook as they are; `storage-rent-2598` and `wallet-workload`
 reuse the rig example's hook with their own topology (`scenarios/hooks/<name>.json`, both jars on one network). The standalone scripts report the `versions` each queries at startup, so
@@ -297,8 +301,8 @@ production diff), `shards` runners each run `pairs` pairs, and `pool.sh` judges 
 | input | what |
 |---|---|
 | `pr`, `head` | the pull request and its head commit (40 hex; the run fails if the PR has moved); ignored with `aa` |
-| `line` | the build base: `matrix` (the weak-blocks commit in `patches/ergo-matrix/patches.json`), `matrix-stack` (that commit plus the carried Matrix stack, the PR's diff stacked last), a release tag `vN.N.N`, or a commit (40 hex, e.g. the PR's own merge base when its diff does not apply on a release) |
-| `scenario`, `shards`, `pairs` | the manifest basename (public tier, no `stop_when`/`max_n`), runners (1-20), pairs per runner (1-99) |
+| `line` | the build base: `matrix` (the weak-blocks commit in `patches/ergo-matrix/patches.json`), `matrix-stack` (that commit plus the carried Matrix stack, the PR's diff stacked last), a release tag `vN.N.N`, or a commit (40 hex, e.g. the PR's own merge base when its diff does not apply on a release); never a branch name (`v6.0.9` is read as a tag). `review/pr-line.sh` names it for a PR (below) |
+| `scenario`, `shards`, `pairs` | the manifest basename (public tier, no `stop_when`/`max_n`), runners (1-20), pairs per runner (1-99); the scenario's own check, if it ships one (`diffrun/scenario-check.sh`: `scenarios/<script>.check.sh`, run with the manifest's effective env and `DIFFRUN_LINE`), runs before the build, so `scenario=rig-example` with an unknown or refused `RIG_EXAMPLE` fails in seconds |
 | `aa` | A/A: the base jar in both roles, no PR fetched |
 | `v4` | Matrix lines at block version 4 (rig `PEERYARD_V4`) |
 | `test_patches` | release-tag or commit lines only: space-separated test-only patches under `patches/test/`, applied to both arms as one local commit on the line's commit, which becomes the build base (e.g. `storage-rent-2598` needs the storage-period and rent-distinct-outputs patches) |
@@ -312,6 +316,38 @@ inputs differ in which arm they reach: `test_patches` both (a test condition, ne
 the candidate only (a change under test); the build summary names either with its sha256. The run's title
 carries `A/A` or `#<pr>`, ` + <extra_patch>` when set, the line, `shards x pairs`, and ` v4`, ` +test patches` and ` [<scenario_env>]` when set
 (`review/release-check.sh` finds its dispatches by that title).
+
+**The line for a pull request (`review/pr-line.sh`).** pr-scenario refuses a PR whose merge base is not an ancestor of
+the line's commit, so `line=v6.0.8` fails for a PR branched from a commit after the release (the v6.0.9 PRs branched
+from v6.0.9's merge with master), and a branch name fails as a tag. The PR's own merge base (against its base branch)
+always works. `pr-line.sh` names it: a release tag when one points at a merge base, else the merge base itself (40
+hex; of several merge bases, a tagged one, else the one with the smallest diff to the head, as `pick.sh` chooses); for
+a weak-blocks PR, `matrix` when the merge base is the carried weak-blocks commit or an ancestor of it (otherwise exit 3:
+the carried commit is older than the PR's base). `--prefer-release` first tries the newest release on the base branch
+that contains every merge base and takes the PR's production diff (`git apply --check` of the diff pr-scenario will
+take): the base arm is then the release, not the commit the PR was written on, and the output says so. It reads the
+head from the API, checks it against the fetched `pull/N/head` (exit 4 if they differ) and prints the dispatch command
+with that head; it dispatches nothing. A merged PR whose base branch is gone gets exit 3 and a pointer to patch mode.
+```
+export DIFFRUN_ERGO_CLONE=~/src/ergo
+bash review/pr-line.sh --pr 2421 --scenario rig-example --scenario-env 'RIG_EXAMPLE=reorg-mempool' --shards 5 --pairs 1
+# #2421 (open) on ergoplatform/ergo: base branch v6.0.9 (tip 4f354391d...), head 4e0490e6d..., read ...
+# merge base d95c4fd2a32245acdf955b69e422e7a213aad75a
+# line: d95c4fd2a32245acdf955b69e422e7a213aad75a (no release tag at the merge base: the merge base itself ...)
+gh workflow run pr-scenario.yml -R cafebedouin/peeryard --ref main -f pr=2421 -f head=4e0490e6d... -f line=d95c4fd2a... -f scenario=rig-example -f shards=5 -f pairs=1 -f 'scenario_env=RIG_EXAMPLE=reorg-mempool'
+```
+`--line-only` prints the line as the last line (for a batch script); `tests/pr_path.sh` tests the rule on a fixture
+history with a recorded API reply.
+
+**Any rig example, before and after (`scenario=rig-example`).** `sweep.yml` runs the rig examples on the reference or
+the release jar only; `patch-compare.yml` on weak-blocks only. Through the `rig-example` manifest every example that
+runs on one jar (`rig-example.check.sh --list`) runs in pr-scenario like any other scenario: the same build job (line,
+PR, `extra_patch`, patch mode, `test_patches`), the same shards and `pool.sh` verdict, A/A with `aa=true`.
+`scenario_env` names the example and, optionally, its env: `RIG_EXAMPLE=reorg-mempool;RIG_EXAMPLE_ENV=REORG_CONFIRM_WAIT_S:600`.
+A Matrix example needs `line=matrix` or `matrix-stack` (the check says so). The manifest's `timeout_seconds` (1900)
+covers the longest suite timeout (1800 s), so a shard job's limit is 2 x 1900 s per pair plus 30 minutes (93 minutes
+for one pair); the example's own suite timeout ends the run first, and the job takes only what the example takes. Its `n` (5) is a default size for the no-regression reading, not a calibrated one: quote
+an A/A of the same example beside a verdict.
 
 `ci/diffrun.yml.example` is a `workflow_dispatch` workflow: it lints first, builds base and candidate with
 `build.sh`, runs the public-tier manifests and uploads only `verdict.json` and `table.txt`.

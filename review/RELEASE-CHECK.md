@@ -6,6 +6,15 @@ One command dispatches the network checks a release decision can use, on GitHub-
 published jar when built from source); candidate = the tag + the release PR's production diff. First used for
 ergoplatform/ergo#2640 (6.0.8 candidate vs v6.0.7).
 
+**Patch mode** (`--patch patches/<dir>/<file>.patch` instead of `--pr`/`--head`): the candidate is the line + that
+patch (pr-scenario.yml's patch mode), the base arm is the line. Use it for a candidate that is not one PR, e.g. a
+release branch plus the PRs approved for it (`patches/train/`, made with `patches/train/build-train.sh`): label every
+table from such a run "composite of PRs, not a release". The line may be a release tag or a 40-hex commit (a release
+branch's tip); the patch must be on the dispatched ref byte for byte (`--ref <branch>`; the script compares the
+blob before dispatching). `--only <label,...>` dispatches some sets and appends to the same `runs.tsv` (one candidate
+per `--out`), so the set can be paced under a concurrency limit: the whole set peaks at 22 shard jobs.
+`--dry-run` prints the eight dispatches and their run titles without calling gh.
+
 ## The set and how to read each
 
 | set | what runs | the reading |

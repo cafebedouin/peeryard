@@ -243,4 +243,53 @@ cmp -s "$S" "$T/suite.orig" && ok "suite-env.sh: ... refused overrides leave the
 expect_rc "suite-env.sh: the repository's reorg rows declare REORG_CONFIRM_WAIT_S" 0 \
   "$(cp rig/examples/suite.tsv "$T/real.tsv"; bash rig/suite-env.sh "$T/real.tsv" 'REORG_CONFIRM_WAIT_S=600' reorg-mempool reorg-mempool-phases > "$T/se.out" 2>&1; echo $?)"
 
+# ---- review/release-check.sh dispatch against a stub gh: the stub titles each run as pr-scenario.yml's run-name does
+# ("A/A", "#<pr>" or "patch", " + <extra_patch>", the line, shards x pairs), so a title the script cannot find fails here
+RC="$T/rc"; mkdir -p "$RC/bin"; : > "$RC/calls.txt"; : > "$RC/runs.jsonl"
+cat > "$RC/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$RC/calls.txt"
+case "$1 $2" in
+  "workflow run")
+    declare -A f=(); while [[ $# -gt 0 ]]; do [[ "$1" == -f ]] && { f[${2%%=*}]="${2#*=}"; shift; }; shift; done
+    if [[ "${f[aa]:-}" == true ]]; then who="A/A"; elif [[ -n "${f[pr]:-}" ]]; then who="#${f[pr]}"; else who=patch; fi
+    t="${f[scenario]}: $who${f[extra_patch]:+ + ${f[extra_patch]}} on ${f[line]} (${f[shards]}x${f[pairs]})"
+    n=$(( $(wc -l < "$RC/runs.jsonl") + 1000 ))
+    jq -nc --arg t "$t" --argjson n "$n" --arg c "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{databaseId: $n, displayTitle: $t, createdAt: $c}' >> "$RC/runs.jsonl" ;;
+  "run list") jq -s . "$RC/runs.jsonl" ;;
+  "api repos/"*) if [[ -n "${STUB_BLOB:-}" ]]; then echo "$STUB_BLOB"; else p="${2#repos/*/*/contents/}"; git hash-object "${p%%\?*}"; fi ;;
+  *) echo "stub gh: unexpected $*" >&2; exit 9 ;;
+esac
+STUB
+chmod +x "$RC/bin/gh"
+L40=0123456789abcdef0123456789abcdef01234567
+export RC
+rcd(){ local o=$1; shift; PATH="$RC/bin:$PATH" RELEASE_CHECK_POLL_S=0 bash review/release-check.sh dispatch --out "$RC/$o" "$@" > "$RC/$o.log" 2>&1; echo $?; }
+PP=patches/ergo-2641/floor20k.patch
+expect_rc "release-check.sh: --patch on a 40-hex line, two sets -> exit 0" 0 "$(rcd p1 --patch "$PP" --line "$L40" --only interop,interop-aa --ref somebranch)"
+[[ "$(tail -n +2 "$RC/p1/runs.tsv" | cut -f1,6,7 | tr '\t\n' ' |')" == 'interop somebranch 1000|interop-aa somebranch 1001|' ]] \
+  && ok "release-check.sh: ... both runs found by title, on the --ref" || bad "release-check.sh: runs.tsv" "$(cat "$RC/p1/runs.tsv")"
+grep 'workflow run' "$RC/calls.txt" | sed -n 1p | grep -q -- "-f extra_patch=$PP" && ! grep 'workflow run' "$RC/calls.txt" | sed -n 1p | grep -q -- '-f pr=' \
+  && ok "release-check.sh: ... the candidate set sends extra_patch and no pr" || bad "release-check.sh: patch args" "$(grep 'workflow run' "$RC/calls.txt" | sed -n 1p)"
+grep 'workflow run' "$RC/calls.txt" | sed -n 2p | grep -q -- '-f aa=true' && ! grep 'workflow run' "$RC/calls.txt" | sed -n 2p | grep -q extra_patch \
+  && ok "release-check.sh: ... the A/A set sends aa and no extra_patch" || bad "release-check.sh: aa args" "$(grep 'workflow run' "$RC/calls.txt" | sed -n 2p)"
+expect_in "release-check.sh: ... candidate.txt names the patch and its sha256" "patch mode: line $L40 + $PP (sha256 $(sha256sum "$PP" | cut -d' ' -f1))" "$RC/p1/candidate.txt"
+expect_rc "release-check.sh: --only appends for the same candidate" 0 "$(rcd p1 --patch "$PP" --line "$L40" --only sibling-fork --ref somebranch)"
+[[ "$(tail -n +2 "$RC/p1/runs.tsv" | wc -l)" == 3 ]] && ok "release-check.sh: ... three rows" || bad "release-check.sh: append" "$(cat "$RC/p1/runs.tsv")"
+expect_rc "release-check.sh: --only into a dir of another candidate -> exit 2" 2 "$(rcd p1 --pr 7 --head "$L40" --line v6.0.8 --only interop)"
+n0=$(grep -c 'workflow run' "$RC/calls.txt")
+expect_rc "release-check.sh: patch not on the ref byte for byte -> exit 1" 1 "$(STUB_BLOB=deadbeef rcd p2 --patch "$PP" --line v6.0.8 --only interop)"
+[[ "$(grep -c 'workflow run' "$RC/calls.txt")" == "$n0" ]] && ok "release-check.sh: ... nothing dispatched" || bad "release-check.sh: blob mismatch" "a dispatch was sent"
+expect_rc "release-check.sh: --patch with --pr -> exit 2" 2 "$(rcd p3 --patch "$PP" --pr 7 --line v6.0.8)"
+expect_rc "release-check.sh: --patch under patches/test/ -> exit 2" 2 "$(rcd p3 --patch patches/test/storage-period-60.patch --line v6.0.8)"
+expect_rc "release-check.sh: --patch that does not exist -> exit 2" 2 "$(rcd p3 --patch patches/nosuch.patch --line v6.0.8)"
+expect_rc "release-check.sh: a branch name as the line -> exit 2" 2 "$(rcd p3 --pr 7 --head "$L40" --line v6.0.9-branch)"
+expect_rc "release-check.sh: unknown --only label -> exit 2" 2 "$(rcd p3 --pr 7 --head "$L40" --line v6.0.8 --only nosuch)"
+expect_rc "release-check.sh: PR mode, one set -> exit 0" 0 "$(rcd p4 --pr 7 --head "$L40" --line v6.0.8 --only crash-consistency)"
+[[ "$(tail -n +2 "$RC/p4/runs.tsv" | cut -f1,6 | tr '\t' ' ')" == 'crash-consistency main' ]] && ok "release-check.sh: ... found by its #7 title, on the set's own ref" || bad "release-check.sh: PR mode" "$(cat "$RC/p4/runs.tsv")"
+n0=$(grep -c . "$RC/calls.txt")
+expect_rc "release-check.sh: --dry-run, all eight sets -> exit 0" 0 "$(rcd p5 --patch "$PP" --line "$L40" --dry-run)"
+[[ "$(grep -c 'gh workflow run' "$RC/p5.log")" == 8 && "$(grep -c . "$RC/calls.txt")" == "$n0" && ! -e "$RC/p5" ]] \
+  && ok "release-check.sh: ... eight lines printed, gh not called, nothing written" || bad "release-check.sh: dry run" "$(cat "$RC/p5.log")"
+
 [[ $fail == 0 ]] && echo "tooling tests: all ok" || { echo "tooling tests: MISMATCH (see $T)"; exit 1; }

@@ -310,7 +310,7 @@ one of the PR's several merge bases (a PR that merged its base branch in), the d
 With `test_patches` these checks still run against the line's commit, not the local test-patch commit. The two patch
 inputs differ in which arm they reach: `test_patches` both (a test condition, never proposed upstream), `extra_patch`
 the candidate only (a change under test); the build summary names either with its sha256. The run's title
-carries `A/A` or `#<pr>`, ` + <extra_patch>` when set, the line, `shards x pairs`, and ` v4`, ` +test patches` and ` [<scenario_env>]` when set
+carries `A/A`, `#<pr>` or `patch` (patch mode), ` + <extra_patch>` when set, the line, `shards x pairs`, and ` v4`, ` +test patches` and ` [<scenario_env>]` when set
 (`review/release-check.sh` finds its dispatches by that title).
 
 `ci/diffrun.yml.example` is a `workflow_dispatch` workflow: it lints first, builds base and candidate with

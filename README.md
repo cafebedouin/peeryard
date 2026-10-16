@@ -98,7 +98,8 @@ split and rejoined, inspected, repaired and sent back out.
   runs a published verdict is meant to rest on. `spec-loop.yml` runs one of ergo's own unit specs (or one test in it) N
   times on a commit, with an optional patch applied first: a flaky test's count before and after a change.
   `review/release-check.sh` dispatches the release-candidate set (interop, indexer, fork convergence, sibling fork:
-  previous release vs the release PR) through `pr-scenario.yml` and collects one table; `review/RELEASE-CHECK.md` reads it.
+  previous release vs the release PR, or a line vs the line + a patch such as a composite of approved PRs in
+  `patches/train/`) through `pr-scenario.yml` and collects one table; `review/RELEASE-CHECK.md` reads it.
 - `audits/` — where a run's evidence lives (ignored by git except the layout and an example), so a reviewer
   can answer follow-up questions from what actually ran.
 

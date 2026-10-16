@@ -47,6 +47,14 @@ jobs:
           printf '%s' "$PATCH_B64" | base64 -d > "$RUNNER_TEMP/input.patch"
           git -C ergo apply --verbose "$RUNNER_TEMP/input.patch"
           { echo "patch sha256: $(sha256sum "$RUNNER_TEMP/input.patch" | cut -c1-64)"; echo '```diff'; cat "$RUNNER_TEMP/input.patch"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        with: { path: peeryard }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ivy2/local/org.scorexfoundation
+          key: spec-loop-sigma-${{ hashFiles('ergo/build.sbt', 'peeryard/patches/sigma-snapshot.sh') }}
+      - name: sigma-state snapshot (weak-blocks pins a -SNAPSHOT that is on no public repository; a release version needs nothing)
+        run: DIFFRUN_ERGO_CLONE="$PWD/ergo" JAVA8_HOME="$JAVA_HOME" bash peeryard/patches/sigma-snapshot.sh HEAD
       - uses: actions/cache@v4
         with:
           path: |

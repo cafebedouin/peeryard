@@ -9,7 +9,7 @@
 # environment, ";"-separated (rig/suite-env.sh: only keys the example's row in rig/examples/suite.tsv declares, values
 # [A-Za-z0-9._:,-]), written into the checked-out suite.tsv; the effective env is printed in each job's summary.
 name: peeryard sweep
-run-name: "peeryard sweep (${{ inputs.node || 'reference' }}; ${{ inputs.examples || 'all examples' }} x${{ inputs.repeats || '1' }})${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
+run-name: "peeryard sweep (${{ inputs.node || 'reference' }}; ${{ inputs.examples || 'all examples' }} x${{ inputs.repeats || '1' }})${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}${{ inputs.ergo_patches != '' && format(' patches: {0}', inputs.ergo_patches) || '' }}"
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +19,8 @@ on:
       node: { description: 'the node the examples run on: reference (the release plus the carried patches) or release (the release jar alone, for an A/B against the reference)', default: 'reference' }
       diffrun: { description: 'also run the two diffrun scenarios, one pair per repeat', type: boolean, default: true }
       scenario_env: { description: 'optional: KEY=VALUE overrides of the examples env, separated by ";" (keys the example''s suite.tsv row declares; values [A-Za-z0-9._:,-]), e.g. REORG_CONFIRM_WAIT_S=600', default: '' }
+      ergo_patches: { description: 'optional: space-separated ids of patches/ergo to stack into the reference node (default: every patch stack_statuses selects); for an ablation, e.g. 006 alone', default: '' }
+      keep_logs: { description: 'keep every run''s node logs in its artifact, PASS included (PEERYARD_KEEP_LOGS=1)', type: boolean, default: false }
   push:
     branches: [ 'ci/sweep' ]
 permissions:
@@ -27,6 +29,8 @@ env:
   PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
   SCENARIO_ENV: ${{ inputs.scenario_env }}
   EXAMPLES: ${{ inputs.examples }}
+  ERGO_PATCHES: ${{ inputs.ergo_patches }}
+  PEERYARD_KEEP_LOGS: ${{ inputs.keep_logs && '1' || '0' }}
   RELEASE_TAG: v6.0.8
   RELEASE_SHA256: e1269f3c9b1c75d29f1f1bded720101792db41118757016123de113668353346   # the release's own ergo-6.0.8.jar.sha256; class files checked against a source build (2026-10-15)
 jobs:
@@ -65,6 +69,15 @@ jobs:
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
           bash patches/sigma-snapshot.sh "$(jq -r .base patches/ergo-matrix/patches.json)" \
             || echo "::warning::sigma-state snapshot not published; the Matrix stack will not build and Matrix examples are skipped"
+      - name: ergo_patches (stack only the named patches; the others get a status stack_statuses does not select; after the cache key, which stays the tree's)
+        if: inputs.ergo_patches != ''
+        run: |
+          J=patches/ergo/patches.json
+          ids="$(tr ' ' '\n' <<< "$ERGO_PATCHES" | grep . | jq -R . | jq -sc .)"
+          bad="$(jq -r --argjson ids "$ids" '[.patches[].id] as $have | $ids - $have | join(" ")' "$J")"
+          [ -z "$bad" ] || { echo "::error::ergo_patches: no such patch: $bad"; exit 1; }
+          jq --argjson ids "$ids" '.patches |= map(if (.id as $i | $ids | index($i)) then . else .status = "left-out-by-input" end)' "$J" > "$J.new" && mv "$J.new" "$J"
+          echo "ergo stack for this run: $(jq -r '.stack_statuses as $s | [.patches[] | select(.status as $x | $s | index($x)) | .id] | join(" ")' "$J")" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Build the reference nodes
         run: |
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"

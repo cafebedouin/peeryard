@@ -278,4 +278,5 @@ mv "$PEND/verdict.json" "$PEND/table.txt" "$OUT/" && rmdir "$PEND" || err "canno
 cat "$OUT/table.txt"
 echo "diffrun: verdict written: $OUT/verdict.json" >&2
 # the node logs of the base and candidate runs, compared (does not change the verdict; DIFFRUN_LOGAB=0 skips it)
-[[ "${DIFFRUN_LOGAB:-1}" == 1 ]] && { bash "$HERE/logab.sh" "$OUT" || echo "diffrun: log comparison failed (exit $?)" >&2; }
+if [[ "${DIFFRUN_LOGAB:-1}" == 1 ]]; then bash "$HERE/logab.sh" "$OUT" || echo "diffrun: log comparison failed (exit $?)" >&2; fi
+exit 0

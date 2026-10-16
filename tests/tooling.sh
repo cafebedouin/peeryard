@@ -99,6 +99,9 @@ o29="$(floor_out 29 base)"; o30="$(floor_out 30 base)"; onone="$(floor_out 29 ""
 # diag/wire.py: TCP reassembly, framing, validated resync, the unframed handshake, parsers (tests/wire_test.py)
 if python3 tests/wire_test.py > "$T/wire.txt" 2>&1; then ok "wire.py: $(grep -oE 'Ran [0-9]+ tests' "$T/wire.txt")"
 else bad "wire.py: reassembly and framing" "see $T/wire.txt"; fi
+# diag/matrix_value.py: uncle duplicate/unique split, sibling fates, frame bytes, type-102 request matching (tests/matrix_value_test.py)
+if python3 tests/matrix_value_test.py > "$T/matrix_value.txt" 2>&1; then ok "matrix_value.py: $(grep -oE 'Ran [0-9]+ tests' "$T/matrix_value.txt")"
+else bad "matrix_value.py: value split and request matching" "see $T/matrix_value.txt"; fi
 
 # diffrun/logab.sh: base vs candidate node logs (synthetic runs, no node): a line only the candidate logs is novel,
 # identical logs give no novel message

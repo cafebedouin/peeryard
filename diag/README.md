@@ -13,6 +13,7 @@ All are standard-library Python and have tests in `tests/` (wired into `tests/to
 | `logmap.py` | which line of the node's source wrote this log line? | a node source checkout | an index of `log.<level>(...)` calls; `--source` on `features.py` and `sweep.py` names the code behind each finding |
 | `costs.py` | what did recovery cost? | a rig run's `events.jsonl` + `samples.jsonl` | `costs.json`: per heal, revive and relaunch, the seconds to agreement (equal tips at two consecutive samples), first answer and CPU in the window; a one-line summary |
 | `matrix_prop.py` | how far and how fast do Matrix input blocks travel? | the `messages.jsonl` of `matrix-latency` runs with the wire on | per run and per arm: the share of A's input blocks that reach C, the hop latency, duplicates per link (`.github/workflows/matrix-relay.yml`) |
+| `matrix_value.py` | what did Matrix input blocks carry, cost on the wire and fetch again? | a matrix-compat run dir, or a patch-compare run artifact: `rig.log` and the node logs; with the wire on (`PEERYARD_WIRE=1`) `messages.jsonl`; with a payment load `txwatch.jsonl` and `txload*.jsonl` (no rig example here writes those yet: their sections print `n/a`) | per run: bytes per minute per sending node by message group and type (and to Matrix vs reference peers); BlockTransactions requests per received ordering block (wire, by section id; and from the logs, without the wire); merged-uncle transactions split into duplicates and unique; every sibling's transactions by fate (on the winning path, merged, re-included later, none); input-block body requests and their answers; per node the invalid-modifier, double-application and penalty log counts; pool size and block fill. A report, no verdict (`.github/workflows/patch-compare.yml` writes `value.txt` for matrix-compat examples) |
 | `wire.py` | what did the nodes actually send each other? | a rig run with the wire on (`PEERYARD_WIRE=1`): one pcap per link | `messages.jsonl`: every P2P message per link and direction, on the rig's clock, with drops and decode gaps counted |
 
 ## How they fit
@@ -68,7 +69,12 @@ a packet.
   input- and ordering-block ids (the Blake2b-256 of the header, as the node computes them), heights, the parent input
   block, and the weak (6-byte) transaction ids. Checked on a `matrix-latency` capture: 309 Matrix frames, no parse
   error, every input block's parent id is one this decoder computed from another announcement, and all 271 ids
-  appear in the nodes' own logs.
+  appear in the nodes' own logs. Also parsed: an input block's ordering parent (the header's parentId); from announcement
+  version 2, the length of the new fields and, when they read as the uncles prototype's field (a count of at most 2,
+  then 32-byte ids), `uncle_ids`; and per ordering block (106) and per delivered header (Modifiers 101) the id of its
+  BlockTransactions section (`tx_section_id(s)`: Blake2b-256 of 102, the header id and its transactionsRoot), so a
+  type-102 RequestModifier can be tied to the block it fetches. On the golden capture every delivered header's computed
+  section id is one the nodes named on the wire (tests/wire_test.py).
 - **A gap is a loss of capture, not of traffic**: a hole the receiver acknowledged but the capture never saw. A
   direction the capture never saw at all (no SYN and no payload) is found the same way, from the other side's acks, and
   is a `gap` with `"unseen": true`; `matrix_prop.py` leaves a run with a gap on a counted direction out of the pool. Every

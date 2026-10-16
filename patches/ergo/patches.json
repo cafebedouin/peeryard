@@ -16,11 +16,11 @@
       "upstream_head": "709e04eb22",
       "status": "proposed",
       "added": "2026-09-24",
-      "fixes": "a transaction announced before its unconfirmed parent is declined by the receiving peer and not requested again for 20 minutes; after a rollback, a chain of wallet payments returns to the pool and reaches the next miner out of order, so most of the chain stays unconfirmed",
+      "fixes": "a transaction announced before its unconfirmed parent is declined by the receiving peer; after a rollback, a chain of wallet payments returns to the pool and the rebroadcast checks each announced window of 3 only against the state and itself, so a chained set reaches the next miner as a random walk. Since v6.0.8 (#2641 clears the declined table every block) it gets there in about 130-190 s, often after a test deadline; with the ancestors announced together it takes one round (26-112 s)",
       "needed_by": [
         "rig reorg-mempool"
       ],
-      "witness": "v2 (bounded iterative walk): unit MempoolAuditorSpec 4/4, change mutated out -> the 2 new tests fail; network reorg-mempool on v6.0.6 + v2: 10 of 10 in both valid runs (2 further runs inconclusive: no rebroadcast round, the payments absent from the sender pool after the rollback, independent of the patch). v1: 10 of 10 in 2 runs.",
+      "witness": "v2 (bounded iterative walk): unit MempoolAuditorSpec 4/4, change mutated out -> the 2 new tests fail; network reorg-mempool on v6.0.6 + v2: 10 of 10 in both valid runs (2 further runs inconclusive: no rebroadcast round, the payments absent from the sender pool after the rollback, independent of the patch). v1: 10 of 10 in 2 runs.; v6.0.8 hosted A/B (sweep runs 38853379783 release / 38853381827 reference, reorg-mempool + reorg-mempool-phases, 5 repeats each): release 8 of 10 PASS (2 FAIL: payments not re-confirmed by the deadline), reference 10 of 10",
       "responses": [
         "2026-09-25: filed as issue #2572 + PR #2573 (v6.0.7)",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",

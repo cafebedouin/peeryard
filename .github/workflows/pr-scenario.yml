@@ -28,6 +28,10 @@
 # without extra_patch and compare the two runs' candidate arms (patches/ergo-2641/ is an example). The two patch
 # inputs differ in which arm they reach: test_patches both (a test condition), extra_patch the candidate (a change
 # under test).
+# Patch mode (extra_patch with pr empty, a release tag or a commit line only): no PR is fetched; the candidate is the
+# build base plus extra_patch (committed on it, production paths only, like a PR's diff), the base arm is the build
+# base. For a change not filed as a PR yet, or a merged PR whose base branch is gone (PR mode cannot fetch it): export
+# its production diff as a patch and run it on the line it merged into.
 # scenario_env: KEY=VALUE overrides of the manifest's env, ";"-separated (diffrun/scenario-env.sh: only keys the
 # manifest declares, values [A-Za-z0-9._ :,-]), written into the checked-out manifest so verdict.json's provenance
 # records the effective env.
@@ -36,7 +40,7 @@ name: peeryard PR scenario
 on:
   workflow_dispatch:
     inputs:
-      pr: { description: 'ergoplatform/ergo pull request number (ignored when aa is true)', default: '' }
+      pr: { description: 'ergoplatform/ergo pull request number (ignored when aa is true; empty with extra_patch: patch mode, candidate = line + patch)', default: '' }
       head: { description: 'the PR head commit, 40 hex (the run fails if the PR has moved; ignored when aa is true)', default: '' }
       line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack), a release tag, e.g. v6.0.8, or a commit (40 hex). The line must contain the PR''s merge base: for a PR on a branch ahead of the release, give the merge base itself', default: 'v6.0.8' }
       scenario: { description: 'manifest basename under diffrun/scenarios/ (without .json); public tier, no stop_when/max_n', default: 'matrix-paychain' }
@@ -47,7 +51,7 @@ on:
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
       test_patches: { description: 'optional, a release tag or commit line only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the line''s commit plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
       extra_patch: { description: 'optional, not with aa: one patch file under patches/ (not patches/test/) applied to the CANDIDATE only, on the PR head: the candidate is the build base + the PR''s diff + this patch, the base arm is unchanged (a proposed change to the PR; compare against a run of the PR alone), e.g. patches/ergo-2641/floor20k.patch', default: '' }
-run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }}${{ inputs.extra_patch != '' && format(' + {0}', inputs.extra_patch) || '' }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
+run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || (inputs.pr != '' && format('#{0}', inputs.pr) || 'patch') }}${{ inputs.extra_patch != '' && format(' + {0}', inputs.extra_patch) || '' }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
 permissions:
   contents: read
 env:
@@ -91,6 +95,9 @@ jobs:
             [ "$AA" != true ] || fail "extra_patch: an A/A has no candidate to apply it to"
           fi
           if [ "$AA" = true ]; then echo "A/A control: pr and head are ignored"
+          elif [ -z "$PR" ] && [ -n "$EXTRA_PATCH" ]; then
+            [[ "$LINE" =~ ^v[0-9.]+$ || "$LINE" =~ ^[0-9a-f]{40}$ ]] || fail "patch mode (extra_patch, no pr): a release tag or a commit line only"
+            echo "patch mode: the candidate is the line plus $EXTRA_PATCH, no PR is fetched"
           else
             [[ "$PR" =~ ^[0-9]+$ ]] || fail "pr: a number"
             [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "head: 40 lowercase hex"
@@ -136,7 +143,17 @@ jobs:
           fi
           { echo "BASE=$BASE"; echo "BSHA=$BSHA"; echo "LSHA=$LSHA"; } >> "$GITHUB_ENV"
           { echo '```'; echo "build base: $LINE${TPLINE:+ + test patches:$TPLINE} ($BSHA)"; [ -z "$SCENARIO_ENV" ] || echo "scenario env overrides: $SCENARIO_ENV"; } > summary.txt
-          if [ "$AA" != true ]; then
+          if [ "$AA" != true ] && [ -z "$PR" ]; then
+            # patch mode: the patch is committed on the build base (a local branch), so the candidate is the build base
+            # plus this patch, restricted to the production dirs by the build step like a PR's diff
+            git -C "$C" -c advice.detachedHead=false checkout -q -b patch-extra "$BSHA"
+            git -C "$C" apply --index "$GITHUB_WORKSPACE/$EXTRA_PATCH" || fail "extra_patch $EXTRA_PATCH does not apply on $BASE"
+            git -C "$C" -c user.name=pr-scenario -c user.email=pr-scenario@localhost commit -q -m "PROPOSED, candidate only: $EXTRA_PATCH"
+            RANGE="$BSHA..patch-extra"
+            { echo "patch mode (no PR): $EXTRA_PATCH (sha256 $(sha256sum "$EXTRA_PATCH" | cut -d' ' -f1)) on the build base; diff range $RANGE"
+              echo "merge-base: $BSHA"; } >> summary.txt
+            echo "RANGE=$RANGE" >> "$GITHUB_ENV"
+          elif [ "$AA" != true ]; then
             B="$(gh api "repos/ergoplatform/ergo/pulls/$PR" --jq .base.ref)"
             [[ "$B" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "unexpected base branch name"
             git -C "$C" fetch -q origin "+refs/heads/$B:refs/remotes/origin/$B" "+pull/$PR/head:refs/heads/pr-$PR"
@@ -199,7 +216,8 @@ jobs:
               echo "candidate: build base $BSHA + Matrix stack + PR #$PR diff${EXTRA_PATCH:+ + $EXTRA_PATCH} last: $(stacked candidate) (merge-base $MB, head $HEAD_SHA)" >> summary.txt
             else
               put candidate "$(build "$BASE" "$RANGE" -- "${PATHS[@]}")"
-              echo "candidate: build base $BSHA + PR #$PR diff${EXTRA_PATCH:+ + $EXTRA_PATCH} (merge-base $MB, head $HEAD_SHA)" >> summary.txt
+              if [ -z "$PR" ]; then echo "candidate: build base $BSHA + $EXTRA_PATCH (patch mode, no PR)" >> summary.txt
+              else echo "candidate: build base $BSHA + PR #$PR diff${EXTRA_PATCH:+ + $EXTRA_PATCH} (merge-base $MB, head $HEAD_SHA)" >> summary.txt; fi
             fi
           else
             echo "A/A control: the base jar in both roles" >> summary.txt

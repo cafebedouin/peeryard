@@ -1,0 +1,5 @@
+    372 o.e.m.ErgoMiningThread - Accepting solution or preparing candidate did not succeed
+      7 o.e.m.CandidateGenerator$ - Retrying candidate generation after failed collection or proofs
+      6 o.e.m.CandidateGenerator$ - Failed to assemble a Matrix candidate after retry: 
+      2 o.e.m.CandidateGenerator$ - Failed to produce proofs for transactions, but emission box is found: 
+      2 o.e.m.CandidateGenerator$ - Retrying candidate generation after failed proofs

@@ -1,0 +1,27 @@
+{
+  "chain": "current",
+  "nodes": [
+    {
+      "name": "A",
+      "mining": true,
+      "knownPeers": []
+    },
+    {
+      "name": "B",
+      "mining": false,
+      "knownPeers": [
+        "A"
+      ],
+      "conf": {
+        "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\""
+      }
+    }
+  ],
+  "links": [
+    {
+      "a": "A",
+      "b": "B",
+      "delay_ms": 0
+    }
+  ]
+}

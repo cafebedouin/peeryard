@@ -11,6 +11,9 @@
 # miner's at an equal height) and at least one injury was actually applied. refused / recovered / stuck are
 # reported, not judged: the safety property is "never serve a wrong state"; liveness after damage is what the
 # report describes. INCONCLUSIVE = no injury could be applied (every `corrupt` failed), so nothing was tested.
+# B is damaged on purpose and may exit or fail on restart; that is the outcome this example reports, so the rig's
+# node-health check reports B without judging it (A is still judged).
+HEALTH_REPORT_ONLY=B
 INJ=${CORRUPTION_INJURIES:-"truncate-state zero-state-log drop-undo drop-history-objects"}; WATCH=${CORRUPTION_WATCH_S:-120}   # CORRUPTION_SETTLE_MIN: height both nodes reach before the first injury (default 30)
 settle(){ # settle <min height>: pause A's miner (a follower never sits level with a live 2 s miner), wait until B
   # is fully synced with A at height >= $1 with the same state root, resume mining. Runs in the main shell (a

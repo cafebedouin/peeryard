@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# tooling.sh: tests patches/check.sh, patches/stack.sh, diffrun/register.sh, diffrun/pool.sh and review/provenance.sh on local
+# tooling.sh: tests patches/check.sh, patches/stack.sh, patches/mutate.sh, diffrun/register.sh, diffrun/pool.sh,
+# rig/lib/blockwatch.sh (against a stubbed REST API) and review/provenance.sh on local
 # fixtures (a throwaway git repository and fake jars); no network, no node. Run from the peeryard root:
 #   T=$(mktemp -d) bash tests/tooling.sh
 set -uo pipefail
@@ -170,6 +171,40 @@ grep -q "FLAG context-dump added +6000 dump.txt" <<< "$af" && ok "agent-files.sh
 grep -q "verification-metadata.xml" <<< "$af" && bad "agent-files.sh: ... a large generated XML is not a dump" "flagged" || ok "agent-files.sh: ... a large generated XML is not a dump"
 grep -q "src/main/Big.txt" <<< "$af" && bad "agent-files.sh: ... a large file under src/ is not a dump" "flagged" || ok "agent-files.sh: ... a large file under src/ is not a dump"
 expect_rc "agent-files.sh: a clean commit range -> exit 0" 0 "$(bash review/agent-files.sh --git "$R" v1 v2 > /dev/null; echo $?)"
+
+# ---- patches/mutate.sh: a mutant is one patch from the base; the removed text must occur exactly once
+M="$T/mut"; mkdir -p "$M"
+mut(){ bash patches/mutate.sh --clone "$R" --base v1 "$@" > "$M/out.txt" 2> "$M/err.txt"; echo $?; }
+applied(){ local w="$M/wt-$1"; rm -rf "$w"; git -C "$R" worktree add -q --detach "$w" v1 && git -C "$w" apply "$2" && paste -sd' ' "$w/a.txt"; git -C "$R" worktree remove --force "$w"; }
+expect_rc "mutate.sh: base alone, one occurrence -> exit 0" 0 "$(mut --file a.txt --remove two --insert deux --out "$M/m1.patch")"
+[[ "$(applied m1 "$M/m1.patch")" == "one deux three" ]] && ok "mutate.sh: ... the mutant applies alone to the base" || bad "mutate.sh: m1" "$(applied m1 "$M/m1.patch")"
+expect_in "mutate.sh: ... the record names the removed text" '"removed": "two"' "$M/m1.patch.mutation.json"
+expect_rc "mutate.sh: base + candidate patch -> exit 0" 0 "$(mut --patch "$T/001.patch" --file a.txt --remove $'TWO\n' --out "$M/m2.patch")"
+[[ "$(applied m2 "$M/m2.patch")" == "one three" ]] && ok "mutate.sh: ... one patch = the candidate and the mutation" || bad "mutate.sh: m2" "$(applied m2 "$M/m2.patch")"
+expect_rc "mutate.sh: text absent from the candidate's tree -> exit 2" 2 "$(mut --patch "$T/001.patch" --file a.txt --remove two --out "$M/m3.patch")"
+expect_rc "mutate.sh: text occurring twice -> exit 2" 2 "$(mut --file a.txt --remove o --out "$M/m4.patch")"
+expect_in "mutate.sh: ... and says how many times" "occurs 2 times" "$M/err.txt"
+
+# ---- rig/lib/blockwatch.sh against a stubbed REST API: blocks collected across a reorg, checked clean, then with the
+# deliberately failing contract check reported on every block (BLOCKWATCH_RESULT, the value rig.sh judges)
+BW="$T/bw"; mkdir -p "$BW/out"
+bw_put(){ local h=$1 id=$2 par=$3; echo "$id" > "$BW/A.id.$h"; printf '{"header":{"id":"%s","height":%s,"parentId":"%s"},"blockTransactions":{"transactions":[{"id":"%s"}]}}' "$id" "$h" "$par" "$(printf 'c%063d' "$h")" > "$BW/blk.$id"; echo "$h" > "$BW/A.top"; }
+bwid(){ printf '%s%063d' "$1" "$2"; }
+( RIG_LOG_DIR="$BW/out"; BG_PIDS=(); export BLOCKWATCH_POLL_S=0.2 BLOCKWATCH_FROM=1
+  full_height(){ cat "$BW/$1.top"; }; header_at(){ cat "$BW/$1.id.$2" 2>/dev/null; }; mempool_ids(){ :; }; mark(){ :; }
+  rest(){ case "$2" in /info) printf '{"fullHeight":%s,"bestFullHeaderId":"%s"}' "$(cat "$BW/$1.top")" "$(cat "$BW/$1.id.$(cat "$BW/$1.top")")" ;;
+                       /blocks/*) cat "$BW/blk.${2#/blocks/}" ;; esac; }
+  # shellcheck source=rig/lib/blockwatch.sh
+  source rig/lib/blockwatch.sh
+  for h in 1 2 3 4 5; do bw_put "$h" "$(bwid a "$h")" "$( ((h > 1)) && bwid a $((h - 1)) || printf '%064d' 0)"; done
+  blockwatch_start A > /dev/null; sleep 1.5
+  bw_put 5 "$(bwid b 5)" "$(bwid a 4)"; bw_put 6 "$(bwid b 6)" "$(bwid b 5)"; sleep 1.5      # A switches to a sibling at 5
+  blockwatch_stop > "$BW/clean.txt"; echo "rc=$? result=$BLOCKWATCH_RESULT" >> "$BW/clean.txt"
+  blockwatch_stop --contract rig/lib/invariants/deliberate-fail.sh > "$BW/fail.txt"; echo "rc=$? result=$BLOCKWATCH_RESULT" >> "$BW/fail.txt" )
+[[ $(grep -c '"h":5,"id"' "$BW/out/blocks.jsonl") == 2 ]] && ok "blockwatch.sh: both blocks at a reorged height recorded" || bad "blockwatch.sh: reorg" "$(grep -c '"h":5,"id"' "$BW/out/blocks.jsonl") block records at 5"
+expect_in "blockwatch.sh: a clean chain -> OK" "rc=0 result=OK" "$BW/clean.txt"
+expect_in "blockwatch.sh: deliberate-fail contract -> reported per block" "contract:deliberate-fail.sh A@5 b0000" "$BW/fail.txt"
+expect_in "blockwatch.sh: ... and BLOCKWATCH_RESULT says VIOLATED" "rc=1 result=VIOLATED total=6" "$BW/fail.txt"
 
 # ---- post.sh guard (a stub detector; the prompt is answered "no", so nothing is posted: exit 1 = reached the prompt)
 P="$T/post"; mkdir -p "$P"

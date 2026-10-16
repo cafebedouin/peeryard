@@ -1,0 +1,922 @@
+diff --git a/ergo-wallet/src/main/scala/org/ergoplatform/wallet/boxes/ReplaceCompactCollectBoxSelector.scala b/ergo-wallet/src/main/scala/org/ergoplatform/wallet/boxes/ReplaceCompactCollectBoxSelector.scala
+index 0e32ebcec..bfeac7baf 100644
+--- a/ergo-wallet/src/main/scala/org/ergoplatform/wallet/boxes/ReplaceCompactCollectBoxSelector.scala
++++ b/ergo-wallet/src/main/scala/org/ergoplatform/wallet/boxes/ReplaceCompactCollectBoxSelector.scala
+@@ -100,7 +100,10 @@ class ReplaceCompactCollectBoxSelector(maxInputs: Int,
+     val dust = tail.sortBy(_.value).take(diff).filter(b => !bsr.inputBoxes.contains(b))
+ 
+     val boxes = bsr.inputBoxes ++ dust
+-    calcChange(boxes, targetBalance, targetAssets).mapRight(changeBoxes => selectionResultWithEip27Output(boxes, changeBoxes))
++    calcChange(boxes, targetBalance, targetAssets).fold(
++      _ => Right(bsr),
++      changeBoxes => Right(selectionResultWithEip27Output(boxes, changeBoxes))
++    )
+   }
+ 
+   protected[boxes] def compress[T <: ErgoBoxAssets](bsr: BoxSelectionResult[T],
+@@ -114,7 +117,7 @@ class ReplaceCompactCollectBoxSelector(maxInputs: Int,
+       boxes.filter(!_.tokens.keySet.exists(tid => targetAssetsKeys.contains(tid)))
+         .sortBy(b => BoxSelector.valueOf(b, reemissionDataOpt))
+ 
+-    if (diff >= BoxSelector.valueOf(sortedBoxesToThrowAway.head, reemissionDataOpt)) {
++    if (sortedBoxesToThrowAway.headOption.exists(b => diff >= BoxSelector.valueOf(b, reemissionDataOpt))) {
+       var thrownValue = 0L
+       val thrownBoxes = sortedBoxesToThrowAway.takeWhile { b =>
+         thrownValue = thrownValue + BoxSelector.valueOf(b, reemissionDataOpt)
+diff --git a/ergo-wallet/src/main/scala/org/ergoplatform/wallet/secrets/JsonSecretStorage.scala b/ergo-wallet/src/main/scala/org/ergoplatform/wallet/secrets/JsonSecretStorage.scala
+index 7b9300631..9930de73b 100644
+--- a/ergo-wallet/src/main/scala/org/ergoplatform/wallet/secrets/JsonSecretStorage.scala
++++ b/ergo-wallet/src/main/scala/org/ergoplatform/wallet/secrets/JsonSecretStorage.scala
+@@ -10,9 +10,13 @@ import org.ergoplatform.wallet.mnemonic.Mnemonic
+ import org.ergoplatform.wallet.settings.SecretStorageSettings
+ import scorex.util.encode.Base16
+ 
+-import java.io.{File, FileNotFoundException, PrintWriter}
++import java.io.{BufferedInputStream, File, FileNotFoundException, IOException, Writer}
++import java.nio.charset.StandardCharsets.UTF_8
++import java.nio.file.{FileAlreadyExistsException, Files, LinkOption, NoSuchFileException, Path, StandardCopyOption}
++import java.nio.file.attribute.{BasicFileAttributes, PosixFileAttributeView, PosixFilePermissions}
+ import java.util
+ import java.util.UUID
++import scala.util.control.NonFatal
+ import scala.util.{Failure, Success, Try}
+ 
+ /**
+@@ -89,29 +93,104 @@ final class JsonSecretStorage(val secretFile: File, encryptionSettings: Encrypti
+ 
+ object JsonSecretStorage {
+ 
++  private val MaxSecretCandidateBytes = 64 * 1024
++
++  private val StagingPrefix = ".ergo-secret-staging-"
++
++  // init has always published UUID-named JSON files. A damaged one must not
++  // turn into an apparent empty wallet, even in a shared node directory.
++  private val GeneratedSecretFileName = java.util.regex.Pattern.compile(
++    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json")
++
++  /** No discoverable wallet; ambiguous or unreadable inventories use other failures. */
++  final class SecretFileNotFoundException extends FileNotFoundException("Wallet secret file not found")
++
++  private def storageEntries(settings: SecretStorageSettings): Seq[File] = {
++    val dir = new File(settings.secretDir)
++    val attributes = try {
++      Some(Files.readAttributes(dir.toPath, classOf[BasicFileAttributes], LinkOption.NOFOLLOW_LINKS))
++    } catch {
++      case _: NoSuchFileException => None
++    }
++    attributes match {
++      case None => Seq.empty
++      case Some(attrs) =>
++        // An existing broken link is an invalid inventory, not an absent wallet directory.
++        val isDirectory = if (attrs.isSymbolicLink) {
++          Files.readAttributes(dir.toPath, classOf[BasicFileAttributes]).isDirectory
++        } else attrs.isDirectory
++        if (!isDirectory) throw new IOException("Wallet secret directory is not a directory")
++        Option(dir.listFiles()).getOrElse(throw new IOException("Cannot list wallet secret directory"))
++          .toSeq.filterNot(_.getName.startsWith(StagingPrefix))
++    }
++  }
++
+   /**
+    * Initializes storage instance with new wallet file encrypted with the given `pass`.
+-   * @param seed   - seed bytes
++   * @param seed   - seed bytes, erased on both success and failure
+    * @param pass   - encryption password
+    * @param usePre1627KeyDerivation - use incorrect(previous) BIP32 derivation, expected to be false for new wallets, and true for old pre-1627 wallets (see https://github.com/ergoplatform/ergo/issues/1627 for details)
+    */
+   def init(seed: Array[Byte], pass: SecretString, usePre1627KeyDerivation: Boolean)(settings: SecretStorageSettings): JsonSecretStorage = {
+-    val iv = scorex.utils.Random.randomBytes(crypto.AES.NonceBitsLen / 8)
+-    val salt = scorex.utils.Random.randomBytes(32)
+-    val (ciphertext, tag) = crypto.AES.encrypt(seed, pass.getData(), salt, iv)(settings.encryption)
+-    val encryptedSecret = EncryptedSecret(ciphertext, salt, iv, tag, settings.encryption, Some(usePre1627KeyDerivation))
+-    val uuid = UUID.nameUUIDFromBytes(ciphertext)
+-    new File(settings.secretDir).mkdirs()
+-    val file = new File(s"${settings.secretDir}/$uuid.json")
+-    val outWriter = new PrintWriter(file)
+-    val jsonRaw = encryptedSecret.asJson.noSpaces
+-
+-    outWriter.write(jsonRaw)
+-    outWriter.close()
+-
+-    util.Arrays.fill(seed, 0: Byte)
+-
+-    new JsonSecretStorage(file, settings.encryption)
++    try {
++      // A fresh encryption produces a new filename; checking only that target cannot prevent reinitialization.
++      readFile(settings) match {
++        case Success(_) => throw new FileAlreadyExistsException("Wallet secret file already exists")
++        case Failure(_: SecretFileNotFoundException) =>
++        case Failure(error) => throw error
++      }
++      val iv = scorex.utils.Random.randomBytes(crypto.AES.NonceBitsLen / 8)
++      val salt = scorex.utils.Random.randomBytes(32)
++      val (ciphertext, tag) = crypto.AES.encrypt(seed, pass.getData(), salt, iv)(settings.encryption)
++      val encryptedSecret = EncryptedSecret(ciphertext, salt, iv, tag, settings.encryption, Some(usePre1627KeyDerivation))
++      val uuid = UUID.nameUUIDFromBytes(ciphertext)
++      val file = new File(s"${settings.secretDir}/$uuid.json")
++      persist(file, encryptedSecret.asJson.noSpaces)
++      new JsonSecretStorage(file, settings.encryption)
++    } finally {
++      util.Arrays.fill(seed, 0: Byte)
++    }
++  }
++
++  /** Writes and closes a staging file before publishing it atomically. */
++  private[secrets] def persist(file: File, jsonRaw: String): Unit =
++    persist(file, jsonRaw, path => Files.newBufferedWriter(path, UTF_8))
++
++  private[secrets] def persist(file: File, jsonRaw: String,
++                               openWriter: Path => Writer): Unit = {
++    val target = file.toPath.toAbsolutePath
++    Files.createDirectories(target.getParent)
++    if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
++      throw new FileAlreadyExistsException(target.toString)
++    }
++    val staging = if (Files.getFileAttributeView(target.getParent, classOf[PosixFileAttributeView]) != null) {
++      Files.createTempFile(target.getParent, StagingPrefix, ".tmp",
++        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
++    } else {
++      Files.createTempFile(target.getParent, StagingPrefix, ".tmp")
++    }
++    try {
++      val writer = openWriter(staging)
++      var writeFailure: Option[Throwable] = None
++      try {
++        writer.write(jsonRaw)
++      } catch {
++        case NonFatal(error) =>
++          writeFailure = Some(error)
++          throw error
++      } finally {
++        writeFailure match {
++          case Some(error) => Try(writer.close()).failed.foreach(error.addSuppressed)
++          case None => writer.close()
++        }
++      }
++      // Do not expose a partial destination when atomic publication is unavailable.
++      Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE)
++    } catch {
++      case NonFatal(error) =>
++        Try(Files.deleteIfExists(staging)).failed.foreach(error.addSuppressed)
++        throw error
++    }
+   }
+ 
+   /**
+@@ -130,24 +209,44 @@ object JsonSecretStorage {
+     init(seed, encryptionPass, usePre1627KeyDerivation)(settings)
+   }
+ 
+-  def readFile(settings: SecretStorageSettings): Try[JsonSecretStorage] = {
+-    val dir = new File(settings.secretDir)
+-    if (dir.exists()) {
+-      dir.listFiles().toList match {
+-        case files if files.size > 1 =>
+-          val jsonFiles = files.filter(_.getName.contains(".json"))
+-          jsonFiles.headOption match {
+-            case Some(headFile) => Success(new JsonSecretStorage(headFile, settings.encryption))
+-            case None => Failure(new Exception(s"No json files found in dir '$dir'"))
+-          }
+-        case headFile :: _ =>
+-          Success(new JsonSecretStorage(headFile, settings.encryption))
+-        case Nil =>
+-          Failure(new Exception(s"Cannot readSecretStorage: Secret file not found in dir '$dir'"))
++  private def secretCandidate(file: File): Option[EncryptedSecret] = {
++    if (Files.size(file.toPath) > MaxSecretCandidateBytes) None
++    else {
++      val input = new BufferedInputStream(Files.newInputStream(file.toPath))
++      val bytes = try {
++        Iterator.continually(input.read()).take(MaxSecretCandidateBytes + 1)
++          .takeWhile(_ != -1).map(_.toByte).toArray
++      } finally input.close()
++      if (bytes.length > MaxSecretCandidateBytes) None
++      else decode[EncryptedSecret](new String(bytes, UTF_8)).fold(_ => None, Some(_))
++    }
++  }
++
++  def readFile(settings: SecretStorageSettings): Try[JsonSecretStorage] = Try {
++    val entries = storageEntries(settings)
++    entries.find(file => GeneratedSecretFileName.matcher(file.getName).matches() &&
++      !Files.isRegularFile(file.toPath)).foreach { file =>
++      throw new IOException(s"Invalid wallet secret file: ${file.getName}")
++    }
++    // Follow links to regular wallet files, as earlier discovery did, while
++    // ignoring dangling links and non-file entries in a shared directory.
++    val files = entries.filter(file => Files.isRegularFile(file.toPath)).sortBy(_.getName)
++    val candidates = files.flatMap { file =>
++      val candidate = secretCandidate(file)
++      if (candidate.isEmpty && GeneratedSecretFileName.matcher(file.getName).matches()) {
++        throw new IOException(s"Invalid wallet secret file: ${file.getName}")
+       }
+-    } else {
+-      Failure(new FileNotFoundException(s"Cannot readSecretStorage: dir '$dir' doesn't exist"))
++      candidate.map(file -> _)
++    }
++    if (candidates.isEmpty) throw new SecretFileNotFoundException
++    if (candidates.map(_._2).distinct.size > 1) {
++      throw new IOException(s"Wallet secret directory contains distinct wallet files: ${candidates.map(_._1.getName).mkString(", ")}")
+     }
++    val preferred = candidates.find(candidate =>
++      GeneratedSecretFileName.matcher(candidate._1.getName).matches())
++      .orElse(candidates.find(_._1.getName.endsWith(".json")))
++      .getOrElse(candidates.head)
++    new JsonSecretStorage(preferred._1, settings.encryption)
+   }
+ 
+ }
+diff --git a/src/main/scala/org/ergoplatform/local/CleanupWorker.scala b/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
+index ecc9c16e0..2aeaf28cd 100644
+--- a/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
++++ b/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
+@@ -1,13 +1,14 @@
+ package org.ergoplatform.local
+ 
+-import akka.actor.{Actor, ActorRef}
++import akka.actor.Actor
+ import org.ergoplatform.local.CleanupWorker.RunCleanup
+ import org.ergoplatform.local.MempoolAuditor.CleanupDone
++import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages.RecheckMempool
+ import org.ergoplatform.modifiers.mempool.UnconfirmedTransaction
+ import org.ergoplatform.nodeView.mempool.ErgoMemPoolReader
+ import org.ergoplatform.nodeView.state.UtxoStateReader
+ import org.ergoplatform.settings.NodeConfigurationSettings
+-import org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.{EliminateTransactions, RecheckedTransactions}
++import org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.RecheckedTransactions
+ import scorex.util.{ModifierId, ScorexLogging}
+ 
+ import scala.annotation.tailrec
+@@ -15,13 +16,13 @@ import scala.collection.mutable
+ import scala.concurrent.Future
+ import scala.util.{Failure, Success}
+ import scala.concurrent.ExecutionContext.Implicits.global
++import java.util.UUID
+ 
+ /**
+   * Performs mempool transactions re-validation. Called on a new block coming.
+-  * Validation results sent directly to `NodeViewHolder`.
++  * Reports a terminal result to the auditor for every completed Future.
+   */
+-class CleanupWorker(nodeViewHolderRef: ActorRef,
+-                    nodeSettings: NodeConfigurationSettings) extends Actor with ScorexLogging {
++class CleanupWorker(nodeSettings: NodeConfigurationSettings) extends Actor with ScorexLogging {
+ 
+   // Limit for total cost of transactions to be re-checked. Hard-coded for now.
+   private val CostLimit = 7000000
+@@ -34,23 +35,14 @@ class CleanupWorker(nodeViewHolderRef: ActorRef,
+   }
+ 
+   override def receive: Receive = {
+-    case RunCleanup(validator, mempool) =>
++    case RunCleanup(jobId, request) =>
+       val s = sender()
+-      validatePool(validator, mempool)
+-        .map { case (validated, toEliminate) =>
+-          log.debug(s"${validated.size} re-checked mempool transactions were ok, " +
+-            s"${toEliminate.size} transactions were invalidated")
+-
+-          if (validated.nonEmpty) {
+-            nodeViewHolderRef ! RecheckedTransactions(validated)
+-          }
+-          if (toEliminate.nonEmpty) {
+-            nodeViewHolderRef ! EliminateTransactions(toEliminate)
+-          }
+-          s ! CleanupDone
+-        }.andThen { case Failure(ex) =>
+-          logger.error("Mempool validation failed", ex)
++      validatePool(request.state, request.mempool, request.stateRevision).onComplete { result =>
++        s ! CleanupDone(jobId, result)
++        result.failed.foreach { ex =>
++          log.error("Mempool validation failed", ex)
+         }
++      }
+ 
+     //Should not be here, if non-expected signal comes, check logic
+     case a: Any => log.warn(s"Strange input: $a")
+@@ -62,7 +54,8 @@ class CleanupWorker(nodeViewHolderRef: ActorRef,
+     * @return - updated valid transactions and invalidated transaction ids
+     */
+   private def validatePool(validator: UtxoStateReader,
+-                           mempool: ErgoMemPoolReader): Future[(Seq[UnconfirmedTransaction], Seq[ModifierId])] = Future {
++                           mempool: ErgoMemPoolReader,
++                           stateRevision: UUID): Future[RecheckedTransactions] = Future {
+ 
+     val now = System.currentTimeMillis()
+ 
+@@ -93,7 +86,7 @@ class CleanupWorker(nodeViewHolderRef: ActorRef,
+               validationLoop(tail, validated += updTx, invalidated, txCost + costAcc)
+             case Failure(e) =>
+               val txId = head.id
+-              log.info(s"Transaction $txId invalidated: ${e.getMessage}")
++              log.debug(s"Transaction $txId failed cleanup validation: ${e.getMessage}")
+               validationLoop(tail, validated, invalidated += txId, head.lastCost.getOrElse(0) + costAcc) //add old cost
+           }
+         case _ =>
+@@ -102,7 +95,7 @@ class CleanupWorker(nodeViewHolderRef: ActorRef,
+     }
+ 
+     val res = validationLoop(txsToValidate, mutable.ArrayBuilder.make(), mutable.ArrayBuilder.make(), 0L)
+-    wrapRefArray(res._1.result()) -> wrapRefArray(res._2.result())
++    RecheckedTransactions(stateRevision, allPoolTxs, wrapRefArray(res._1.result()), wrapRefArray(res._2.result()))
+   }
+ 
+ }
+@@ -113,9 +106,9 @@ object CleanupWorker {
+     *
+     * A command to run (partial) memory pool cleanup
+     *
+-    * @param validator - a state implementation which provides transaction validation
+-    * @param mempool - mempool reader instance
++    * @param jobId - identifies this run independently of the state revision
++    * @param request - state, pool and owner-issued state revision to validate
+     */
+-  case class RunCleanup(validator: UtxoStateReader, mempool: ErgoMemPoolReader)
++  case class RunCleanup(jobId: UUID, request: RecheckMempool)
+ 
+ }
+diff --git a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala b/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
+index d46670287..663520efd 100644
+--- a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
++++ b/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
+@@ -12,9 +12,12 @@ import scorex.core.network.NetworkController.ReceivableMessages.SendToNetwork
+ import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages.RecheckMempool
+ import org.ergoplatform.nodeView.state.{ErgoStateReader, UtxoStateReader}
+ import org.ergoplatform.network.message.{InvData, InvSpec, Message}
++import org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.RecheckedTransactions
+ import scorex.util.ScorexLogging
+ 
++import java.util.UUID
+ import scala.concurrent.duration._
++import scala.util.Try
+ 
+ /**
+   * Controls mempool cleanup workflow. Watches NodeView events and delegates
+@@ -50,9 +53,10 @@ class MempoolAuditor(nodeViewHolderRef: ActorRef,
+ 
+   private var poolReaderOpt: Option[ErgoMemPoolReader] = None
+   private var stateReaderOpt: Option[ErgoStateReader] = None
++  private var pending: Option[RecheckMempool] = None
+ 
+   private val worker: ActorRef =
+-    context.actorOf(Props(new CleanupWorker(nodeViewHolderRef, settings.nodeSettings)))
++    context.actorOf(Props(new CleanupWorker(settings.nodeSettings)))
+ 
+   override def preStart(): Unit = {
+     context.system.eventStream.subscribe(self, classOf[RecheckMempool])
+@@ -61,26 +65,30 @@ class MempoolAuditor(nodeViewHolderRef: ActorRef,
+   override def receive: Receive = awaiting
+ 
+   private def awaiting: Receive = {
+-    case RecheckMempool(st: UtxoStateReader, mp: ErgoMemPoolReader) =>
+-      stateReaderOpt = Some(st)
+-      poolReaderOpt = Some(mp)
+-      initiateCleanup(st, mp)
++    case request: RecheckMempool => initiateCleanup(request)
++    case _: CleanupDone => // a completion from an obsolete worker run
+   }
+ 
+-  private def working: Receive = {
+-    case CleanupDone =>
+-      log.info("Cleanup done. Switching to awaiting mode")
+-      //rebroadcast transactions
+-      rebroadcastTransactions()
++  private def working(jobId: UUID): Receive = {
++    case CleanupDone(`jobId`, result) =>
++      result.foreach(nodeViewHolderRef ! _)
+       context become awaiting
+-
+-    case _ => // ignore other triggers until work is done
++      pending match {
++        case Some(request) => initiateCleanup(request)
++        case None => result.foreach { _ => rebroadcastTransactions() }
++      }
++    case request: RecheckMempool => pending = Some(request)
++    case _: CleanupDone => // a stale completion must not release the current job
+   }
+ 
+-  private def initiateCleanup(validator: UtxoStateReader, mempool: ErgoMemPoolReader): Unit = {
++  private def initiateCleanup(request: RecheckMempool): Unit = {
+     log.info("Initiating mempool cleanup")
+-    worker ! RunCleanup(validator, mempool)
+-    context become working // ignore other triggers until work is done
++    stateReaderOpt = Some(request.state)
++    poolReaderOpt = Some(request.mempool)
++    pending = None
++    val jobId = UUID.randomUUID()
++    worker ! RunCleanup(jobId, request)
++    context become working(jobId)
+   }
+ 
+   private def broadcastTx(unconfirmedTx: UnconfirmedTransaction): Unit = {
+@@ -119,7 +127,7 @@ class MempoolAuditor(nodeViewHolderRef: ActorRef,
+ 
+ object MempoolAuditor {
+ 
+-  case object CleanupDone
++  case class CleanupDone(jobId: UUID, result: Try[RecheckedTransactions])
+ 
+ }
+ 
+diff --git a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+index 167764969..0b8524ab7 100644
+--- a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
++++ b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+@@ -176,15 +176,18 @@ class CandidateGenerator(
+       log.info(
+         s"Preparing new candidate on getting new block at ${header.height}"
+       )
++      // the solved block is cleared whether or not a new candidate is needed: a candidate request processed after
++      // the block was applied and before this event has already put the cached candidate on the new block
++      val solvedBlockAfter = if (needNewSolution(state.solvedBlock, header.id)) None else state.solvedBlock
+       val stateWithAppliedTxs =
+-        state.copy(lastAppliedBlockTxs = Some(header.id -> applied.txIds.toSet))
++        state.copy(lastAppliedBlockTxs = Some(header.id -> applied.txIds.toSet), solvedBlock = solvedBlockAfter)
+       if (needNewCandidate(state.cachedCandidate, header)) {
+-        if (needNewSolution(state.solvedBlock, header.id))
+-          context.become(initialized(stateWithAppliedTxs.copy(cachedCandidate = None, cachedPreviousCandidate = None, solvedBlock = None)))
+-        else
+-          context.become(initialized(stateWithAppliedTxs.copy(cachedCandidate = None, cachedPreviousCandidate = None)))
++        context.become(initialized(stateWithAppliedTxs.copy(cachedCandidate = None, cachedPreviousCandidate = None)))
+         self ! GenerateCandidate(txsToInclude = Seq.empty, reply = false, forced = false)
+       } else {
++        if (state.solvedBlock.isDefined && solvedBlockAfter.isEmpty) {
++          log.info(s"Candidate already on applied block ${header.id}, released solved block ${state.solvedBlock.map(_.id)}")
++        }
+         context.become(initialized(stateWithAppliedTxs))
+       }
+ 
+@@ -245,6 +248,10 @@ class CandidateGenerator(
+         }
+       }
+ 
++    // completeBlock serializes the nonce before PoW validation can reject it.
++    case solution: AutolykosSolution if solution.n.length != 8 =>
++      sender() ! StatusReply.error("Invalid solution nonce length: expected 8 bytes")
++
+     case preSolution: AutolykosSolution
+         if state.solvedBlock.isEmpty && state.cachedCandidate.nonEmpty =>
+       // Inject node pk if it is not externally set (in Autolykos 2)
+@@ -254,27 +261,37 @@ class CandidateGenerator(
+         } else {
+           preSolution
+         }
+-      val result: StatusReply[Unit] = {
+-        val newBlock = state.cachedCandidate
+-          .map(candidate => completeBlock(candidate.candidateBlock, solution))
+-          .filter(block => ergoSettings.chainSettings.powScheme.validate(block.header).isSuccess)
+-          .getOrElse {
+-            log.info(s"Using previous candidate as a solution: " + state.cachedPreviousCandidate)
+-            completeBlock(state.cachedPreviousCandidate.get.candidateBlock, solution)
+-          }
+-        log.info(s"New block mined, header: ${newBlock.header}")
+-        ergoSettings.chainSettings.powScheme.validate(newBlock.header) match {
+-          case Success(_) =>
+-            sendToNodeView(newBlock)
+-            context.become(initialized(state.copy(solvedBlock = Some(newBlock))))
+-            StatusReply.success(())
++      val currentBlock = completeBlock(state.cachedCandidate.get.candidateBlock, solution)
++      val validatedCandidate: Either[Throwable, (ErgoFullBlock, Try[Unit])] =
++        ergoSettings.chainSettings.powScheme.validate(currentBlock.header) match {
++          case success @ Success(_) => Right(currentBlock -> success)
+           case Failure(exception) =>
+-            log.warn(s"Removing candidates due to invalid block", exception)
+-            context.become(initialized(state.copy(cachedCandidate = None, cachedPreviousCandidate = None)))
+-            StatusReply.error(
+-              new Exception(s"Invalid block mined: ${exception.getMessage}", exception)
+-            )
++            state.cachedPreviousCandidate.map { candidate =>
++              log.info(s"Using previous candidate as a solution: $candidate")
++              val previousBlock = completeBlock(candidate.candidateBlock, solution)
++              previousBlock -> ergoSettings.chainSettings.powScheme.validate(previousBlock.header)
++            }.toRight(exception)
+         }
++      val result: StatusReply[Unit] = validatedCandidate match {
++        case Right((newBlock, validation)) =>
++          log.info(s"New block mined, header: ${newBlock.header}")
++          validation match {
++            case Success(_) =>
++              sendToNodeView(newBlock)
++              context.become(initialized(state.copy(solvedBlock = Some(newBlock))))
++              StatusReply.success(())
++            case Failure(exception) =>
++              log.warn(s"Removing candidates due to invalid block", exception)
++              context.become(initialized(state.copy(cachedCandidate = None, cachedPreviousCandidate = None)))
++              StatusReply.error(
++                new Exception(s"Invalid block mined: ${exception.getMessage}", exception)
++              )
++          }
++        case Left(exception) =>
++          StatusReply.error(new Exception(
++            s"Invalid solution for current candidate and no previous candidate available: ${exception.getMessage}",
++            exception
++          ))
+       }
+       log.info(s"Processed solution $solution with the result $result")
+       sender() ! result
+diff --git a/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala b/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala
+index 15d9f367b..605a43d1d 100644
+--- a/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala
++++ b/src/main/scala/org/ergoplatform/mining/ErgoMiningThread.scala
+@@ -5,6 +5,7 @@ import akka.pattern.StatusReply
+ import org.ergoplatform.mining.CandidateGenerator.{Candidate, GenerateCandidate}
+ import org.ergoplatform.settings.ErgoSettings
+ import scorex.util.ScorexLogging
++import scorex.util.encode.Base16
+ 
+ import scala.concurrent.duration._
+ import scala.util.Random
+@@ -24,6 +25,14 @@ class ErgoMiningThread(
+ 
+   private val powScheme = ergoSettings.chainSettings.powScheme
+   private val NonceStep = 1000
++  private var mineCmdPending = false
++
++  private def enqueueMineCmdIfIdle(): Unit = {
++    if (!mineCmdPending) {
++      mineCmdPending = true
++      self ! MineCmd
++    }
++  }
+ 
+   override def preStart(): Unit = {
+     log.info(s"Starting miner thread: ${self.path.name}")
+@@ -40,10 +49,11 @@ class ErgoMiningThread(
+     log.info(s"Stopping miner thread: ${self.path.name}")
+ 
+   override def receive: Receive = {
+-    case StatusReply.Success(Candidate(candidateBlock, _, _)) =>
++    case StatusReply.Success(candidate: Candidate) =>
+       log.info(s"Initiating block mining")
+-      context.become(mining(nonce = 0, candidateBlock, solvedBlocksCount = 0))
+-      self ! MineCmd
++      context.become(mining(nonce = 0, candidateBlock = candidate.candidateBlock,
++        workMsg = candidate.externalVersion.msg.clone(), solvedBlocksCount = 0))
++      enqueueMineCmdIfIdle()
+     case StatusReply.Error(ex) =>
+       log.error(s"Preparing candidate did not succeed", ex)
+   }
+@@ -51,20 +61,24 @@ class ErgoMiningThread(
+   def mining(
+     nonce: Int,
+     candidateBlock: CandidateBlock,
++    workMsg: Array[Byte],
+     solvedBlocksCount: Int
+   ): Receive = {
+-    case StatusReply.Success(Candidate(cb, _, _)) =>
+-      // if we get new candidate instead of a cached one, mine it
+-      if (cb.timestamp != candidateBlock.timestamp) {
+-        context.become(mining(nonce = 0, cb, solvedBlocksCount))
+-        self ! MineCmd
++    case StatusReply.Success(candidate: Candidate) =>
++      // A new candidate can have the same timestamp but different PoW work.
++      if (!java.util.Arrays.equals(candidate.externalVersion.msg, workMsg)) {
++        log.info(s"Switching block mining work to msg ${Base16.encode(candidate.externalVersion.msg)}")
++        context.become(mining(nonce = 0, candidateBlock = candidate.candidateBlock,
++          workMsg = candidate.externalVersion.msg.clone(), solvedBlocksCount = solvedBlocksCount))
++        enqueueMineCmdIfIdle()
+       }
+     case StatusReply.Error(ex) =>
+       log.error(s"Accepting solution or preparing candidate did not succeed", ex)
+     case StatusReply.Success(()) =>
+       log.info(s"Solution accepted")
+-      context.become(mining(nonce, candidateBlock, solvedBlocksCount + 1))
++      context.become(mining(nonce, candidateBlock, workMsg, solvedBlocksCount + 1))
+     case MineCmd =>
++      mineCmdPending = false
+       val lastNonceToCheck = nonce + NonceStep
+       powScheme.proveCandidate(candidateBlock, sk, nonce, lastNonceToCheck) match {
+         case Some(newBlock) =>
+@@ -72,8 +86,8 @@ class ErgoMiningThread(
+           candidateGenerator ! newBlock.header.powSolution
+         case None =>
+           log.info(s"Trying nonce $lastNonceToCheck")
+-          context.become(mining(lastNonceToCheck, candidateBlock, solvedBlocksCount))
+-          self ! MineCmd
++          context.become(mining(lastNonceToCheck, candidateBlock, workMsg, solvedBlocksCount))
++          enqueueMineCmdIfIdle()
+       }
+     case GetSolvedBlocksCount =>
+       sender() ! SolvedBlocksCount(solvedBlocksCount)
+@@ -83,7 +97,7 @@ class ErgoMiningThread(
+ 
+ object ErgoMiningThread {
+ 
+-  case object MineCmd
++  private case object MineCmd
+   case object GetSolvedBlocksCount // metric just for testing purposes for now
+   case class SolvedBlocksCount(count: Int)
+ 
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala
+index e7784ed7c..7ca54cbbb 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala
+@@ -156,7 +156,7 @@ object ErgoNodeViewSynchronizerMessages {
+      * @param state   - up-to-date state to check transaction against
+      * @param mempool - mempool to check
+      */
+-    case class RecheckMempool(state: UtxoStateReader, mempool: ErgoMemPoolReader)
++    case class RecheckMempool(state: UtxoStateReader, mempool: ErgoMemPoolReader, stateRevision: java.util.UUID)
+ 
+     /**
+      * Signal for a central node view holder component to initialize UTXO state from UTXO set snapshot
+diff --git a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+index b83e155fe..fd711bf43 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+@@ -22,10 +22,11 @@ import org.ergoplatform.settings.{Algos, Constants, ErgoSettings, NetworkType, S
+ import org.ergoplatform.utils.ScorexEncoding
+ import org.ergoplatform.validation.{MalformedModifierError, RecoverableModifierError}
+ import org.ergoplatform.wallet.utils.FileUtils
+-import scorex.util.{ModifierId, ScorexLogging}
++import scorex.util.{ModifierId, ScorexLogging, bytesToId}
+ import spire.syntax.all.cfor
+ 
+ import java.io.File
++import java.util.UUID
+ import org.ergoplatform.modifiers.history.extension.Extension
+ 
+ import scala.annotation.tailrec
+@@ -70,6 +71,10 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+     */
+   private var nodeView: NodeView = restoreState().getOrElse(genesisState)
+ 
++  // Readers share mutable storage. Invalidate in-flight checks before mutation,
++  // including attempts which fail or roll back to the same state version.
++  private var stateRevision: UUID = UUID.randomUUID()
++
+   /** Tracking last modifier and header & block heights in time, being periodically checked for possible stuck */
+   private var chainProgress: Option[ChainProgress] = None
+ 
+@@ -187,6 +192,7 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+                                   progressInfo: ProgressInfo[BlockSection],
+                                   suffixApplied: IndexedSeq[BlockSection],
+                                   local: Boolean = false): (ErgoHistory, Try[State], Seq[BlockSection]) = {
++    stateRevision = UUID.randomUUID()
+     requestDownloads(progressInfo)
+ 
+     val (stateToApplyTry: Try[State], suffixTrimmed: IndexedSeq[BlockSection]) = if (progressInfo.chainSwitchingNeeded) {
+@@ -302,6 +308,7 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+   def processStateSnapshot: Receive = {
+     case InitStateFromSnapshot(height, blockId) =>
+       if (!history().isUtxoSnapshotApplied) {
++        stateRevision = UUID.randomUUID()
+         val store = minimalState().store
+         history().createPersistentProver(store, history(), height, blockId) match {
+           case Success(pp) =>
+@@ -545,7 +552,7 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+                   // we can check mempool transactions only in "utxo" mode
+                   newMinState match {
+                     case utxoStateReader: UtxoStateReader if headersHeight == fullBlockHeight =>
+-                      val recheckCommand = RecheckMempool(utxoStateReader, newMemPool)
++                      val recheckCommand = RecheckMempool(utxoStateReader, newMemPool, stateRevision)
+                       context.system.eventStream.publish(recheckCommand)
+                     case _ =>
+                   }
+@@ -696,9 +703,34 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+       txModify(unconfirmedTx)
+     case LocallyGeneratedTransaction(unconfirmedTx) =>
+       sender() ! txModify(unconfirmedTx)
+-    case RecheckedTransactions(unconfirmedTxs) =>
+-      val updatedPool = memoryPool().put(unconfirmedTxs)
+-      updateNodeView(updatedMempool = Some(updatedPool))
++    case RecheckedTransactions(revision, originals, unconfirmedTxs, invalidatedIds) if revision == stateRevision =>
++      val currentPool = memoryPool()
++      // Candidate generation can remove a parent while its child remains in the pool.
++      // Refreshing that child from the old snapshot would defer its next validity check.
++      val originalOutputs = originals.iterator.flatMap(_.transaction.outputs).map(b => bytesToId(b.id)).toSet
++      val currentOutputs = currentPool.getAll.iterator.flatMap(_.transaction.outputs).map(b => bytesToId(b.id)).toSet
++      val eligibleIds = originals.iterator.filter { original =>
++        currentPool.getAll(Seq(original.id)).headOption.exists(_ eq original) && {
++          val tx = original.transaction
++          val dependencies = tx.inputs.iterator.map(i => bytesToId(i.boxId)) ++
++            tx.dataInputs.iterator.map(i => bytesToId(i.boxId))
++          dependencies.forall(id => originalOutputs.contains(id) == currentOutputs.contains(id))
++        }
++      }.map(_.id).toSet
++      val toEliminate = invalidatedIds.filter(eligibleIds.contains)
++      val refreshed = unconfirmedTxs.filter(tx => eligibleIds.contains(tx.id))
++      if (refreshed.nonEmpty || toEliminate.nonEmpty) {
++        val updatedPool = toEliminate.foldLeft(currentPool.put(refreshed)) { case (pool, id) => pool.invalidate(id) }
++        updateNodeView(updatedMempool = Some(updatedPool))
++        val e = new Exception("Became invalid")
++        toEliminate.foreach(id => context.system.eventStream.publish(FailedOnRecheckTransaction(id, e)))
++      }
++      val skipped = unconfirmedTxs.size + invalidatedIds.size - refreshed.size - toEliminate.size
++      log.debug(s"Mempool cleanup result: refreshed=${refreshed.size}, eliminated=${toEliminate.size}, skipped=$skipped")
++    case RecheckedTransactions(_, _, unconfirmedTxs, invalidatedIds) =>
++      val skipped = unconfirmedTxs.size + invalidatedIds.size
++      log.debug(s"Mempool cleanup result discarded after state revision change: " +
++        s"refreshed=0, eliminated=0, skipped=$skipped")
+     case EliminateTransactions(ids) =>
+       val updatedPool = ids.foldLeft(memoryPool()) { case (pool, txId) => pool.invalidate(txId) }
+       updateNodeView(updatedMempool = Some(updatedPool))
+@@ -798,7 +830,10 @@ object ErgoNodeViewHolder {
+       * Wrapper for transactions which sit in mempool for long enough time, so `CleanWorker` is re-checking their
+       * validity and then sending via this message to update the mempool
+       */
+-    case class RecheckedTransactions(unconfirmedTxs: Iterable[UnconfirmedTransaction])
++    case class RecheckedTransactions(stateRevision: UUID,
++                                     originals: Seq[UnconfirmedTransaction],
++                                     unconfirmedTxs: Seq[UnconfirmedTransaction],
++                                     invalidatedIds: Seq[ModifierId])
+ 
+     case class EliminateTransactions(ids: Seq[ModifierId])
+ 
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
+index f31608959..9a9308e3a 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
+@@ -211,7 +211,7 @@ trait ErgoHistory
+     * @return
+     */
+   def forgetHeader(headerId: ModifierId): Try[Unit] = Try {
+-    val hOpt = typedModifierById[Header](headerId)
++    val hOpt = historyStorage.modifierById(headerId).collect { case h: Header if h.id == headerId => h }
+       val hRes = historyStorage.remove(
+         indicesToRemove = Array(validityKey(headerId), headerHeightKey(headerId), headerScoreKey(headerId)),
+         idsToRemove = Array(headerId)
+@@ -219,7 +219,7 @@ trait ErgoHistory
+     log.info(s"Result of removing header $headerId: " + hRes)
+ 
+     hOpt.foreach { h =>
+-      requiredModifiersForHeader(h).foreach { case (_, mId) =>
++      h.sectionIds.foreach { case (_, mId) =>
+         val mRes = historyStorage.remove(
+           indicesToRemove = Array(validityKey(mId)),
+           idsToRemove = Array(mId)
+@@ -244,16 +244,27 @@ object ErgoHistory extends ScorexLogging {
+     dir
+   }
+ 
+-  // check if there is possible database corruption when there is header after
+-  // recognized blockchain tip marked as invalid
++  // A retained alternative fork may continue above the selected full-block tip.
++  // Keep a continuation only when it has a readable, matching header and is not invalid.
+   protected[nodeView] def repairIfNeeded(history: ErgoHistory): Boolean = history.historyStorage.synchronized {
+     val bestHeaderHeight = history.headersHeight
+     val bestFullBlockHeight = history.bestFullBlockOpt.map(_.height).getOrElse(-1)
+     val afterHeaders = history.headerIdsAtHeight(bestHeaderHeight + 1)
+ 
+-    if (bestHeaderHeight == bestFullBlockHeight && afterHeaders.nonEmpty) {
+-      log.warn("Found suspicious continuation, clearing it...")
+-      afterHeaders.map { hId =>
++    val removableContinuations = afterHeaders.nonEmpty && afterHeaders.forall { id =>
++      history.isSemanticallyValid(id) match {
++        case ModifierSemanticValidity.Invalid => true
++        case _ => !history.historyStorage.modifierById(id).exists {
++          case header: Header => header.id == id
++          case _ => false
++        }
++      }
++    }
++
++    if (bestHeaderHeight == bestFullBlockHeight && removableContinuations) {
++      log.warn("Found invalid or unreadable continuation, clearing it...")
++      // Iterator.toSeq is a lazy Stream on Scala 2.12; force every deletion before dropping the row.
++      afterHeaders.foreach { hId =>
+         history.forgetHeader(hId)
+       }
+       history.historyStorage.remove(Array(history.heightIdsKey(bestHeaderHeight + 1)), Array.empty[ModifierId])
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/HistoryStorage.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/HistoryStorage.scala
+index 189c186ae..bee38ac04 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/HistoryStorage.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/HistoryStorage.scala
+@@ -52,8 +52,21 @@ class HistoryStorage(indexStore: LDBKVStore, objectsStore: LDBKVStore, extraStor
+       .maximumSize(config.history.indexesCacheSize)
+       .build[ByteArrayWrapper, Array[Byte]]
+ 
++  private val indexCacheLock = new ReentrantReadWriteLock()
+   private val extraCacheLock = new ReentrantReadWriteLock()
+ 
++  private def withIndexCacheReadLock[A](body: => A): A = {
++    indexCacheLock.readLock().lock()
++    try body
++    finally indexCacheLock.readLock().unlock()
++  }
++
++  private def withIndexCacheWriteLock[A](body: => A): A = {
++    indexCacheLock.writeLock().lock()
++    try body
++    finally indexCacheLock.writeLock().unlock()
++  }
++
+   private def withExtraCacheReadLock[A](body: => A): A = {
+     extraCacheLock.readLock().lock()
+     try body
+@@ -122,9 +135,13 @@ class HistoryStorage(indexStore: LDBKVStore, objectsStore: LDBKVStore, extraStor
+ 
+   def getIndex(id: ByteArrayWrapper): Option[Array[Byte]] =
+     Option(indexCache.getIfPresent(id)).orElse {
+-      indexStore.get(id.data).map { value =>
+-        indexCache.put(id, value)
+-        value
++      withIndexCacheReadLock {
++        Option(indexCache.getIfPresent(id)).orElse {
++          indexStore.get(id.data).map { value =>
++            indexCache.put(id, value)
++            value
++          }
++        }
+       }
+     }
+ 
+@@ -195,12 +212,14 @@ class HistoryStorage(indexStore: LDBKVStore, objectsStore: LDBKVStore, extraStor
+     ).flatMap { _ =>
+       cfor(0)(_ < objectsToInsert.length, _ + 1) { i => cacheModifier(objectsToInsert(i))}
+       if (indexesToInsert.nonEmpty) {
+-        indexStore.insert(
+-          indexesToInsert.map(_._1.data),
+-          indexesToInsert.map(_._2)
+-        ).map { _ =>
+-          cfor(0)(_ < indexesToInsert.length, _ + 1) { i =>
+-            indexCache.put(indexesToInsert(i)._1, indexesToInsert(i)._2)
++        withIndexCacheWriteLock {
++          indexStore.insert(
++            indexesToInsert.map(_._1.data),
++            indexesToInsert.map(_._2)
++          ).map { _ =>
++            cfor(0)(_ < indexesToInsert.length, _ + 1) { i =>
++              indexCache.put(indexesToInsert(i)._1, indexesToInsert(i)._2)
++            }
+           }
+         }
+       } else Success(())
+@@ -287,10 +306,14 @@ class HistoryStorage(indexStore: LDBKVStore, objectsStore: LDBKVStore, extraStor
+ 
+       objectsStore.remove(idsToRemove.map(idToBytes)).map { _ =>
+         cfor(0)(_ < idsToRemove.length, _ + 1) { i => removeModifier(idsToRemove(i))}
+-        indexStore.remove(indicesToRemove.map(_.data)).map { _ =>
+-          cfor(0)(_ < indicesToRemove.length, _ + 1) { i => indexCache.invalidate(indicesToRemove(i))}
+-          ()
+-        }
++        if (indicesToRemove.nonEmpty) {
++          withIndexCacheWriteLock {
++            indexStore.remove(indicesToRemove.map(_.data)).map { _ =>
++              cfor(0)(_ < indicesToRemove.length, _ + 1) { i => indexCache.invalidate(indicesToRemove(i))}
++              ()
++            }
++          }
++        } else Success(())
+       }
+   }
+ 
+diff --git a/src/main/scala/org/ergoplatform/nodeView/wallet/ErgoWalletSupport.scala b/src/main/scala/org/ergoplatform/nodeView/wallet/ErgoWalletSupport.scala
+index 17e2a7e36..b3ed8a233 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/wallet/ErgoWalletSupport.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/wallet/ErgoWalletSupport.scala
+@@ -317,17 +317,14 @@ trait ErgoWalletSupport extends ScorexLogging {
+     //filter out tokens on whitelist from wallet and merge the rest with burnTokens from requests
+     val burnTokensMap = mergeBurnWhitelistTokens(state, inputBoxes.toArray, burnTokensRequestMap)
+ 
+-    //We're getting id of the first input, it will be used in case of asset issuance (asset id == first input id)
++    // Use a provisional mint id for sizing; selection may replace or remove the first candidate input.
+     requestsToBoxCandidates(requestsWithoutBurnTokens, inputBoxes.head.box.id, state.fullHeight, state.parameters, state.walletVars.publicKeyAddresses)
+       .flatMap { outputs =>
+         require(outputs.forall(c => c.value >= BoxUtils.minimalErgoAmountSimulated(c, state.parameters)), "Minimal ERG value not met")
+         require(outputs.forall(_.additionalTokens.forall(_._2 > 0)), "Non-positive asset value")
+ 
+-        val assetIssueBox = outputs
+-          .zip(requestsWithoutBurnTokens)
+-          .filter(_._2.isInstanceOf[AssetIssueRequest])
+-          .map(_._1)
+-          .headOption
++        val assetIssueIndex = requestsWithoutBurnTokens.indexWhere(_.isInstanceOf[AssetIssueRequest])
++        val assetIssueBox = outputs.lift(assetIssueIndex)
+ 
+         val targetBalance = outputs.map(_.value).sum
+         val targetAssets = TransactionBuilder.collectOutputTokens(outputs.filterNot(bx => assetIssueBox.contains(bx)))
+@@ -339,8 +336,18 @@ trait ErgoWalletSupport extends ScorexLogging {
+         val selectionOpt = boxSelector.select(inputBoxes.iterator, targetBalance, targetAssetsWithBurn)
+         val dataInputs = ErgoWalletServiceUtils.stringsToBoxes(dataInputsRaw).toIndexedSeq
+         selectionOpt.map { selectionResult =>
++          // Mint identity must match the first input of the final unsigned transaction.
++          val finalOutputs = assetIssueBox.fold(outputs) { issueBox =>
++            outputs.updated(assetIssueIndex, new ErgoBoxCandidate(
++              issueBox.value,
++              issueBox.ergoTree,
++              issueBox.creationHeight,
++              Colls.fromItems(selectionResult.inputBoxes.head.box.id.toTokenId -> issueBox.additionalTokens(0)._2),
++              issueBox.additionalRegisters
++            ))
++          }
+           val changeAddressOpt: Option[ProveDlog] = state.getChangeAddress(addressEncoder).map(_.pubkey)
+-          prepareUnsignedTransaction(outputs, state.getWalletHeight, selectionResult, dataInputs, changeAddressOpt) -> selectionResult.inputBoxes
++          prepareUnsignedTransaction(finalOutputs, state.getWalletHeight, selectionResult, dataInputs, changeAddressOpt) -> selectionResult.inputBoxes
+         } match {
+           case Right((txTry, inputs)) => txTry.map(tx => (tx, inputs.map(_.box).toIndexedSeq, dataInputs))
+           case Left(e) => Failure(
+diff --git a/src/main/scala/org/ergoplatform/nodeView/wallet/persistence/WalletRegistry.scala b/src/main/scala/org/ergoplatform/nodeView/wallet/persistence/WalletRegistry.scala
+index f3e7deba4..42db70e0a 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/wallet/persistence/WalletRegistry.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/wallet/persistence/WalletRegistry.scala
+@@ -456,8 +456,8 @@ object WalletRegistry {
+       dir.mkdirs()
+       new LDBVersionedStore(dir, settings.nodeSettings.keepVersions)
+     }.flatMap {
+-      case store if !store.versionIdExists(PreGenesisStateVersion) =>
+-        // Create pre-genesis state checkpoint
++      case store if store.lastVersionID.isEmpty =>
++        // Create the pre-genesis checkpoint only for a new registry.
+         store.update(PreGenesisStateVersion, Seq.empty, Seq.empty).map { _ =>
+           new WalletRegistry(store)(settings.walletSettings)
+         }

@@ -109,7 +109,10 @@ if [ $fail = 0 ]; then
   # confirmed balance covers a new number of payments (balance / AMT, a new maximum), timed from the heal. The poll
   # starts once C and D are back on A's chain (the loop above), so a count reached earlier is logged at the first poll.
   reorg_w=${REORG_CONFIRM_WAIT_S:-180}; reorg_kmax=0; reorg_t10=""; bd2=0
-  echo "[reorg] confirmation wait: up to $reorg_w s, from $((SECONDS - t0)) s after heal"
+  # Not on A's chain: D's balance is still its losing fork's, so the wait would count the wrong chain's payments.
+  [ $ok = yes ] || reorg_w=0
+  [ $ok = yes ] && echo "[reorg] confirmation wait: up to $reorg_w s, from $((SECONDS - t0)) s after heal" \
+    || echo "[reorg] confirmation wait skipped: C and D are not on A's chain, so D's balance is not the surviving chain's"
   reorg_end=$((SECONDS + reorg_w))
   while [ $SECONDS -lt $reorg_end ]; do
     bd2=$(balance D); reorg_k=0; [[ "$bd2" =~ ^[0-9]+$ ]] && reorg_k=$((bd2 / AMT))

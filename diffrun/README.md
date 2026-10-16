@@ -301,12 +301,15 @@ production diff), `shards` runners each run `pairs` pairs, and `pool.sh` judges 
 | `aa` | A/A: the base jar in both roles, no PR fetched |
 | `v4` | Matrix lines at block version 4 (rig `PEERYARD_V4`) |
 | `test_patches` | release-tag or commit lines only: space-separated test-only patches under `patches/test/`, applied to both arms as one local commit on the line's commit, which becomes the build base (e.g. `storage-rent-2598` needs the storage-period and rent-distinct-outputs patches) |
+| `extra_patch` | any line, not with `aa`: one patch file under `patches/` (not `patches/test/`), a proposed change to the PR, applied to the **candidate only**: committed on the PR head, so the candidate is the build base + the PR's diff + this patch (production paths only) and the base arm is unchanged. One dispatch compares base against PR + patch; to read the patch against the PR alone, compare its candidate arm with a run of the same scenario and line without `extra_patch` (e.g. `patches/ergo-2641/`) |
 | `scenario_env` | `KEY=VALUE` overrides of the manifest's env, `;`-separated, only keys the manifest declares, values `[A-Za-z0-9._ :,-]` (`scenario-env.sh`); the effective env is in `verdict.json`'s provenance |
 
 The PR's diff is taken from git's merge base, which must be an ancestor of the line's commit; when the line's commit is
 one of the PR's several merge bases (a PR that merged its base branch in), the diff is taken from that commit itself.
-With `test_patches` these checks still run against the line's commit, not the local test-patch commit. The run's title
-carries `A/A` or `#<pr>`, the line, `shards x pairs`, and ` v4`, ` +test patches` and ` [<scenario_env>]` when set
+With `test_patches` these checks still run against the line's commit, not the local test-patch commit. The two patch
+inputs differ in which arm they reach: `test_patches` both (a test condition, never proposed upstream), `extra_patch`
+the candidate only (a change under test); the build summary names either with its sha256. The run's title
+carries `A/A` or `#<pr>`, ` + <extra_patch>` when set, the line, `shards x pairs`, and ` v4`, ` +test patches` and ` [<scenario_env>]` when set
 (`review/release-check.sh` finds its dispatches by that title).
 
 `ci/diffrun.yml.example` is a `workflow_dispatch` workflow: it lints first, builds base and candidate with

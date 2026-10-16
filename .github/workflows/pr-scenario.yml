@@ -21,10 +21,17 @@
 # such as a short storage period, never proposed upstream) applied to BOTH arms as one local commit on the line's
 # commit, which becomes the build base; the merge-base rules above still run against the line's commit, and the
 # summary names each patch with a sha256 prefix.
+# extra_patch (any line, not with aa): one file under patches/ (not patches/test/), a proposed change to the PR itself,
+# applied to the CANDIDATE only: it is committed on the PR head, so the candidate is the build base plus the PR's diff
+# plus this patch (production paths only, like the PR's diff) and the base arm is unchanged. A dispatch therefore
+# compares base against PR + patch; to read the patch against the PR alone, run the same scenario on the same line
+# without extra_patch and compare the two runs' candidate arms (patches/ergo-2641/ is an example). The two patch
+# inputs differ in which arm they reach: test_patches both (a test condition), extra_patch the candidate (a change
+# under test).
 # scenario_env: KEY=VALUE overrides of the manifest's env, ";"-separated (diffrun/scenario-env.sh: only keys the
 # manifest declares, values [A-Za-z0-9._ :,-]), written into the checked-out manifest so verdict.json's provenance
 # records the effective env.
-# run-name markers: "A/A" or "#<pr>", the line, shards x pairs, " v4", " +test patches", " [<scenario_env>]".
+# run-name markers: "A/A" or "#<pr>", " + <extra_patch>", the line, shards x pairs, " v4", " +test patches", " [<scenario_env>]".
 name: peeryard PR scenario
 on:
   workflow_dispatch:
@@ -39,7 +46,8 @@ on:
       scenario_env: { description: 'optional: KEY=VALUE overrides of the manifest env, separated by ";" (keys the manifest declares; values [A-Za-z0-9._ :,-]), e.g. WO_AT=pending', default: '' }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
       test_patches: { description: 'optional, a release tag or commit line only: space-separated test patches under patches/test/, applied to BOTH arms (the build base becomes the line''s commit plus them, one local commit), e.g. patches/test/storage-period-60.patch', default: '' }
-run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
+      extra_patch: { description: 'optional, not with aa: one patch file under patches/ (not patches/test/) applied to the CANDIDATE only, on the PR head: the candidate is the build base + the PR''s diff + this patch, the base arm is unchanged (a proposed change to the PR; compare against a run of the PR alone), e.g. patches/ergo-2641/floor20k.patch', default: '' }
+run-name: "${{ inputs.scenario }}: ${{ inputs.aa && 'A/A' || format('#{0}', inputs.pr) }}${{ inputs.extra_patch != '' && format(' + {0}', inputs.extra_patch) || '' }} on ${{ inputs.line }} (${{ inputs.shards }}x${{ inputs.pairs }})${{ inputs.v4 && ' v4' || '' }}${{ inputs.test_patches != '' && ' +test patches' || '' }}${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
 permissions:
   contents: read
 env:
@@ -52,6 +60,7 @@ env:
   AA: ${{ inputs.aa }}
   PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
   TEST_PATCHES: ${{ inputs.test_patches }}
+  EXTRA_PATCH: ${{ inputs.extra_patch }}
   SCENARIO_ENV: ${{ inputs.scenario_env }}
 jobs:
   build:
@@ -77,6 +86,10 @@ jobs:
           [[ "$PAIRS" =~ ^[1-9][0-9]?$ ]] || fail "pairs: 1-99"
           for t in $TEST_PATCHES; do [[ "$t" =~ ^patches/test/[A-Za-z0-9._-]+\.patch$ && -f "$t" ]] || fail "test patch $t: not a file under patches/test/"; done
           [ -z "$TEST_PATCHES" ] || [[ "$LINE" =~ ^v[0-9.]+$ || "$LINE" =~ ^[0-9a-f]{40}$ ]] || fail "test_patches: a release tag or a commit line only (the matrix lines build through patches/stack.sh)"
+          if [ -n "$EXTRA_PATCH" ]; then
+            [[ "$EXTRA_PATCH" =~ ^patches/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\.patch$ && "$EXTRA_PATCH" != *..* && "$EXTRA_PATCH" != patches/test/* && -f "$EXTRA_PATCH" ]] || fail "extra_patch: one patch file under patches/, not patches/test/ (a test patch goes to both arms: test_patches)"
+            [ "$AA" != true ] || fail "extra_patch: an A/A has no candidate to apply it to"
+          fi
           if [ "$AA" = true ]; then echo "A/A control: pr and head are ignored"
           else
             [[ "$PR" =~ ^[0-9]+$ ]] || fail "pr: a number"
@@ -140,6 +153,15 @@ jobs:
             # a PR branched from a newer commit than the line's can still apply cleanly, and "build base + PR diff"
             # would then be a false label (the test-patch commit's parent is LSHA, so this is the same test on BSHA)
             git -C "$C" merge-base --is-ancestor "$MB" "$LSHA" || { cat summary.txt >> "$GITHUB_STEP_SUMMARY"; fail "merge-base $MB is not an ancestor of the line's commit $LSHA"; }
+            if [ -n "$EXTRA_PATCH" ]; then
+              # candidate only: the patch is committed on the PR head (a local branch), and the range ends there instead,
+              # so the candidate is the build base + the PR's diff + this patch; the merge base is unchanged
+              git -C "$C" -c advice.detachedHead=false checkout -q -b "pr-$PR-extra" "pr-$PR"
+              git -C "$C" apply --index "$GITHUB_WORKSPACE/$EXTRA_PATCH" || fail "extra_patch $EXTRA_PATCH does not apply on the PR head $HEAD_SHA"
+              git -C "$C" -c user.name=pr-scenario -c user.email=pr-scenario@localhost commit -q -m "PROPOSED, candidate only: $EXTRA_PATCH on #$PR"
+              RANGE="${RANGE%pr-$PR}pr-$PR-extra"
+              echo "extra patch (candidate only): $EXTRA_PATCH (sha256 $(sha256sum "$EXTRA_PATCH" | cut -d' ' -f1)), on the PR head; diff range $RANGE" >> summary.txt
+            fi
             echo "RANGE=$RANGE" >> "$GITHUB_ENV"
           fi
       - name: Cache the sigma-state snapshot the weak-blocks line depends on
@@ -174,10 +196,10 @@ jobs:
               ov="$RUNNER_TEMP/pr-overlay"; mkdir -p "$ov/ergo-matrix"; cp jars/candidate.patch "$ov/ergo-matrix/pr-$PR.patch"
               jq -n --arg f "pr-$PR.patch" --argjson pr "$PR" '{patches: [{id: "999", file: $f, title: "PR #\($pr) production diff", status: "proposed", upstream_pr: $pr}]}' > "$ov/ergo-matrix/patches.json"
               put candidate "$(PEERYARD_PATCHES_EXTRA="$ov" stack)"
-              echo "candidate: build base $BSHA + Matrix stack + PR #$PR diff last: $(stacked candidate) (merge-base $MB, head $HEAD_SHA)" >> summary.txt
+              echo "candidate: build base $BSHA + Matrix stack + PR #$PR diff${EXTRA_PATCH:+ + $EXTRA_PATCH} last: $(stacked candidate) (merge-base $MB, head $HEAD_SHA)" >> summary.txt
             else
               put candidate "$(build "$BASE" "$RANGE" -- "${PATHS[@]}")"
-              echo "candidate: build base $BSHA + PR #$PR diff (merge-base $MB, head $HEAD_SHA)" >> summary.txt
+              echo "candidate: build base $BSHA + PR #$PR diff${EXTRA_PATCH:+ + $EXTRA_PATCH} (merge-base $MB, head $HEAD_SHA)" >> summary.txt
             fi
           else
             echo "A/A control: the base jar in both roles" >> summary.txt

@@ -1,0 +1,77 @@
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 606c6c615..89e5f16b1 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -210,7 +210,10 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+ 
+     // Per-peer budget is charged with a floor for declined transactions, see `MinDeclinedTxCost`. The global
+     // counter below keeps the measured costs only.
++    // A decline by this node's own policy (its fee floor) is charged at its measured cost: the peer forwarded a
++    // transaction another node accepts, and the floor is for declines whose cheapness a peer can manufacture.
+     val chargedCost = processingResult match {
++      case d: DeclinedTransaction if d.policy => cost
+       case _: DeclinedTransaction => math.max(cost, MinDeclinedTxCost)
+       case _ => cost
+     }
+@@ -1483,7 +1486,7 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       processMempoolResult(st)
+       broadcastModifierInv(tx)
+ 
+-    case dt@DeclinedTransaction(utx: UnconfirmedTransaction) =>
++    case dt@DeclinedTransaction(utx: UnconfirmedTransaction, _) =>
+       addDeclined(utx.id)
+       processMempoolResult(dt)
+ 
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala
+index e7784ed7c..deb9cb568 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizerMessages.scala
+@@ -72,7 +72,7 @@ object ErgoNodeViewSynchronizerMessages {
+     /**
+      * Transaction declined by the mempool (not permanently invalidated, so pool can accept it in future)
+      */
+-    case class DeclinedTransaction(transaction: UnconfirmedTransaction) extends InitialTransactionCheckOutcome
++    case class DeclinedTransaction(transaction: UnconfirmedTransaction, policy: Boolean = false) extends InitialTransactionCheckOutcome
+ 
+     /**
+      * Transaction which was failed not immediately but after sitting for some time in the mempool or during block
+diff --git a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+index b83e155fe..25d5cab93 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+@@ -291,7 +291,7 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+         // that does record something about the declined transaction (such as caching its id)
+         // returns a new pool, and that pool has to be installed or the record is lost.
+         if (newPool ne memoryPool()) updateNodeView(updatedMempool = Some(newPool))
+-        context.system.eventStream.publish(DeclinedTransaction(unconfirmedTx.withCost(dcl.cost)))
++        context.system.eventStream.publish(DeclinedTransaction(unconfirmedTx.withCost(dcl.cost), policy = dcl.policy))
+     }
+     processingOutcome
+   }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala b/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala
+index 8fc501cb3..ef4003770 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala
+@@ -355,7 +355,7 @@ class ErgoMemPool private[mempool](private[mempool] val pool: OrderedTxPool,
+         val exc = new Exception(s"Min fee not met: ${minFee.toDouble / CoinsInOneErgo} ergs required, " +
+           s"${fee.toDouble / CoinsInOneErgo} ergs given")
+ 
+-        this -> new ProcessingOutcome.Declined(exc, validationStartTime)
++        this -> new ProcessingOutcome.Declined(exc, validationStartTime, policy = true)
+       }
+     }
+   }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPoolUtils.scala b/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPoolUtils.scala
+index a672fa5a2..6b94258ce 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPoolUtils.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPoolUtils.scala
+@@ -96,7 +96,8 @@ object ErgoMemPoolUtils extends ScorexLogging {
+      * Class signalling that a transaction declined from being accepted into the memory pool
+      */
+     class Declined(val e: Throwable,
+-                   override protected val validationStartTime: Long) extends ProcessingOutcome
++                   override protected val validationStartTime: Long,
++                   val policy: Boolean = false) extends ProcessingOutcome   // policy: declined by this node's own fee floor
+ 
+ 
+     /**

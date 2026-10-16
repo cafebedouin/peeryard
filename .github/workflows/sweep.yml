@@ -7,12 +7,15 @@
 # a summary job tabulates. The Rust examples report SKIP here: their node binaries are not built on the runner.
 # Runs by hand (input: repeats) or on push to ci/sweep.
 name: peeryard sweep
+run-name: "peeryard sweep (${{ inputs.node || 'reference' }}; ${{ inputs.examples || 'all examples' }} x${{ inputs.repeats || '1' }})"
 on:
   workflow_dispatch:
     inputs:
       repeats: { description: 'runs per example', default: '1' }
       examples: { description: 'space-separated example names (default: every example in rig/examples/suite.tsv)', default: '' }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
+      node: { description: 'the node the examples run on: reference (the release plus the carried patches) or release (the release jar alone, for an A/B against the reference)', default: 'reference' }
+      diffrun: { description: 'also run the two diffrun scenarios, one pair per repeat', type: boolean, default: true }
   push:
     branches: [ 'ci/sweep' ]
 permissions:
@@ -105,7 +108,10 @@ jobs:
         run: |
           set -o pipefail
           [ -f jars/matrix.jar ] && export PEERYARD_MATRIX_JAR="$PWD/jars/matrix.jar"   # unset -> run-suite SKIPs Matrix examples
-          PEERYARD_JAR="$PWD/jars/reference.jar" PEERYARD_JAR_RELEASE="$PWD/release.jar" \
+          case "${{ inputs.node || 'reference' }}" in reference) J="$PWD/jars/reference.jar" ;; release) J="$PWD/release.jar" ;;
+            *) echo "node: reference or release"; exit 1 ;; esac
+          echo "node: ${{ inputs.node || 'reference' }} ($(sha256sum "$J" | cut -c1-16))" | tee -a "$GITHUB_STEP_SUMMARY"
+          PEERYARD_JAR="$J" PEERYARD_JAR_RELEASE="$PWD/release.jar" \
             bash rig/run-suite.sh --out out ${{ matrix.example }} | tee result.txt
       - uses: actions/upload-artifact@v4
         if: always()
@@ -118,6 +124,7 @@ jobs:
 
   diffrun:
     needs: build
+    if: github.event_name == 'push' || inputs.diffrun
     name: diffrun ${{ matrix.scenario }} (${{ matrix.repeat }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60

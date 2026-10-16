@@ -164,9 +164,10 @@ Listed at the top of `rig.sh`. The main ones:
   log. After the hook the node logs are read for those exits (`NODE_EXIT`), `java.lang.OutOfMemoryError`
   (`NODE_OOM`), the JVM's fatal-error banner (`JVM_FATAL`) and restart loops (`RESTART_LOOP`: one Akka supervisor
   ERROR or one "restart" message logged 20 or more times, `PEERYARD_HEALTH_LOOP_MIN`), printed as `[rig] HEALTH <node>
-  ...` lines and kept in `health.json`. An unhealthy node turns the hook's PASS (or no verdict) into FAIL with cause
-  `NODE_HEALTH: <node>=<CODE>`; a FAIL or INCONCLUSIVE keeps its verdict and gains the cause.
-  `PEERYARD_HEALTH=report` prints without judging, `=0` turns watcher and check off. A hook that damages a node on
+  ...` lines and kept in `health.json`. The default is `PEERYARD_HEALTH=report`: printed, the verdict untouched (until a
+  hosted sweep has run in judge mode with no false positive). With `PEERYARD_HEALTH=judge` an unhealthy node turns the
+  hook's PASS (or no verdict) into FAIL with cause `NODE_HEALTH: <node>=<CODE>`; a FAIL or INCONCLUSIVE keeps its verdict
+  and gains the cause. `=0` turns watcher and check off. A hook that damages a node on
   purpose and reports what it then does names it in `HEALTH_REPORT_ONLY` (`corruption` does, for B). Why: a run can
   end with every node on one chain and state after a node spent the run failing; patch-compare run
   [37306440981](https://github.com/cafebedouin/peeryard/actions/runs/37306440981)'s p1-v3 job printed

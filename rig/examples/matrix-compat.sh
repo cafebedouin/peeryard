@@ -26,7 +26,7 @@ for i in $(seq 1 $((DUR / 20))); do sleep 20
 done
 # stop every miner, then let the network settle before comparing: tips compared while several nodes mine race.
 # The analysis window ends here, before the relaunches (a restart brings its own reconnects and penalties).
-END=$(date +%H:%M:%S)
+END=$(date +%H:%M:%S); echo "[matrix-compat] window end $END"
 for x in $MINERS; do stop_mining "$x"; done
 # settled = every node's best header and best full block are A's (headers alone agree before the restarted nodes have
 # applied the blocks, which is a lag, not a divergence); up to 120 s, so a real non-convergence is still reported

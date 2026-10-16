@@ -5,9 +5,11 @@
 # then one job per rig example and repeat runs it through rig/run-suite.sh (the list is rig/examples/suite.tsv, and a
 # PASS needs the example's marker and the rig's exit status 0); the two diffrun scenarios run one pair each per repeat;
 # a summary job tabulates. The Rust examples report SKIP here: their node binaries are not built on the runner.
-# Runs by hand (input: repeats) or on push to ci/sweep.
+# Runs by hand (input: repeats) or on push to ci/sweep. scenario_env: KEY=VALUE overrides of the examples' extra
+# environment, ";"-separated (rig/suite-env.sh: only keys the example's row in rig/examples/suite.tsv declares, values
+# [A-Za-z0-9._:,-]), written into the checked-out suite.tsv; the effective env is printed in each job's summary.
 name: peeryard sweep
-run-name: "peeryard sweep (${{ inputs.node || 'reference' }}; ${{ inputs.examples || 'all examples' }} x${{ inputs.repeats || '1' }})"
+run-name: "peeryard sweep (${{ inputs.node || 'reference' }}; ${{ inputs.examples || 'all examples' }} x${{ inputs.repeats || '1' }})${{ inputs.scenario_env != '' && format(' [{0}]', inputs.scenario_env) || '' }}"
 on:
   workflow_dispatch:
     inputs:
@@ -16,12 +18,15 @@ on:
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
       node: { description: 'the node the examples run on: reference (the release plus the carried patches) or release (the release jar alone, for an A/B against the reference)', default: 'reference' }
       diffrun: { description: 'also run the two diffrun scenarios, one pair per repeat', type: boolean, default: true }
+      scenario_env: { description: 'optional: KEY=VALUE overrides of the examples env, separated by ";" (keys the example''s suite.tsv row declares; values [A-Za-z0-9._:,-]), e.g. REORG_CONFIRM_WAIT_S=600', default: '' }
   push:
     branches: [ 'ci/sweep' ]
 permissions:
   contents: read
 env:
   PEERYARD_V4: ${{ inputs.v4 && '1' || '0' }}
+  SCENARIO_ENV: ${{ inputs.scenario_env }}
+  EXAMPLES: ${{ inputs.examples }}
   RELEASE_TAG: v6.0.8
   RELEASE_SHA256: e1269f3c9b1c75d29f1f1bded720101792db41118757016123de113668353346   # the release's own ergo-6.0.8.jar.sha256; class files checked against a source build (2026-10-15)
 jobs:
@@ -33,6 +38,10 @@ jobs:
       repeats: ${{ steps.list.outputs.repeats }}
     steps:
       - uses: actions/checkout@v4
+      - name: scenario_env (checked before the build; every example job applies it to its own checkout)
+        run: |
+          # shellcheck disable=SC2086
+          bash rig/suite-env.sh rig/examples/suite.tsv "$SCENARIO_ENV" $EXAMPLES || { echo "::error::scenario_env: see the line above"; exit 1; }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
@@ -104,6 +113,11 @@ jobs:
         run: |
           curl -fsSL -o release.jar "https://github.com/ergoplatform/ergo/releases/download/$RELEASE_TAG/ergo-${RELEASE_TAG#v}.jar"
           echo "$RELEASE_SHA256  release.jar" | sha256sum -c
+      - name: scenario_env (keys the example's suite.tsv row declares)
+        run: |
+          # shellcheck disable=SC2086
+          bash rig/suite-env.sh rig/examples/suite.tsv "$SCENARIO_ENV" $EXAMPLES
+          echo "env: $(awk -F'\t' -v n='${{ matrix.example }}' '$1 == n { print $4 }' rig/examples/suite.tsv)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run the example
         run: |
           set -o pipefail

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tooling.sh: tests patches/check.sh, patches/stack.sh, patches/mutate.sh, diffrun/register.sh, diffrun/pool.sh,
+# tooling.sh: tests patches/check.sh, patches/stack.sh, patches/mutate.sh, diffrun/register.sh, diffrun/pool.sh, rig/suite-env.sh,
 # rig/lib/blockwatch.sh (against a stubbed REST API) and review/provenance.sh on local
 # fixtures (a throwaway git repository and fake jars); no network, no node. Run from the peeryard root:
 #   T=$(mktemp -d) bash tests/tooling.sh
@@ -218,5 +218,29 @@ expect_rc "post.sh: flagged file not named -> refused (exit 5)" 5 "$(pst flag un
 expect_rc "post.sh: ... --ack-agent-files -> reaches the prompt" 1 "$(pst flag unnamed --ack-agent-files)"
 expect_rc "post.sh: detector lookup failed -> refused (exit 5)" 5 "$(pst err unnamed)"
 expect_rc "post.sh: nothing flagged -> reaches the prompt" 1 "$(pst none unnamed)"
+
+# ---- rig/suite-env.sh (sweep.yml's scenario_env): only keys an example's suite.tsv row declares, in that row only
+S="$T/suite.tsv"
+printf '# comment\tREORG_W=1\tx\ty\tz\nre\tRE: PASS\t900\tREORG_W=180 OTHER=1\t-\nre2\tRE2: PASS\t900\tREORG_W=180\t-\nplain\tPLAIN\t600\t-\t-\n' > "$S"
+cp "$S" "$T/suite.orig"
+se(){ bash rig/suite-env.sh "$S" "$@" > "$T/se.out" 2>&1; echo $?; }
+expect_rc "suite-env.sh: empty override -> no change" 0 "$(se '' re)"
+cmp -s "$S" "$T/suite.orig" && ok "suite-env.sh: ... file unchanged" || bad "suite-env.sh: ... file unchanged" "$(diff "$T/suite.orig" "$S")"
+expect_rc "suite-env.sh: declared key, one named row" 0 "$(se 'REORG_W=600' re)"
+[[ "$(cut -f4 "$S" | sed -n 2,3p | tr '\n' '|')" == 'REORG_W=600 OTHER=1|REORG_W=180|' ]] && ok "suite-env.sh: ... set in that row only, other words kept" \
+  || bad "suite-env.sh: ... set in that row only" "$(cut -f4 "$S" | tr '\n' '|')"
+[[ "$(head -1 "$S")" == "$(head -1 "$T/suite.orig")" ]] && ok "suite-env.sh: ... comment line untouched" || bad "suite-env.sh: comment" "$(head -1 "$S")"
+cp "$T/suite.orig" "$S"
+expect_rc "suite-env.sh: no names -> every declaring row" 0 "$(se 'REORG_W=600')"
+[[ "$(grep -c 'REORG_W=600' "$S")" == 2 ]] && ok "suite-env.sh: ... both rows set" || bad "suite-env.sh: both rows" "$(cut -f4 "$S" | tr '\n' '|')"
+cp "$T/suite.orig" "$S"
+expect_rc "suite-env.sh: key no named row declares -> exit 1" 1 "$(se 'REORG_W=600' plain)"
+expect_rc "suite-env.sh: undeclared key -> exit 1" 1 "$(se 'NOPE=1' re)"
+expect_rc "suite-env.sh: unknown example -> exit 1" 1 "$(se 'REORG_W=600' nosuch)"
+expect_rc "suite-env.sh: value with a space -> exit 1" 1 "$(se 'REORG_W=6 00' re)"
+expect_rc "suite-env.sh: value with a shell metacharacter -> exit 1" 1 "$(se 'REORG_W=$(id)' re)"
+cmp -s "$S" "$T/suite.orig" && ok "suite-env.sh: ... refused overrides leave the file unchanged" || bad "suite-env.sh: refused overrides" "$(diff "$T/suite.orig" "$S")"
+expect_rc "suite-env.sh: the repository's reorg rows declare REORG_CONFIRM_WAIT_S" 0 \
+  "$(cp rig/examples/suite.tsv "$T/real.tsv"; bash rig/suite-env.sh "$T/real.tsv" 'REORG_CONFIRM_WAIT_S=600' reorg-mempool reorg-mempool-phases > "$T/se.out" 2>&1; echo $?)"
 
 [[ $fail == 0 ]] && echo "tooling tests: all ok" || { echo "tooling tests: MISMATCH (see $T)"; exit 1; }

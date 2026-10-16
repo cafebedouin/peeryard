@@ -13,7 +13,9 @@
 #             before the split (shared prefix), so their inputs are unspent on A's chain and can be re-admitted.
 # PASS = A strictly heavier at heal, C and D reorganise onto A's chain and state, and D's confirmed balance still
 # covers every accepted payment. INCONCLUSIVE = A's lead at the heal reached REORG_MAX_LEAD (default 15) blocks.
-# Env: REORG_TXS (default 10), REORG_NANOERG (0.1 ERG), REORG_MAX_LEAD (15).
+# Env: REORG_TXS (default 10), REORG_NANOERG (0.1 ERG), REORG_MAX_LEAD (15), REORG_CONFIRM_WAIT_S (180: the final wait
+# for D's confirmed balance after the reorg; each new count of re-confirmed payments is logged with its time after the
+# heal, `[reorg] confirmed k/N at t s after heal`, then `[reorg] time to N/N after heal: t s` or `not reached`).
 N=${REORG_TXS:-10}; AMT=${REORG_NANOERG:-100000000}; fail=0
 need=$((AMT * N + 200000000))
 # full_height reads 0 for a few seconds after a (re)launch while the node reloads its chain, so read a height
@@ -103,7 +105,21 @@ if [ $fail = 0 ]; then
   echo "[reorg] C and D reorged onto A's chain and state: $ok ($((SECONDS - t0)) s); A=$(full_height A) C=$(full_height C) D=$(full_height D)"
   [ $ok = yes ] || fail=1
 
-  bd2=$(wait_balance D $((AMT * sent)) 180)
+  # The final wait: wait_balance's loop (D's balance every 2 s, up to REORG_CONFIRM_WAIT_S) with a line each time D's
+  # confirmed balance covers a new number of payments (balance / AMT, a new maximum), timed from the heal. The poll
+  # starts once C and D are back on A's chain (the loop above), so a count reached earlier is logged at the first poll.
+  reorg_w=${REORG_CONFIRM_WAIT_S:-180}; reorg_kmax=0; reorg_t10=""; bd2=0
+  echo "[reorg] confirmation wait: up to $reorg_w s, from $((SECONDS - t0)) s after heal"
+  reorg_end=$((SECONDS + reorg_w))
+  while [ $SECONDS -lt $reorg_end ]; do
+    bd2=$(balance D); reorg_k=0; [[ "$bd2" =~ ^[0-9]+$ ]] && reorg_k=$((bd2 / AMT))
+    if [ "$reorg_k" -gt "$reorg_kmax" ]; then reorg_kmax=$reorg_k; echo "[reorg] confirmed $reorg_k/$sent at $((SECONDS - t0)) s after heal"; fi
+    [[ "${bd2:-0}" -ge $((AMT * sent)) ]] && { reorg_t10=$((SECONDS - t0)); break; }
+    sleep 2
+  done
+  bd2=${bd2:-0}
+  if [ -n "$reorg_t10" ]; then echo "[reorg] time to $sent/$sent after heal: $reorg_t10 s"
+  else echo "[reorg] time to $sent/$sent after heal: not reached ($reorg_kmax/$sent by the end of the $reorg_w s wait)"; fi
   echo "[reorg] D confirmed balance on the surviving chain: $bd2 (expected >= $((AMT * sent))), $((SECONDS - t0)) s after heal"
   [ "${bd2:-0}" -ge $((AMT * sent)) ] || { echo "[reorg] FAIL: payments lost in the reorg"; fail=1; }
   echo "[reorg] reorg depth $depth blocks; A was heavier: $([ "${ha:-0}" -gt "$hc" ] && echo yes || echo no); payments re-confirmed: $([ "${bd2:-0}" -ge $((AMT * sent)) ] && echo yes || echo no)"

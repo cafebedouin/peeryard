@@ -13,7 +13,7 @@ txchain	TXCHAIN: PASS	600	-	-
 churn	CHURN: PASS	900	-	-
 bootstrap-modes	BOOTSTRAP-MODES: PASS	600	-	-
 mixed	MIXED VERDICT: PASS	600	-	release
-reorg-mempool	REORG-MEMPOOL: PASS	900	-	-
+reorg-mempool	REORG-MEMPOOL: PASS	1500	REORG_CONFIRM_WAIT_S=180	-
 soak	SOAK: PASS	600	PEERYARD_DURATION=300 SOAK_CRASH_EVERY_MIN=2	-
 matrix-pair	MATRIX-PAIR: PASS	900	PEERYARD_DURATION=360	matrix
 matrix-mixed	MATRIX-MIXED: PASS	600	-	matrix
@@ -41,7 +41,7 @@ matrix-compat-mrm-line	MATRIX-COMPAT: PASS	1500	-	matrix
 matrix-compat-1m3r	MATRIX-COMPAT: PASS	1500	-	matrix
 matrix-compat-3m1r	MATRIX-COMPAT: PASS	1500	-	matrix
 bringup-phases	BRINGUP-PHASES: PASS	600	-	-
-reorg-mempool-phases	REORG-MEMPOOL-PHASES: PASS	900	-	-
+reorg-mempool-phases	REORG-MEMPOOL-PHASES: PASS	1500	REORG_CONFIRM_WAIT_S=180	-
 # flap and flap-phases share a fate: both in this suite, or both in experimental.txt.
 flap-phases	FLAP-PHASES: PASS	900	-	-
 flap	FLAP: PASS	900	-	-

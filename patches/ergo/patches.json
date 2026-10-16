@@ -150,10 +150,9 @@
       "fixes": "a node whose best full block and best header sit on different forks at the same height (issue #525, equal-score tie); sync summaries served from a cache keyed by height alone after the best header changes at the same height",
       "replaces": "ergo/001 (#2511, closed 2026-09-29 with the v6.0.7 branch, not re-filed: its cache keying is in #2721, and its per-mode key is moot since #2649 in v6.0.8 sends full V2 sync info everywhere) and ergo/003 (#2313, closed 2026-10-13 by jozanek: replaced by #2721, which drops the guard that stalled the full chain and the miner)",
       "needed_by": [
-        "diffrun fork-convergence",
         "diffrun sibling-fork"
       ],
-      "witness": "pending: pr-scenario sibling-fork and fork-convergence, #2721 on v6.0.8, hosted runs 38833187964 / 38833190566 (2026-10-15)",
+      "witness": "pr-scenario on GitHub-hosted runners, #2721 (b565f5bed) on its merge base d95c4fd2a (= v6.0.8 + the 6.0.9 version string), 2026-10-15: sibling-fork 5x2 (run 38834283280): base diverged in 10 of 10 runs (E_total 6-16), candidate 0 of 10 (D_total 0), agreement in all 20; fork-convergence-smoke 5x2 (run 38834289703): both roles switched 10 of 10, unresponsive_after 0 in all (no stall, unlike #2313 on the combined stack). Not needed by fork-convergence any more: the v6.0.8 release alone switched 38 of 38 valid runs in its A/A (run 38833185418; v6.0.6: 23 of 40)",
       "responses": [
         "2026-10-13: #2313 closed by jozanek: Replaced by #2721 on v6.0.9 (thanks us for the reproduction and the stall report)"
       ]

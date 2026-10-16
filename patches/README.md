@@ -113,7 +113,7 @@ design); a patch of ours is the upstream commit as exported, with its author and
 | ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | proposed | none (a fix the stack carries) |
 | ergo | 008 | Drop a requested copy of a modifier already in history instead of penalizing the sender | ours | ergoplatform/ergo#2592 | proposed | none (a fix the stack carries) |
 | ergo | 009 | Log a cached copy of a stored modifier as a duplicate, not as permanently invalid | ours | ergoplatform/ergo#2593 | proposed | none (a fix the stack carries) |
-| ergo | 010 | Move the best header to a tying chain with complete blocks; key the sync info caches by the best header | jozanek (production diff only) | ergoplatform/ergo#2721 | proposed | `diffrun fork-convergence`, `diffrun sibling-fork` |
+| ergo | 010 | Move the best header to a tying chain with complete blocks; key the sync info caches by the best header | jozanek (production diff only) | ergoplatform/ergo#2721 | proposed | `diffrun sibling-fork` |
 | ergo-node-rust | 001 | feat(config): add a private devnet network ([proxy] network = "devnet") | ours | mwaddip/ergo-node-rust#28 | proposed | `rig ergo-node-rust-follow`, `rig ergo-node-rust-follow-magic` |
 | ergo-node-rust | 002 | feat(p2p): [proxy] magic overrides the devnet's wire magic | ours (on 001) | mwaddip/ergo-node-rust#29 | proposed | `rig ergo-node-rust-follow-magic` |
 | arkadianet | 001 | [chain] devnet_magic overrides the devnet's wire magic | ours | arkadianet/ergo#362 | merged-in-v0.9.0 | `rig arkadianet-mine-magic` |

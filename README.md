@@ -244,8 +244,8 @@ are public devnet test values, not secrets: they unlock only the private devnets
 ## Scenarios
 | scenario | nodes | question | related upstream |
 |---|---|---|---|
-| `fork-convergence` | 4 | does a follower on a lighter, static fork switch when it meets a peer on a heavier fork? | ergoplatform/ergo#2511 |
-| `sibling-fork` | 4 | does a node's best full block ever sit on a different fork from its best header at the same height? | ergoplatform/ergo#525, #2313 |
+| `fork-convergence` | 4 | does a follower on a lighter, static fork switch when it meets a peer on a heavier fork? | ergoplatform/ergo#2511 (closed), #2649 (in v6.0.8), #2721 |
+| `sibling-fork` | 4 | does a node's best full block ever sit on a different fork from its best header at the same height? | ergoplatform/ergo#525, #2313 (closed), #2721 |
 | `interop` | 2 | do the release and the candidate, on one network, each follow the other's mined chain to the same state root? | agreement check |
 | `txload` | 2 | are real wallet payments accepted, confirmed and counted in blocks? | agreement check |
 | `bootstrap-modes` | 3 | do a digest-mode follower and a pruning follower settle on the miner's chain and state root? | agreement check |

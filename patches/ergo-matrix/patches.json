@@ -1,7 +1,7 @@
 {
   "repo": "ergoplatform/ergo",
   "branch": "weak-blocks",
-  "base": "8769baace0c56b7d912b01f298492120429da961",
+  "base": "214d09cba633a5b709ccd43e3bc5ea049fd71739",
   "stack_statuses": [
     "proposed",
     "under-review",
@@ -47,19 +47,21 @@
     },
     {
       "id": "003",
-      "file": "003-pr2511-v2-sync-summaries.patch",
-      "title": "Key V2 sync summaries by selected tip and requested mode (#2511, as patches/ergo/001)",
-      "origin": "upstream PR by A. Shannon (not ours); production diff only",
-      "upstream_pr": 2511,
-      "upstream_head": "a6b8f86065",
-      "status": "under-review",
+      "file": "003-pr2721-sync-cache-best-header.patch",
+      "title": "Key the sync info caches by the best header (#2721, its cache-key commit only)",
+      "origin": "upstream PR by jozanek (not ours): commit b565f5bed of ergoplatform/ergo#2721, production diff only",
+      "upstream_pr": 2721,
+      "upstream_head": "b565f5bede",
+      "status": "proposed",
       "added": "2026-09-25",
       "fixes": "a follower that never switches to the heavier chain after a partition heals",
       "needed_by": [
         "rig matrix-fork"
       ],
       "witness": "release line: fork-convergence A/A 23 of 23 switched; Matrix line: matrix-fork 1 of 2 valid runs converged, a rate is not yet measured",
-      "responses": []
+      "responses": [
+        "2026-10-15: was #2511 (closed 2026-09-29 with the v6.0.7 branch, not re-filed), which collided after weak-blocks merged v6.0.8. weak-blocks now carries #2649 (full V2 sync info everywhere), so only the best-header key is still needed; taken from #2721"
+      ]
     },
     {
       "id": "004",
@@ -76,7 +78,9 @@
       ],
       "witness": "matrix-fork on the Matrix stack: without it deep-fork runs 0/4 PASS (fork depth 22-28, every FAIL LIGHTER_FORK_NOT_SWITCHING), shallow 4/4; with it 7/7 valid PASS, deep 5/5 (depth 21-28), shallow 2/2 (1 INCONCLUSIVE: the example's disjoint-genesis race, fixed separately); 2026-09-25",
       "route": "upstream in #2529; no separate PR needed",
-      "responses": []
+      "responses": [
+        "2026-10-15: the same genesis-header addition to full V2 locators is also in ergoplatform/ergo#2691 (a-shannon, v6.0.9)"
+      ]
     }
   ]
 }

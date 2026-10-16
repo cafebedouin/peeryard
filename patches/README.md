@@ -35,10 +35,10 @@ means the patch is re-exported and the scenarios that need it are re-run.
 
 **One stack for every test; `only_for` is a temporary exception.** A patch may carry `only_for: [<scenario>]` when it
 is needed by that scenario and breaks another. The default stack leaves it out, and `stack.sh --for <scenario>` builds
-that scenario's own set; the sweep does this per diffrun scenario. Today: `ergo/003` (#2313) is `only_for:
-sibling-fork`, because on the combined stack a miner that holds a competing header whose body never arrives stops
-mining (its own block is stored off the best header chain, so the candidate generator's solved block is never
-cleared), which wedges `fork-convergence`. The goal is no exceptions (one reference node), and then no patches at all
+that scenario's own set; the sweep does this per diffrun scenario. Today there is none. The last one was the old
+`ergo/003` (#2313), `only_for: sibling-fork` from 2026-09-25 to 2026-10-15: on the combined stack a miner that held a
+competing header whose body never arrived stopped mining, which wedged `fork-convergence`. Upstream replaced #2313
+with #2721, which moves the best header to the tying chain instead of waiting for the body (`ergo/010`). The goal is no exceptions (one reference node), and then no patches at all
 as fixes land upstream: each exception is reported upstream and removed as soon as the upstream change stops breaking
 the other scenarios.
 
@@ -94,29 +94,30 @@ nodes, apply the combined diff to a checkout of the base and `cargo build --rele
 ## Current list
 
 Run `patches/check.sh` for the live view; this table is `patches.json` as of the last edit (titles, PRs and statuses come from there):
-Three of the entries are one package, the sync ladder: `ergo/001` (V2 sync summaries keyed by tip and mode, #2511),
+Three of the entries are one package, the sync ladder: the cache keying (`ergo/010` and `ergo-matrix/003`, #2721;
+until 2026-10-15 `ergo/001`, #2511, keyed by tip and mode, whose mode half #2649 made moot in v6.0.8),
 `ergo-matrix/004` (the genesis anchor and scan-back, #2529) and `ergo/005` (the near-tip floor, #2581, issue #2575),
 assembled with a fixture fix for `DeepRollBackSpec` on ergoplatform/ergo#2535 (the comment of 2026-09-26 there gives
 the 28-run isolation table on v6.0.7: the spec passes only with a sync-point fix and the scan-back, 20 of 20 with the
-fixture fix). `ergo/004` (#2596) is the pruned-digest NiPoPoW stall; `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7.
+fixture fix). `ergo/004` (#2596) is the pruned-digest NiPoPoW stall; `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7. The stack is
+based on v6.0.8 since 2026-10-15.
 The witness column of `patches.json` summarizes runs whose captures are not in this repository (`audits/` is local by
 design); a patch of ours is the upstream commit as exported, with its author and co-author trailers.
 
 | repo | id | patch | origin | upstream | status | needed by |
 |---|---|---|---|---|---|---|
-| ergo | 001 | Key V2 sync summaries by selected tip and requested mode | A. Shannon (production diff only) | ergoplatform/ergo#2511 | under-review | `diffrun fork-convergence`, `diffrun sibling-fork` |
 | ergo | 002 | MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors | ours | ergoplatform/ergo#2573 | proposed | `rig reorg-mempool` |
-| ergo | 003 | Prevent bestFullBlock/bestHeader divergence on sibling forks | jozanek (production diff only) | ergoplatform/ergo#2313 | under-review, `only_for` sibling-fork | `diffrun sibling-fork` |
 | ergo | 004 | Do not start full block download inside a NiPoPoW headers gap | ours | ergoplatform/ergo#2596 | proposed | `rig nipopow-bootstrap (pruned digest variant, to be added)` |
 | ergo | 005 | Do not scan below minimal full block height for block sections near the tip | ours | ergoplatform/ergo#2581 | proposed | `rig nipopow-bootstrap` |
 | ergo | 006 | Check a header's age against its parent's own height, not the height index | ours | ergoplatform/ergo#2580 | proposed | `diffrun fork-convergence (loaded hosts)` |
 | ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | proposed | none (a fix the stack carries) |
 | ergo | 008 | Drop a requested copy of a modifier already in history instead of penalizing the sender | ours | ergoplatform/ergo#2592 | proposed | none (a fix the stack carries) |
 | ergo | 009 | Log a cached copy of a stored modifier as a duplicate, not as permanently invalid | ours | ergoplatform/ergo#2593 | proposed | none (a fix the stack carries) |
+| ergo | 010 | Move the best header to a tying chain with complete blocks; key the sync info caches by the best header | jozanek (production diff only) | ergoplatform/ergo#2721 | proposed | `diffrun fork-convergence`, `diffrun sibling-fork` |
 | ergo-node-rust | 001 | feat(config): add a private devnet network ([proxy] network = "devnet") | ours | mwaddip/ergo-node-rust#28 | proposed | `rig ergo-node-rust-follow`, `rig ergo-node-rust-follow-magic` |
 | ergo-node-rust | 002 | feat(p2p): [proxy] magic overrides the devnet's wire magic | ours (on 001) | mwaddip/ergo-node-rust#29 | proposed | `rig ergo-node-rust-follow-magic` |
 | arkadianet | 001 | [chain] devnet_magic overrides the devnet's wire magic | ours | arkadianet/ergo#362 | merged-in-v0.9.0 | `rig arkadianet-mine-magic` |
 | ergo-matrix | 001 | Full-block route matches only /blocks/{id}, so the input-block transaction routes are reachable | A. Shannon (hunk only) | ergoplatform/ergo#2505 | under-review | `rig matrix-tx` |
 | ergo-matrix | 002 | Relay a received input block by id to eligible sub-block peers (receive-side guard + relay) | ours | ergoplatform/ergo#2566 | proposed | `rig matrix-latency` |
-| ergo-matrix | 003 | Key V2 sync summaries by selected tip and requested mode (#2511, as patches/ergo/001) | A. Shannon (production diff only) | ergoplatform/ergo#2511 | under-review | `rig matrix-fork` |
+| ergo-matrix | 003 | Key the sync info caches by the best header (#2721, its cache-key commit only) | jozanek (production diff only) | ergoplatform/ergo#2721 | proposed | `rig matrix-fork` |
 | ergo-matrix | 004 | Full V2 sync summaries also carry the genesis header, so a peer always finds a common point | A. Shannon (hunk only) | ergoplatform/ergo#2529 | under-review | `rig matrix-fork (deep-fork runs)` |

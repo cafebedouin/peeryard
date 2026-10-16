@@ -31,7 +31,7 @@ on:
     inputs:
       pr: { description: 'ergoplatform/ergo pull request number (ignored when aa is true)', default: '' }
       head: { description: 'the PR head commit, 40 hex (the run fails if the PR has moved; ignored when aa is true)', default: '' }
-      line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack), a release tag, e.g. v6.0.6, or a commit (40 hex, e.g. the PR''s merge base)', default: 'v6.0.6' }
+      line: { description: 'matrix (the weak-blocks commit in patches/ergo-matrix/patches.json), matrix-stack (that commit + the carried Matrix stack), a release tag, e.g. v6.0.8, or a commit (40 hex). The line must contain the PR''s merge base: for a PR on a branch ahead of the release, give the merge base itself', default: 'v6.0.8' }
       scenario: { description: 'manifest basename under diffrun/scenarios/ (without .json); public tier, no stop_when/max_n', default: 'matrix-paychain' }
       shards: { description: 'runners (1-20)', default: '5' }
       pairs: { description: 'pairs per runner (1-99)', default: '1' }

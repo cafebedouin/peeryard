@@ -1,5 +1,20 @@
 # peeryard patch ergo/002: MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors
 # upstream: ergoplatform/ergo#2573 (proposed); origin, witness and responses in patches.json
+commit 709e04eb220e074a9761421a4a3564cffa84ace4
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Thu Sep 24 12:04:52 2026 -0500
+
+    MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors
+    
+    The rebroadcast selection is a window of the pool. A pooled transaction whose inputs are neither in the state
+    nor in the selection is not announced, while its children, whose inputs the selection holds, are; a peer
+    declines those children (their inputs are unknown to it) and does not request them again for at least 20
+    minutes. A chain of wallet payments returned to the pool by a rollback hits this whenever the window starts
+    inside the chain. Add the selection's in-pool ancestors, parents first, walking at most 500 levels deep (the
+    bound the pool puts on updateFamily).
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
 diff --git a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala b/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala
 index d46670287..f40a1821e 100644
 --- a/src/main/scala/org/ergoplatform/local/MempoolAuditor.scala

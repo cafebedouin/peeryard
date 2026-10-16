@@ -1,0 +1,130 @@
+# peeryard patch ergo/010: Move the best header to a tying chain with complete blocks; key the sync info caches by the best header
+# upstream: ergoplatform/ergo#2721 (proposed upstream by jozanek; replaces #2313 and covers #2511's cache keying); origin, witness and responses in patches.json
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 7907ddea7..c0cd56ab7 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -73,9 +73,10 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       Restart
+   }
+ 
+-  private var syncInfoV1CacheByHeadersHeight: Option[(Int, ErgoSyncInfoV1)] = Option.empty
++  // sync info caches are keyed by the best header, as the best header can change at the same height
++  private var syncInfoV1CacheByBestHeader: Option[((Int, Option[ModifierId]), ErgoSyncInfoV1)] = Option.empty
+ 
+-  private var syncInfoV2CacheByHeadersHeight: Option[(Int, ErgoSyncInfoV2)] = Option.empty
++  private var syncInfoV2CacheByBestHeader: Option[((Int, Option[ModifierId]), ErgoSyncInfoV2)] = Option.empty
+ 
+   private val networkSettings: NetworkSettings = settings.scorexSettings.network
+ 
+@@ -331,24 +332,24 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+ 
+   /** Get V1 sync info from cache or load it from history and add to cache */
+   private def getV1SyncInfo(history: ErgoHistory): ErgoSyncInfoV1 = {
+-    val headersHeight = history.headersHeight
+-    syncInfoV1CacheByHeadersHeight
+-      .collect { case (height, syncInfo) if height == headersHeight => syncInfo }
++    val cacheKey = history.headersHeight -> history.bestHeaderIdOpt
++    syncInfoV1CacheByBestHeader
++      .collect { case (key, syncInfo) if key == cacheKey => syncInfo }
+       .getOrElse {
+         val v1SyncInfo = history.syncInfoV1
+-        syncInfoV1CacheByHeadersHeight = Some(headersHeight -> v1SyncInfo)
++        syncInfoV1CacheByBestHeader = Some(cacheKey -> v1SyncInfo)
+         v1SyncInfo
+       }
+   }
+ 
+   /** Get V2 sync info from cache or load it from history and add to cache */
+   private def getV2SyncInfo(history: ErgoHistory, full: Boolean): ErgoSyncInfoV2 = {
+-    val headersHeight = history.headersHeight
+-    syncInfoV2CacheByHeadersHeight
+-      .collect { case (height, syncInfo) if height == headersHeight => syncInfo }
++    val cacheKey = history.headersHeight -> history.bestHeaderIdOpt
++    syncInfoV2CacheByBestHeader
++      .collect { case (key, syncInfo) if key == cacheKey => syncInfo }
+       .getOrElse {
+         val v2SyncInfo = history.syncInfoV2(full)
+-        syncInfoV2CacheByHeadersHeight = Some(headersHeight -> v2SyncInfo)
++        syncInfoV2CacheByBestHeader = Some(cacheKey -> v2SyncInfo)
+         v2SyncInfo
+       }
+   }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+index f9e89f91a..c4b5000b4 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+@@ -99,7 +99,8 @@ trait FullBlockProcessor extends HeadersProcessor {
+ 
+       // insert updated chains statuses
+       val additionalIndexes = toApply.map(b => chainStatusKey(b.id) -> FullBlockProcessor.BestChainMarker) ++
+-        toRemove.map(b => chainStatusKey(b.id) -> FullBlockProcessor.NonBestChainMarker)
++        toRemove.map(b => chainStatusKey(b.id) -> FullBlockProcessor.NonBestChainMarker) ++
++        bestHeaderRowsOnTie(newBestBlockHeader)
+       updateStorage(newModRow, newBestBlockHeader.id, additionalIndexes).map { _ =>
+         // remove block ids which have no chance to be applied
+         val minForkRootHeight = toApply.last.height - nodeSettings.keepVersions
+@@ -115,6 +116,27 @@ trait FullBlockProcessor extends HeadersProcessor {
+       }
+   }
+ 
++  /**
++    * Chains with equal score are equal for the node, and the best header is the one seen first. If the best header
++    * chain has no complete blocks (otherwise `isBetterChain` is false for a tie), a tying chain with complete blocks
++    * is better: the full chain must follow the data. So the best header moves to the new best full block, at the same
++    * height and in the same storage batch. This keeps the best header and the best full block on one fork, and
++    * the full chain never waits for a body that may not come.
++    *
++    * @param newBest - tip of the new best full chain
++    * @return rows to move the best header to `newBest`, or no rows if `newBest` does not tie the best header chain
++    */
++  private def bestHeaderRowsOnTie(newBest: Header): Seq[(ByteArrayWrapper, Array[Byte])] =
++    scoreOf(newBest.id) match {
++      case Some(score)
++        if !isInBestChain(newBest) && newBest.height == headersHeight && score == bestHeadersChainScore =>
++        log.info(s"Best header chain ties the new best full chain at height ${newBest.height}, " +
++          s"best header moves to ${newBest.encodedId}")
++        bestHeaderRows(newBest, score)
++      case _ =>
++        Seq.empty
++    }
++
+   /**
+     *
+     * @param id - id of a header to compare
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+index 0a801ccd5..e85c0cfb9 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+@@ -205,6 +205,13 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     Seq(heightIdsKey(h.height) -> (headerIdsAtHeight(h.height) :+ h.id).flatMap(idToBytes).toArray)
+   }
+ 
++  /**
++    * Rows to storage, that make `h` the best header: the best header id and the header ids of the best chain
++    * (`h` and all its parents are first at their heights). Used when `h` is already stored as an orphan.
++    */
++  protected def bestHeaderRows(h: Header, score: Difficulty): Seq[(ByteArrayWrapper, Array[Byte])] =
++    (BestHeaderKey -> idToBytes(h.id)) +: bestBlockHeaderIdsRow(h, score)
++
+   /**
+     * Update header ids to ensure, that this block id and ids of all parent blocks are in the first position of
+     * header ids at this height
+@@ -213,7 +220,7 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     val prevHeight = headersHeight
+     log.info(s"New best header ${h.encodedId} with score $score. New height ${h.height}, old height $prevHeight")
+     val self: (ByteArrayWrapper, Array[Byte]) =
+-      heightIdsKey(h.height) -> (Seq(h.id) ++ headerIdsAtHeight(h.height)).flatMap(idToBytes).toArray
++      heightIdsKey(h.height) -> (Seq(h.id) ++ headerIdsAtHeight(h.height).filter(_ != h.id)).flatMap(idToBytes).toArray
+     val parentHeaderOpt: Option[Header] = typedModifierById[Header](h.parentId)
+     val forkHeaders = parentHeaderOpt.toSeq
+       .flatMap(parent => headerChainBack(h.height, parent, h => isInBestChain(h)).headers)
+@@ -322,7 +329,7 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     }
+   }
+ 
+-  private def bestHeadersChainScore: BigInt = bestHeaderIdOpt.flatMap(id => scoreOf(id)).getOrElse(0)
++  protected def bestHeadersChainScore: BigInt = bestHeaderIdOpt.flatMap(id => scoreOf(id)).getOrElse(0)
+ 
+   protected def heightIdsKey(height: Int): ByteArrayWrapper = ByteArrayWrapper(Algos.hash(Ints.toByteArray(height)))
+ 

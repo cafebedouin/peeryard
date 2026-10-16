@@ -1,10 +1,23 @@
 # peeryard patch ergo/005: Do not scan below minimal full block height for block sections near the tip
 # upstream: ergoplatform/ergo#2581 (proposed); origin, witness and responses in patches.json
+commit 5bfba5afe8dcf181eb657977af59aa42677c765f
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Sat Sep 26 07:09:41 2026 -0500
+
+    Do not scan below minimal full block height for block sections near the tip
+    
+    Near the tip, nextModifiersToDownload scans headers from 100 blocks below the best full block and stops at the
+    first height with no header. After a UTXO set snapshot is applied on a NiPoPoW-bootstrapped node, that start
+    height can fall into a gap of the sparse proof prefix, so the scan returns nothing and the next block's sections
+    are never requested. Starting the scan at minimalFullBlockHeight keeps it within heights the node applies.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
-index e0ba076f8..41b9d98b8 100644
+index f4fd6e71f..f476f8022 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
-@@ -90,7 +90,8 @@ trait ToDownloadProcessor
+@@ -89,7 +89,8 @@ trait ToDownloadProcessor
        case Some(fb) =>
          // when blockchain is about to be synced,
          // download children blocks of last 100 full blocks applied to the best chain, to get block sections from forks

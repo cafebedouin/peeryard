@@ -1,35 +1,29 @@
 # peeryard patch ergo/004: Do not start full block download inside a NiPoPoW headers gap
 # upstream: ergoplatform/ergo#2596 (proposed); origin, witness and responses in patches.json
-From a9caba652058a6f62af84e2e932b0aecb20dc0d2 Mon Sep 17 00:00:00 2001
-From: cafebedouin <cafebedouin@gmail.com>
-Date: Sat, 26 Sep 2026 19:55:20 -0500
-Subject: [PATCH] Do not start full block download inside a NiPoPoW headers gap
+commit d3f3b79381607eda7c297fb236994ddf1eeea000
+Author: cafebedouin <cafebedouin@gmail.com>
+Date:   Sat Sep 26 19:55:20 2026 -0500
 
-A pruned digest node bootstrapped from a NiPoPoW proof (nipopowBootstrap = true, blocksToKeep >= 0) latched its
-headers-synced flag and minimalFullBlockHeight while the proof was being applied: the floor,
-max(stored, height - blocksToKeep + 1) rounded down to the voting-epoch start, landed in the proof's sparse prefix,
-where the previous LastHeadersInContext - 1 headers are absent, so no full block was ever applicable.
-
-Proof headers no longer schedule downloads while the proof is applied (nipopowMode); once the whole proof is
-applied, the best stored proof header is checked once; updateBestFullBlock takes the lowest height a full block
-connected to that header can be applied first at (the oldest connected header plus LastHeadersInContext - 1, never
-inside a gap), rounding up to the next epoch start when needed. Nodes without NiPoPoW bootstrap, or with
-blocksToKeep < 0, take the old path.
-
-Tests (PopowProcessorSpecification): the floor is not inside the gap; it is the first height with
-LastHeadersInContext connected headers (blocksToKeep beyond the suffix); a floor that would start mid-epoch moves to
-the next epoch start and nothing below it is scheduled; a continuous chain keeps the floor it has without
-nipopowBootstrap.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
----
- .../FullBlockPruningProcessor.scala           |  21 ++-
- .../modifierprocessors/HeadersProcessor.scala |   5 +-
- .../modifierprocessors/PopowProcessor.scala   |  10 +-
- .../ToDownloadProcessor.scala                 |  23 +++-
- .../history/PopowProcessorSpecification.scala | 120 +++++++++++++++++-
- 5 files changed, 172 insertions(+), 7 deletions(-)
+    Do not start full block download inside a NiPoPoW headers gap
+    
+    A pruned digest node bootstrapped from a NiPoPoW proof (nipopowBootstrap = true, blocksToKeep >= 0) latched its
+    headers-synced flag and minimalFullBlockHeight while the proof was being applied: the floor,
+    max(stored, height - blocksToKeep + 1) rounded down to the voting-epoch start, landed in the proof's sparse prefix,
+    where the previous LastHeadersInContext - 1 headers are absent, so no full block was ever applicable.
+    
+    Proof headers no longer schedule downloads while the proof is applied (nipopowMode); once the whole proof is
+    applied, the best stored proof header is checked once; updateBestFullBlock takes the lowest height a full block
+    connected to that header can be applied first at (the oldest connected header plus LastHeadersInContext - 1, never
+    inside a gap), rounding up to the next epoch start when needed. Nodes without NiPoPoW bootstrap, or with
+    blocksToKeep < 0, take the old path.
+    
+    Tests (PopowProcessorSpecification): the floor is not inside the gap; it is the first height with
+    LastHeadersInContext connected headers (blocksToKeep beyond the suffix); a floor that would start mid-epoch moves to
+    the next epoch start and nothing below it is scheduled; a continuous chain keeps the floor it has without
+    nipopowBootstrap.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+    Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockPruningProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockPruningProcessor.scala
 index e0e91811d..ebfce3b0c 100644
@@ -318,6 +312,3 @@ index 93e113a14..a09749b62 100644
 +    }
 +  }
  }
--- 
-2.43.0
-

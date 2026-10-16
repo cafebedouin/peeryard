@@ -1,6 +1,6 @@
 # peeryard patch ergo/008: Drop a requested copy of a modifier already in history instead of penalizing the sender
 # upstream: ergoplatform/ergo#2592 (proposed); origin, witness and responses in patches.json
-commit 3d6c3db979d777d1382d10d08ce3abc2db266d39
+commit 0afe5897c025a5ba4f72a823e28023fa7fb94ec5
 Author: cafebedouin <cafebedouin@gmail.com>
 Date:   Sat Sep 26 12:55:52 2026 -0500
 
@@ -14,10 +14,10 @@ Date:   Sat Sep 26 12:55:52 2026 -0500
     Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
-index 021898dc8..3a3b1b7d8 100644
+index 7907ddea7..fdddbcb5e 100644
 --- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 +++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
-@@ -1234,11 +1234,18 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+@@ -1271,7 +1271,8 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
    }
  
    /**
@@ -27,6 +27,9 @@ index 021898dc8..3a3b1b7d8 100644
      */
    @SuppressWarnings(Array("org.wartremover.warts.IsInstanceOf"))
    def validateAndSetStatus(hr: ErgoHistory, remote: ConnectedPeer, pmod: BlockSection): Boolean = {
+@@ -1281,6 +1282,12 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     }
+ 
      hr.applicableTry(pmod) match {
 +      case Failure(e) if e.isInstanceOf[MalformedModifierError] && hr.contains(pmod.id) =>
 +        // already in history, e.g. applied from another source while this request was outstanding: a duplicate of a
@@ -35,5 +38,5 @@ index 021898dc8..3a3b1b7d8 100644
 +        deliveryTracker.setHeld(pmod.id, pmod.modifierTypeId)
 +        false
        case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
-         log.warn(s"Modifier ${pmod.encodedId} is permanently invalid", e)
-         deliveryTracker.setInvalid(pmod.id, pmod.modifierTypeId)
+         log.warn(s"Modifier ${pmod.encodedId} failed validation", e)
+         // The transaction section ID does not commit to blockVersion. A peer can send

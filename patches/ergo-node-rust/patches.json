@@ -1,6 +1,6 @@
 {
   "repo": "mwaddip/ergo-node-rust",
-  "base": "v0.8.2",
+  "base": "v0.8.4",
   "clone_env": "PEERYARD_ERGO_NODE_RUST_CLONE",
   "build": "cargo build --release (binary: target/release/ergo-node-rust)",
   "stack_statuses": [

@@ -30,10 +30,13 @@
 #      FC_FOLLOWER_STATE (utxo: the followers' ergo.node.stateType, L and S both; utxo or digest),
 #      WORKDIR (default: mktemp -d).
 # FC_FOLLOWER_STATE=digest puts both followers in digest mode, so the follower that switches rolls back a DigestState
-# instead of a UtxoState. Both, not L alone: a digest node needs every block's ADProofs section, and a UTXO follower
-# does not download it (only a miner stores its own blocks' proofs), so after the link opens a digest L could fetch
-# the heavier fork's proofs only from a digest S (and in reverse, a digest S only from a digest L). The miners A and
-# C stay UTXO (a miner needs the UTXO set). Counted: 'Rollback UtxoState' and 'Rollback Digest State' per follower
+# instead of a UtxoState. Both, not L alone: a digest node needs every block's ADProofs section, and after the link
+# opens the switching follower can fetch the other fork's sections only from the other follower. A UTXO follower
+# does not request proofs when it syncs (only transactions and extension); it keeps a block's proofs only when a peer
+# announces them, as a miner does for each new block. A digest follower requests them, so a digest peer holds every
+# block's proofs whichever way it synced. (A local run with only L in digest mode also switched, its UTXO S holding
+# the proofs C had announced; the scenario does not rely on that.) The miners A and C stay UTXO (a miner needs the
+# UTXO set). Counted: 'Rollback UtxoState' and 'Rollback Digest State' per follower
 # (the node's log line on entry to each state's rollback), and 'Rollback failed' (the node's error when a state
 # rollback during a chain switch returns a failure).
 # Runtime: about 3 minutes when L switches, about 7 otherwise. RAM: 4 JVMs at -Xmx512m; peak measured ~1.4 GB.

@@ -2,7 +2,7 @@
 # a runner class anyone can re-run). The build job builds BOTH jars here with diffrun/build.sh from one base commit: the
 # base alone, and the base plus the PR's production diff (<PR base branch>...<head>, restricted to the production
 # dirs), so the pair differs only in the patch. Each of `shards` runners then runs `pairs` pairs (base run, candidate
-# run, alternating, run.sh's order), and diffrun/pool.sh judges the pooled runs once (role_summary/decide over
+# run, order counterbalanced by pair and shard), and diffrun/pool.sh judges the pooled runs once (role_summary/decide over
 # shards x pairs; a lost shard counts as INCONCLUSIVE runs). With aa=true the base jar runs in both roles (an A/A
 # control, labelled so; no PR is fetched). Runs by hand.
 #
@@ -262,7 +262,7 @@ jobs:
         run: |
           bash diffrun/scenario-env.sh "diffrun/scenarios/$SCENARIO.json" "$SCENARIO_ENV" || exit 1
           o="$RUNNER_TEMP/out/shard-$K"; cand="$PWD/jars/candidate.jar"; [ "$AA" = true ] && cand="$PWD/jars/base.jar"
-          bash diffrun/run.sh "diffrun/scenarios/$SCENARIO.json" --base "$PWD/jars/base.jar" --candidate "$cand" -n "$PAIRS" --out "$o" || echo "run.sh exit $?"
+          DIFFRUN_ORDER_OFFSET=$((K - 1)) bash diffrun/run.sh "diffrun/scenarios/$SCENARIO.json" --base "$PWD/jars/base.jar" --candidate "$cand" -n "$PAIRS" --out "$o" || echo "run.sh exit $?"
           # the shard's outputs minus run_meta.json (local paths) and node data: pool.sh reads verdict.json and manifest.json
           u="upload/shard-$K"; mkdir -p "$u"; cp host.txt "$u/"
           for f in verdict.json table.txt manifest.json base.sidecar.json candidate.sidecar.json runs.jsonl; do cp "$o/$f" "$u/" 2>/dev/null || true; done

@@ -1,7 +1,8 @@
 # diffrun: differential scenario runner
 
 Runs one multi-node scenario against a **base** node jar and a **candidate** node jar, N times each
-(alternating base-1, candidate-1, base-2, ...), and turns the pooled results into one verdict against
+(in pairs whose order is counterbalanced: base first in odd pairs, candidate first in even ones, shifted by
+`DIFFRUN_ORDER_OFFSET`; each run records its `slot`), and turns the pooled results into one verdict against
 an expected-outcome table. It is fail-before/pass-after for a live network: the base should show the
 effect, and the candidate should not.
 

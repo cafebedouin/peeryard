@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# run.sh: run one scenario against a base jar and a candidate jar, N times each (alternating), and write a verdict.
+# run.sh: run one scenario against a base jar and a candidate jar, N times each (pairs, order counterbalanced), and write
+# a verdict.
 #
 #   bash diffrun/run.sh <manifest.json> --base <jar> --candidate <jar> [-n N] [--out DIR]
 #
@@ -201,22 +202,22 @@ run_one(){ local role="$1" i="$2" j="${JAR[$1]}" d wd t0 t1 rc timed_out=0 nrj c
              grep -m1 -oE '^\[rig\] CAUSE [A-Z_]+' "$d/stdout.txt"; } 2>/dev/null | head -1 | grep -oE '[A-Z_]+$')"
   [[ "$cause" =~ ^[A-Z_]{3,40}$ ]] || cause=""
   cause_ev="$(grep -m1 -oE '^\[rig\] CAUSE [A-Z_]+: .*' "$d/stdout.txt" 2>/dev/null | cut -c1-600)"
-  jq -n --arg role "$role" --argjson index "$i" --arg start "$start" --arg end "$(date -u +%FT%TZ)" \
+  jq -n --arg role "$role" --argjson index "$i" --argjson slot "$SLOT" --arg start "$start" --arg end "$(date -u +%FT%TZ)" \
         --argjson elapsed "$((t1 - t0))" --argjson rc "$rc" --argjson timed_out "$timed_out" \
         --arg jar_sha "${SHA[$role]}" --arg script_sha "$(sha256sum "$SCRIPT" | cut -d' ' -f1)" \
         --arg pre_sha "$([[ -n "$PRECHECK" ]] && sha256sum "$PRECHECK" | cut -d' ' -f1)" \
         --argjson pre "$(jq -n --arg o "$pre" --argjson rc "$pre_rc" --argjson el "$pre_elapsed" \
                          'if $o == "null" then null else {outcome: $o, exit_code: $rc, elapsed_s: $el} end')" \
         --arg cls "$cls" --arg reason "$reason" --arg detail "$detail" --arg cause "$cause" --arg cause_ev "$cause_ev" \
-        '{role: $role, index: $index, start: $start, end: $end, elapsed_s: $elapsed,
+        '{role: $role, index: $index, slot: $slot, start: $start, end: $end, elapsed_s: $elapsed,
           exit_code: $rc, signal: (if $rc > 128 and $rc < 160 then $rc - 128 else null end), timed_out: ($timed_out == 1),
           jar_sha256: $jar_sha, script_sha256: $script_sha, precheck_sha256: (if $pre_sha == "" then null else $pre_sha end),
           precheck: $pre, class: $cls, reason: $reason, detail: $detail,
           cause: (if $cause == "" then null else $cause end), cause_evidence: (if $cause_ev == "" then null else $cause_ev end)}' > "$d/metadata.json"
   # the runs list that feeds verdict.json: no paths, no free text
-  jq -cn --arg role "$role" --argjson index "$i" --arg cls "$cls" --arg reason "$reason" --arg pre "$pre" --arg cause "$cause" \
+  jq -cn --arg role "$role" --argjson index "$i" --argjson slot "$SLOT" --arg cls "$cls" --arg reason "$reason" --arg pre "$pre" --arg cause "$cause" \
      --slurpfile r <(cat "$d/result.json" 2>/dev/null || true) \
-     '{role: $role, index: $index, class: $cls, reason: (if $reason == "" then null else $reason end),
+     '{role: $role, index: $index, slot: $slot, class: $cls, reason: (if $reason == "" then null else $reason end),
        cause: (if $cause == "" then null else $cause end),
        precheck: (if $pre == "null" then null else $pre end),
        versions: ($r[0].versions // null), metrics: ($r[0].metrics // null)}' >> "$OUT/runs.jsonl"
@@ -231,9 +232,16 @@ run_one(){ local role="$1" i="$2" j="${JAR[$1]}" d wd t0 t1 rc timed_out=0 nrj c
   echo "diffrun: [$role $i/$MAXN] $cls${reason:+ ($reason)} in $((t1 - t0))s" >&2
 }
 
+# Pair order is counterbalanced: pair i runs base first when i + DIFFRUN_ORDER_OFFSET is odd, the candidate first
+# otherwise. A fixed order puts the candidate in the second slot of every pair, where anything the first run leaves
+# behind on the host (page cache, load, a warmer JIT, a busier neighbour) lands on it alone. A workflow that runs one
+# pair per shard passes the shard index minus 1 as the offset, so the slots alternate across shards too.
+ORDER_OFF="${DIFFRUN_ORDER_OFFSET:-0}"; [[ "$ORDER_OFF" =~ ^[0-9]+$ ]] || err "DIFFRUN_ORDER_OFFSET must be a non-negative integer"
 N_RUN=0; STOPPED_BY=fixed
 for ((i = 1; i <= MAXN; i++)); do
-  run_one base "$i"; run_one candidate "$i"; N_RUN=$i
+  if (( (i + ORDER_OFF) % 2 == 1 )); then SLOT=1; run_one base "$i"; SLOT=2; run_one candidate "$i"
+  else SLOT=1; run_one candidate "$i"; SLOT=2; run_one base "$i"; fi
+  N_RUN=$i
   if [[ $SEQ != true ]]; then [[ $i -ge $N ]] && break; continue; fi
   if [[ $i -ge $N ]] && jql -e -n --slurpfile m "$MAN" --slurpfile runs "$OUT/runs.jsonl" \
        'include "diffrun"; should_stop($m[0]; $runs)' >/dev/null; then

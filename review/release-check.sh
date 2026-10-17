@@ -12,10 +12,11 @@
 #   bash review/release-check.sh dispatch --pr N --head <40 hex> --line vX.Y.Z [--out DIR] [--repo owner/name]
 #   bash review/release-check.sh collect  [--out DIR] [--repo owner/name]
 #
-# Cost: the #2640 set (the first five lines) measured 2026-10-11 at 5 builds, ~20 runner jobs, about 6-8 runner-hours;
-# the three lines added since are estimated at 3 builds and 6 run jobs more, about 3-4 runner-hours (not yet measured
-# as a set). Needs gh (authenticated), jq. A scenario that lives on a branch rather than main is dispatched with --ref
-# on that branch (see SETS below).
+# Cost, from the jobs API (completed_at - started_at per job, summed): the eight sets below for ergoplatform/ergo#2719
+# (6.0.9 candidate vs v6.0.8, 2026-10-17) took 38 jobs (8 builds, 22 shards, 8 pools) and 231 job-minutes, 256 with
+# each job rounded up to the minute: about 4 job-hours. The first five lines alone, for #2640 (2026-10-11), took 26
+# jobs and 200 job-minutes. All eight at once put 22 shard jobs in flight. Needs gh (authenticated), jq. A scenario
+# that lives on a branch rather than main is dispatched with --ref on that branch (see SETS below).
 set -euo pipefail
 REPO=cafebedouin/peeryard; OUT=release-check.out; cmd="${1:-}"; shift || true
 PR=""; HEAD=""; LINE=""
@@ -35,7 +36,7 @@ wallet-oracle-restart\twallet-oracle-restart\t2\t1\tfalse\tmain'
 mkdir -p "$OUT"
 case "$cmd" in
   dispatch)
-    [[ "$PR" =~ ^[0-9]+$ && "$HEAD" =~ ^[0-9a-f]{40}$ && "$LINE" =~ ^v[0-9.]+$ ]] || { sed -n '2,18p' "$0" >&2; exit 2; }
+    [[ "$PR" =~ ^[0-9]+$ && "$HEAD" =~ ^[0-9a-f]{40}$ && "$LINE" =~ ^v[0-9.]+$ ]] || { sed -n '2,19p' "$0" >&2; exit 2; }
     printf 'label\tscenario\tshards\tpairs\taa\tref\trun_id\n' > "$OUT/runs.tsv"
     while IFS=$'\t' read -r label scen shards pairs aa ref; do
       args=(-f "line=$LINE" -f "scenario=$scen" -f "shards=$shards" -f "pairs=$pairs")
@@ -66,5 +67,5 @@ case "$cmd" in
       printf '| %s | %s | %s | %s | %s |\n' "$label" "$id" "$verdict" "$(role base)" "$(role candidate)"
     done
     echo; echo "Per-run metrics are in $OUT/<set>/table.txt; read them with review/RELEASE-CHECK.md before quoting a verdict." ;;
-  *) sed -n '2,18p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,19p' "$0" >&2; exit 2 ;;
 esac

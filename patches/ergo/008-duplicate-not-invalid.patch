@@ -1,18 +1,25 @@
 # peeryard patch ergo/008: Drop a requested copy of a modifier already in history instead of penalizing the sender
 # upstream: ergoplatform/ergo#2592 (proposed); origin, witness and responses in patches.json
-commit f85b04cc0654181edd2c4a11c90c3db4c7941891
+commit 5aa282449551cab394bb70ea25db76e3dd1f1b77
 Author: cafebedouin <cafebedouin@gmail.com>
-Date:   Thu Oct 15 20:21:11 2026 -0500
+Date:   Fri Oct 16 14:33:52 2026 -0500
 
-    Log a dropped copy of a modifier in history at info, and say the wider match is intended
+    Spec: penalty checks print what was sent; the extension test reuses historyWithNewHeader
+    
+    - replyForHeldModifier and the ADProofs test check sent.collect { case p: PenalizePeer => p } shouldBe empty, so a
+      failure shows the penalty and the peer.
+    - The extension test held one section in a Seq; it now uses historyWithNewHeader, as the block transactions test
+      does, and handles the extension directly.
+    - historyWithNewHeader takes the fixture's viewHistory (since #2591) instead of asking the view holder again.
+    - The ADProofs test drops an @SuppressWarnings for wartremover, which is not in the build.
     
     Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
-index 7907ddea7..b610f6290 100644
+index 7907ddea7..df96769a2 100644
 --- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
 +++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
-@@ -1271,7 +1271,8 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+@@ -1271,9 +1271,9 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
    }
  
    /**
@@ -20,13 +27,16 @@ index 7907ddea7..b610f6290 100644
 +    * Move `pmod` to `Held` if it is already in history (a duplicate, dropped), to `Invalid` if it is permanently
 +    * invalid, to `Received` otherwise. Returns whether `pmod` should be passed on for application.
      */
-   @SuppressWarnings(Array("org.wartremover.warts.IsInstanceOf"))
+-  @SuppressWarnings(Array("org.wartremover.warts.IsInstanceOf"))
    def validateAndSetStatus(hr: ErgoHistory, remote: ConnectedPeer, pmod: BlockSection): Boolean = {
-@@ -1281,6 +1282,14 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     def transactionHeaderMissing: Boolean = pmod match {
+       case txs: BlockTransactions => hr.typedModifierById[Header](txs.headerId).isEmpty
+@@ -1281,7 +1281,15 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
      }
  
      hr.applicableTry(pmod) match {
-+      case Failure(e) if e.isInstanceOf[MalformedModifierError] && hr.contains(pmod.id) =>
+-      case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
++      case Failure(e: MalformedModifierError) if hr.contains(pmod.id) =>
 +        // already in history, e.g. applied from another source while this request was outstanding: a duplicate of a
 +        // valid modifier, not an invalid one, so it is dropped without penalizing the peer that answered the request.
 +        // Any fatal failure is matched, not only `alreadyApplied`, on purpose: the node needs nothing from a copy of a
@@ -34,6 +44,7 @@ index 7907ddea7..b610f6290 100644
 +        log.info(s"Modifier ${pmod.encodedId} is already in history, dropping the copy from $remote: ${e.getMessage}")
 +        deliveryTracker.setHeld(pmod.id, pmod.modifierTypeId)
 +        false
-       case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
++      case Failure(e: MalformedModifierError) =>
          log.warn(s"Modifier ${pmod.encodedId} failed validation", e)
          // The transaction section ID does not commit to blockVersion. A peer can send
+         // wrong-version bytes under the correct ID, so keep that ID downloadable.

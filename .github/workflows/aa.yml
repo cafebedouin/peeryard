@@ -116,7 +116,7 @@ jobs:
       - name: Run (the same jar in both roles)
         run: |
           s=${{ matrix.scenario }}; o="$RUNNER_TEMP/out/$s"
-          bash diffrun/run.sh "diffrun/scenarios/aa-$s.json" --base "$JAR" --candidate "$JAR" --out "$o" || echo "run.sh exit $?"
+          DIFFRUN_ORDER_OFFSET=$((${{ matrix.shard }} - 1)) bash diffrun/run.sh "diffrun/scenarios/aa-$s.json" --base "$JAR" --candidate "$JAR" --out "$o" || echo "run.sh exit $?"
           mkdir -p "upload"; cp host.txt upload/
           [ -f "$o/verdict.json" ] || { echo "no verdict for $s"; exit 1; }
           cp "$o/verdict.json" "$o/table.txt" upload/; cat upload/table.txt | tee -a "$GITHUB_STEP_SUMMARY"

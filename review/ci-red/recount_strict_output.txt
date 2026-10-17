@@ -1,0 +1,26 @@
+116836890718 strict 4f354391d FR=pass DRB=pass USS=pass
+116652407994 strict c1a69f65d FR=pass DRB=pass USS=pass
+116651165342 strict c1a69f65d FR=pass DRB=FAIL USS=pass
+116221743750 strict d95c4fd2a FR=FAIL DRB=pass USS=pass
+116104140409 strict d95c4fd2a FR=FAIL DRB=pass USS=pass
+115601295418 strict d95c4fd2a FR=pass DRB=pass USS=pass
+115577586259 strict d95c4fd2a FR=FAIL DRB=pass USS=pass
+115191170970 strict c1a69f65d FR=pass DRB=pass USS=pass
+115145216891 strict 3a6b00d37 FR=pass DRB=FAIL USS=FAIL
+114933447133 strict 3a6b00d37 FR=pass DRB=pass USS=FAIL
+114925614659 strict 3c6df4b17 FR=pass DRB=pass USS=pass
+114854170218 strict 3a6b00d37 FR=pass DRB=pass USS=pass
+114836069404 strict 3a6b00d37 FR=pass DRB=pass USS=pass
+116652407994 release-trees c1a69f65d FR=pass DRB=pass USS=pass
+116651165342 release-trees c1a69f65d FR=pass DRB=FAIL USS=pass
+115191170970 release-trees c1a69f65d FR=pass DRB=pass USS=pass
+115159482814 release-trees ? FR=FAIL DRB=pass USS=pass
+115159370283 release-trees e440ecae8 FR=FAIL DRB=pass USS=pass
+115148375180 release-trees ? FR=pass DRB=pass USS=pass
+115145216891 release-trees 3a6b00d37 FR=pass DRB=FAIL USS=FAIL
+114933447133 release-trees 3a6b00d37 FR=pass DRB=pass USS=FAIL
+114854170218 release-trees 3a6b00d37 FR=pass DRB=pass USS=pass
+114836069404 release-trees 3a6b00d37 FR=pass DRB=pass USS=pass
+TOTAL release-trees jobs=10 FR=2/10 DRB=2/10 USS=2/10
+TOTAL strict jobs=13 FR=3/13 DRB=2/13 USS=2/13
+RECOUNT done

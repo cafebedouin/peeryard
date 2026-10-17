@@ -1,0 +1,26 @@
+# upstream it jobs on current code, two further pools for the same recount (2026-10-12..16)
+# strict = PRs whose diff touches no node code the specs drive and no src/main file outside the indexer (nodeView/history/extra) or openapi.yaml, plus the release branches' own runs
+# release-trees = the release branches' own runs (#2719, #2640) plus the runs of the 6.0.8 release trees themselves: #2718 (version bump) and master's pushes of e440ecae8 and c1a69f65d
+116836890718 strict #2591
+116652407994 strict #2719
+116651165342 strict #2719
+116221743750 strict #2723
+116104140409 strict #2591
+115601295418 strict #2723
+115577586259 strict #2722
+115191170970 strict #2719
+115145216891 strict #2640
+114933447133 strict #2640
+114925614659 strict #2713
+114854170218 strict #2640
+114836069404 strict #2640
+116652407994 release-trees #2719
+116651165342 release-trees #2719
+115191170970 release-trees #2719
+115159482814 release-trees master-push
+115159370283 release-trees #2718
+115148375180 release-trees master-push
+115145216891 release-trees #2640
+114933447133 release-trees #2640
+114854170218 release-trees #2640
+114836069404 release-trees #2640

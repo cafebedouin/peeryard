@@ -1,0 +1,11 @@
+{
+  "number": 2421,
+  "state": "open",
+  "base": {
+    "ref": "v6.0.9",
+    "sha": "d95c4fd2a32245acdf955b69e422e7a213aad75a"
+  },
+  "head": {
+    "sha": "4e0490e6d34f1db5658356a1364a6f62267e9da6"
+  }
+}

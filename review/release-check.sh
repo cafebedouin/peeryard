@@ -17,11 +17,12 @@
 #          --ref BRANCH (dispatch every set on this ref; a --patch file must be on it, byte for byte)
 #          --dry-run (print the dispatches, call nothing)  --out DIR  --repo owner/name
 #
-# Cost: the #2640 set (the first five lines) measured 197 job-minutes (jobs API, completed - started, builds included:
-# interop 29, interop A/A 10, indexer-diff 46, fork-convergence-smoke 85, sibling-fork 27); the three lines added since
-# are estimated at ~70 more (not yet measured as a set). Peak concurrency is the shard count: 22 shard jobs for the
-# whole set, so on an account limit below that dispatch it in two --only batches. Needs gh (authenticated), jq, git. A
-# scenario that lives on a branch rather than main is dispatched with --ref on that branch (see SETS below).
+# Cost, from the jobs API (completed_at - started_at per job, summed): the eight sets below for ergoplatform/ergo#2719
+# (6.0.9 candidate vs v6.0.8, 2026-10-17) took 38 jobs (8 builds, 22 shards, 8 pools) and 231 job-minutes, 256 with
+# each job rounded up to the minute: about 4 job-hours. The first five lines alone, for #2640 (2026-10-11), took 26
+# jobs and 200 job-minutes. All eight at once put 22 shard jobs in flight (on an account limit below that, dispatch
+# them in two --only batches). Needs gh (authenticated), jq, git. A scenario that lives on a branch rather than main is
+# dispatched with --ref on that branch (see SETS below).
 set -euo pipefail
 REPO=cafebedouin/peeryard; OUT=release-check.out; cmd="${1:-}"; shift || true
 PR=""; HEAD=""; LINE=""; PATCH=""; ONLY=""; REF=""; DRY=0; POLL="${RELEASE_CHECK_POLL_S:-3}"

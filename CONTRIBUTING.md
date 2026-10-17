@@ -23,7 +23,7 @@ says in its description which side it is on and why.
 **Before a pull request**
 - `shellcheck -x` on every script you touched (the repository's `.shellcheckrc` lists the deliberate
   exceptions), and `bash -n`.
-- The no-node self-tests: `T=$(mktemp -d) bash tests/sequential.sh`, `... tests/lint.sh`, `... tests/precheck.sh`, `... tests/phases.sh`, `... tests/tooling.sh`, `... tests/indexer_diff.sh`, `... tests/crash_consistency.sh`, `... tests/wallet_oracle.sh`, `... tests/wallet_workload.sh`;
+- The no-node self-tests: `T=$(mktemp -d) bash tests/sequential.sh`, `... tests/lint.sh`, `... tests/precheck.sh`, `... tests/phases.sh`, `... tests/tooling.sh`, `... tests/indexer_diff.sh`, `... tests/crash_consistency.sh`, `... tests/wallet_oracle.sh`, `... tests/wallet_workload.sh`, `... tests/pr_path.sh`;
   each exits non-zero on a `MISMATCH`. `T` must be a fresh empty directory: each test deletes it first.
 - If you changed a scenario, a precheck or the rig: one real run of what you changed, and its output in the PR
   (the rig's `effective.json` and the runner's `table.txt` are the evidence, not a description of them).
@@ -41,6 +41,8 @@ hook instead of a copy of the rig's namespace code.
 hook written as phases (one line per step, ending in a `pass` rule), unless it needs its own observation, a log, a
 fixture or an outside oracle; then it is a shell hook that sets `rig_verdict=PASS` or `FAIL`
 ([`rig/HOOK_API.md`](rig/HOOK_API.md)). Either way, list it in `rig/README.md`'s table with one line on what it checks.
+An example in `rig/examples/suite.tsv` whose nodes all run one jar also runs before and after a change through the
+`rig-example` scenario (`diffrun/README.md`), with no further code.
 
 **Style.** Plain bash (4.4 or later), `jq`, POSIX tools; no new runtime dependencies without a reason in the PR. Say what a
 number means and where it came from. Prefer a failing check to a silent fallback.

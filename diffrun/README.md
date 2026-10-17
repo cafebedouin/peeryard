@@ -261,6 +261,14 @@ Known limits:
   count proves nothing about whether traffic flows; the scenarios measure chain state, not peer lists.
 - `fork-convergence` runs its `main` mode unless a manifest sets `FC_MODE: reverse` in `env` (the mode is `argv[2]`,
   which the contract does not pass, or `FC_MODE`); no shipped manifest sets it, so no A/A rate exists for `reverse`.
+- `fork-convergence`'s followers L and S run `stateType=utxo` unless `FC_FOLLOWER_STATE: digest` (declared in both
+  manifests, so `pr-scenario.yml`'s `scenario_env` can set it): then both are digest nodes and the follower that switches
+  rolls back a DigestState. Both, because a digest node needs each block's ADProofs and a UTXO follower does not
+  download them, so the switching follower can fetch the other fork's proofs only from a digest peer; the miners stay
+  UTXO. Every run prints `[fc] L rollbacks: N  S rollbacks: M` (UTXO state rollbacks, from the node logs) and
+  `[fc] followers' stateType=<t>; digest rollbacks: L=N S=M; 'Rollback failed' lines: L=N S=M`, and carries the same
+  six counts as metrics (`l_utxo_rollbacks`, `s_utxo_rollbacks`, `l_digest_rollbacks`, `s_digest_rollbacks`,
+  `l_rollback_failed`, `s_rollback_failed`). No A/A rate exists yet for `digest`.
 - **A switch must hold.** `fork-convergence` counts a follower's switch only if, 60 s later, it still holds the
   other fork's header id at the fork height and both followers are on one tip; a switch that did not hold is not
   counted (the `RESULT` line says so). In the standalone `reverse` mode a switch of L is the unexpected outcome,

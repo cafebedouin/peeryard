@@ -243,4 +243,21 @@ cmp -s "$S" "$T/suite.orig" && ok "suite-env.sh: ... refused overrides leave the
 expect_rc "suite-env.sh: the repository's reorg rows declare REORG_CONFIRM_WAIT_S" 0 \
   "$(cp rig/examples/suite.tsv "$T/real.tsv"; bash rig/suite-env.sh "$T/real.tsv" 'REORG_CONFIRM_WAIT_S=600' reorg-mempool reorg-mempool-phases > "$T/se.out" 2>&1; echo $?)"
 
+# ---- fork-convergence's follower state (pr-scenario.yml's scenario_env reaches only keys the manifest declares):
+# FC_FOLLOWER_STATE is declared in both manifests with the default utxo, and the script refuses any other value than
+# utxo or digest before it starts a namespace or a node
+for m in fork-convergence fork-convergence-smoke; do
+  [[ "$(jq -r '.env.FC_FOLLOWER_STATE' "diffrun/scenarios/$m.json")" == utxo ]] && ok "$m.json: FC_FOLLOWER_STATE declared, default utxo" \
+    || bad "$m.json: FC_FOLLOWER_STATE" "$(jq -c .env "diffrun/scenarios/$m.json")"
+  cp "diffrun/scenarios/$m.json" "$T/fc.json"
+  expect_rc "scenario-env.sh: $m FC_FOLLOWER_STATE=digest" 0 "$(bash diffrun/scenario-env.sh "$T/fc.json" 'FC_FOLLOWER_STATE=digest' > "$T/se.out" 2>&1; echo $?)"
+  [[ "$(jq -r '.env.FC_FOLLOWER_STATE' "$T/fc.json")" == digest ]] && ok "scenario-env.sh: ... $m env now digest" || bad "scenario-env.sh: $m env" "$(jq -c .env "$T/fc.json")"
+  for k in l_digest_rollbacks s_digest_rollbacks l_utxo_rollbacks s_utxo_rollbacks l_rollback_failed s_rollback_failed; do
+    [[ "$(jq -r --arg k "$k" '.metrics[$k]' "diffrun/scenarios/$m.json")" == number ]] || bad "$m.json: metric $k" "not declared as a number"; done
+done
+printf x > "$T/fc.jar"
+expect_rc "fork-convergence.sh: FC_FOLLOWER_STATE=pruned -> exit 2" 2 "$(FC_FOLLOWER_STATE=pruned WORKDIR="$T/fcw" bash diffrun/scenarios/fork-convergence.sh "$T/fc.jar" > "$T/fc.out" 2>&1; echo $?)"
+expect_in "fork-convergence.sh: ... says why" "FC_FOLLOWER_STATE must be utxo or digest" "$T/fc.out"
+[[ ! -e "$T/fcw" ]] && ok "fork-convergence.sh: ... before any WORKDIR is made" || bad "fork-convergence.sh: refused value" "WORKDIR $T/fcw was created"
+
 [[ $fail == 0 ]] && echo "tooling tests: all ok" || { echo "tooling tests: MISMATCH (see $T)"; exit 1; }

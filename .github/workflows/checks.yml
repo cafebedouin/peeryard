@@ -40,6 +40,8 @@ jobs:
         run: T=$(mktemp -d) bash tests/wallet_oracle.sh
       - name: wallet-workload invariants (rig/wallet-check.sh on fixture observations)
         run: T=$(mktemp -d) bash tests/wallet_workload.sh
+      - name: PR path (review/pr-line.sh on a fixture history; the rig-example scenario on a stub rig)
+        run: T=$(mktemp -d) bash tests/pr_path.sh
       - name: tooling (check.sh, stack.sh, register.sh, provenance.sh, post.sh)
         run: |
           git config --global user.email ci@example.invalid

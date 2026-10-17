@@ -236,6 +236,10 @@ nodes, a star around node 1, a full mesh, or two clusters joined by one bottlene
 Each node's `knownPeers` are its link neighbours, so `check_topology` should report every link connected.
 
 ## Examples (`examples/`)
+`rig/run-suite.sh` runs the examples of `examples/suite.tsv` on one jar (`sweep.yml` on GitHub runners). Before and
+after a change, the diffrun scenario `rig-example` runs any of them whose nodes all run one jar on a base jar and a
+candidate jar, in `pr-scenario.yml` like any scenario (`diffrun/README.md`, *Any rig example, before and after*).
+
 | example | nodes | what it checks |
 |---|---|---|
 | `bringup` | 2 | A mines, B connects and syncs: B is on A's chain at height 3 or more (`same_chain`), the peer sets match the topology, and a live netem change is accepted by `tc` |

@@ -27,7 +27,15 @@
 #           published runs used OpenJDK 21).
 # Env: PREFIX_MIN (default 14), LMIN (17: minimum height L is held at; 32 gives a ~15-block fork on L),
 #      TMAX (300), DELTA (8), HDR_TRIES (5: reads of an empty header-id reply before the run is INCONCLUSIVE),
+#      FC_FOLLOWER_STATE (utxo: the followers' ergo.node.stateType, L and S both; utxo or digest),
 #      WORKDIR (default: mktemp -d).
+# FC_FOLLOWER_STATE=digest puts both followers in digest mode, so the follower that switches rolls back a DigestState
+# instead of a UtxoState. Both, not L alone: a digest node needs every block's ADProofs section, and a UTXO follower
+# does not download it (only a miner stores its own blocks' proofs), so after the link opens a digest L could fetch
+# the heavier fork's proofs only from a digest S (and in reverse, a digest S only from a digest L). The miners A and
+# C stay UTXO (a miner needs the UTXO set). Counted: 'Rollback UtxoState' and 'Rollback Digest State' per follower
+# (the node's log line on entry to each state's rollback), and 'Rollback failed' (the node's error when a state
+# rollback during a chain switch returns a failure).
 # Runtime: about 3 minutes when L switches, about 7 otherwise. RAM: 4 JVMs at -Xmx512m; peak measured ~1.4 GB.
 # Use a fresh WORKDIR for each run. If the script is killed hard, `pkill -f <workdir>/conf_` stops the nodes.
 set -uo pipefail
@@ -37,6 +45,7 @@ if [[ "${FC_INNER:-0}" != 1 ]]; then
   JAR="$(readlink -f "${1:?usage: $0 <ergo-node.jar> [main|reverse]}")"; MODE="${2:-${FC_MODE:-main}}"   # argv[2], else FC_MODE (a manifest env), else main
   [[ -f "$JAR" ]] || { echo "no jar: $JAR" >&2; exit 2; }
   [[ "$MODE" == main || "$MODE" == reverse ]] || { echo "mode must be main or reverse" >&2; exit 2; }
+  [[ "${FC_FOLLOWER_STATE:-utxo}" == utxo || "${FC_FOLLOWER_STATE:-utxo}" == digest ]] || { echo "FC_FOLLOWER_STATE must be utxo or digest" >&2; exit 2; }
   for c in unshare ip tc jq curl unzip; do command -v "$c" >/dev/null || { echo "missing: $c" >&2; exit 2; }; done
   command -v "${PEERYARD_JAVA:-java}" >/dev/null || { echo "missing: ${PEERYARD_JAVA:-java} (PEERYARD_JAVA)" >&2; exit 2; }
   WORKDIR="${WORKDIR:-$(mktemp -d)}"; mkdir -p "$WORKDIR"; WORKDIR="$(readlink -f "$WORKDIR")"
@@ -49,11 +58,12 @@ fi
 
 # ---------------- inside the namespaces ----------------
 PREFIX_MIN=${PREFIX_MIN:-14}; LMIN=${LMIN:-17}; TMAX=${TMAX:-300}; DELTA=${DELTA:-8}; HOLD=60
+FST=${FC_FOLLOWER_STATE:-utxo}   # the followers' (L, S) stateType; the miners' is always utxo
 MAGIC='[112,101,101,114]'   # "peer": private, so these nodes never talk to a public network
 # Ergo's own public test mnemonic (src/main/resources/nodeTestnet/application.conf); gives miners a reward address.
 MNEMONIC="ozone drill grab fiber curtain grace pudding thank cruise elder eight picnic"
 API_KEY=hello; API_HASH=324dcf027dd4a30a932c441f365a25e86b173defa4b8e58948253471b81b72cf
-echo "[fc] jar=$JAR sha256=$(sha256sum "$JAR" | cut -c1-16) mode=$MODE workdir=$WORKDIR"
+echo "[fc] jar=$JAR sha256=$(sha256sum "$JAR" | cut -c1-16) mode=$MODE followers' stateType=$FST workdir=$WORKDIR"
 echo "[fc] java: $("${PEERYARD_JAVA:-java}" -version 2>&1 | head -1)"
 
 mount --make-rprivate / 2>/dev/null || true
@@ -81,7 +91,7 @@ netem(){ ip netns exec "ns_$1" tc qdisc replace dev "ve_${1}_${2}" root netem $3
 
 if [[ "$MODE" == main ]]; then POLL_A=3s; POLL_C=1s; else POLL_A=1s; POLL_C=3s; fi
 declare -A MINING=([A]=true [C]=true [L]=false [S]=false) POLL=([A]=$POLL_A [C]=$POLL_C)
-declare -A PEERS=([A]="" [C]="A" [L]="A S" [S]="C L")
+declare -A PEERS=([A]="" [C]="A" [L]="A S" [S]="C L") STATE=([A]=utxo [C]=utxo [L]=$FST [S]=$FST)
 declare -A EXTRA
 conf(){ local n=$1; local f="$WORKDIR/conf_$n.conf" kp="" p
   for p in ${PEERS[$n]}; do kp+="\"${LIP[$p,$n]}:9021\","; done
@@ -97,7 +107,7 @@ conf(){ local n=$1; local f="$WORKDIR/conf_$n.conf" kp="" p
     echo "scorex.network.magicBytes=$MAGIC"
     echo "scorex.restApi.bindAddress=\"127.0.0.1:9052\""; echo "scorex.restApi.apiKeyHash=\"$API_HASH\""
     # settings from Ergo's src/it/resources/devnetTemplate.conf, so a sole-peer follower fully syncs
-    echo "ergo.node.stateType=utxo"; echo "ergo.node.verifyTransactions=true"; echo "ergo.node.blocksToKeep=-1"
+    echo "ergo.node.stateType=${STATE[$n]}"; echo "ergo.node.verifyTransactions=true"; echo "ergo.node.blocksToKeep=-1"
     echo "ergo.node.mempoolCapacity=10000"
     echo "ergo.chain.powScheme.powType=autolykos"; echo "ergo.chain.powScheme.k=32"; echo "ergo.chain.powScheme.n=26"
     [[ -n "${EXTRA[$n]:-}" ]] && echo "${EXTRA[$n]}"
@@ -243,7 +253,13 @@ fi
 W=$(( $(grep -c "Extension is empty while comparison is younger" "$WORKDIR/node_S.log") - W0 ))
 WL=$(( $(grep -c "Extension is empty while comparison is younger" "$WORKDIR/node_L.log") - W0L ))
 echo "[fc] 'Extension is empty while comparison is younger' after open: S=$W L=$WL"
-echo "[fc] L rollbacks: $(grep -c 'Rollback UtxoState' "$WORKDIR/node_L.log")  S rollbacks: $(grep -c 'Rollback UtxoState' "$WORKDIR/node_S.log")"
+# per follower: state rollbacks by state type, and the node's error line for a failed rollback in a chain switch. The
+# first line is the UTXO count under its original wording (extractors read it); the second is stable for any FST.
+cnt(){ grep -c "$1" "$WORKDIR/node_$2.log"; }
+RUL=$(cnt 'Rollback UtxoState' L); RUS=$(cnt 'Rollback UtxoState' S); RDL=$(cnt 'Rollback Digest State' L); RDS=$(cnt 'Rollback Digest State' S)
+RFL=$(cnt 'Rollback failed' L); RFS=$(cnt 'Rollback failed' S)
+echo "[fc] L rollbacks: $RUL  S rollbacks: $RUS"
+echo "[fc] followers' stateType=$FST; digest rollbacks: L=$RDL S=$RDS; 'Rollback failed' lines: L=$RFL S=$RFS"
 if [[ "$MODE" == main ]]; then
   [[ -n "$tL" ]] && echo "RESULT main: L SWITCHED to the heavier fork at t+${tL}s (fork height $HF, margin $M)" \
                  || echo "RESULT main: L did NOT switch in ${TMAX}s (fork height $HF, margin $M)$([[ -n "$revL" ]] && echo "; a switch at t+${revL}s did not hold")"
@@ -259,6 +275,8 @@ UNR=""; for n in A C L S; do [[ "$(f $n appVersion)" == null ]] && UNR+="$n "; d
 # censored time, to be analysed as time-to-event, not as a plain number)
 echo "RESULT_JSON $(jq -cn --arg jv "$JAVA_VERSION" --arg A "$VA" --arg C "$VC" --arg L "$VL" --arg S "$VS" --argjson u "$(wc -w <<< "$UNR")" \
   --arg mode "$MODE" --arg tL "$tL" --arg tS "$tS" --argjson hf "$HF" --argjson m "$M" --argjson w "$W" --argjson wl "$WL" \
+  --argjson rul "$RUL" --argjson rus "$RUS" --argjson rdl "$RDL" --argjson rds "$RDS" --argjson rfl "$RFL" --argjson rfs "$RFS" \
   '{schema_version:1,scenario:("fork-convergence"+(if $mode=="reverse" then "-reverse" else "" end)),runtime:{java:$jv},versions:{A:$A,C:$C,L:$L,S:$S},
-    metrics:{switched:($tL!=""),s_switched:($tS!=""),switch_s:(if $tL=="" then null else ($tL|tonumber) end),fork_height:$hf,margin:$m,warn_S:$w,warn_L:$wl,unresponsive_after:$u}}')"
+    metrics:{switched:($tL!=""),s_switched:($tS!=""),switch_s:(if $tL=="" then null else ($tL|tonumber) end),fork_height:$hf,margin:$m,warn_S:$w,warn_L:$wl,unresponsive_after:$u,
+    l_utxo_rollbacks:$rul,s_utxo_rollbacks:$rus,l_digest_rollbacks:$rdl,s_digest_rollbacks:$rds,l_rollback_failed:$rfl,s_rollback_failed:$rfs}}')"
 echo "[fc] node logs: $WORKDIR/node_{A,C,L,S}.log"

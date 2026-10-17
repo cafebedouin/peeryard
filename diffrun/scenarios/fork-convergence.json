@@ -3,9 +3,11 @@
   "description": "A follower on a lighter, static fork is connected to a peer holding a heavier fork: does it switch?",
   "script": "fork-convergence.sh",
   "tier": "public",
-  "env": { "PREFIX_MIN": 14, "LMIN": 17, "TMAX": 300, "DELTA": 8 },
+  "env": { "PREFIX_MIN": 14, "LMIN": 17, "TMAX": 300, "DELTA": 8, "FC_FOLLOWER_STATE": "utxo" },
   "metrics": { "switched": "boolean", "s_switched": "boolean", "fork_height": "number", "margin": "number",
-               "warn_S": "number", "warn_L": "number", "unresponsive_after": "number" },
+               "warn_S": "number", "warn_L": "number", "unresponsive_after": "number",
+               "l_utxo_rollbacks": "number", "s_utxo_rollbacks": "number", "l_digest_rollbacks": "number",
+               "s_digest_rollbacks": "number", "l_rollback_failed": "number", "s_rollback_failed": "number" },
   "n": 8,
   "max_n": 12,
   "stop_when": {

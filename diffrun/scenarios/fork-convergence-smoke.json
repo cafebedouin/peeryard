@@ -7,7 +7,8 @@
     "PREFIX_MIN": 14,
     "LMIN": 17,
     "TMAX": 300,
-    "DELTA": 8
+    "DELTA": 8,
+    "FC_FOLLOWER_STATE": "utxo"
   },
   "metrics": {
     "switched": "boolean",
@@ -16,7 +17,13 @@
     "margin": "number",
     "warn_S": "number",
     "warn_L": "number",
-    "unresponsive_after": "number"
+    "unresponsive_after": "number",
+    "l_utxo_rollbacks": "number",
+    "s_utxo_rollbacks": "number",
+    "l_digest_rollbacks": "number",
+    "s_digest_rollbacks": "number",
+    "l_rollback_failed": "number",
+    "s_rollback_failed": "number"
   },
   "n": 1,
   "min_valid_runs": 1,

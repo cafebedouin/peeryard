@@ -263,9 +263,9 @@ Known limits:
   which the contract does not pass, or `FC_MODE`); no shipped manifest sets it, so no A/A rate exists for `reverse`.
 - `fork-convergence`'s followers L and S run `stateType=utxo` unless `FC_FOLLOWER_STATE: digest` (declared in both
   manifests, so `pr-scenario.yml`'s `scenario_env` can set it): then both are digest nodes and the follower that switches
-  rolls back a DigestState. Both, because a digest node needs each block's ADProofs and a UTXO follower does not
-  download them, so the switching follower can fetch the other fork's proofs only from a digest peer; the miners stay
-  UTXO. Every run prints `[fc] L rollbacks: N  S rollbacks: M` (UTXO state rollbacks, from the node logs) and
+  rolls back a DigestState. Both, because a digest node needs each block's ADProofs, the switching follower can
+  fetch the other fork's sections only from the other follower, and a UTXO follower keeps proofs only when a peer
+  announces them (it does not request them in sync), while a digest one requests them; the miners stay UTXO. Every run prints `[fc] L rollbacks: N  S rollbacks: M` (UTXO state rollbacks, from the node logs) and
   `[fc] followers' stateType=<t>; digest rollbacks: L=N S=M; 'Rollback failed' lines: L=N S=M`, and carries the same
   six counts as metrics (`l_utxo_rollbacks`, `s_utxo_rollbacks`, `l_digest_rollbacks`, `s_digest_rollbacks`,
   `l_rollback_failed`, `s_rollback_failed`). No A/A rate exists yet for `digest`.

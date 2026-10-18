@@ -4,8 +4,10 @@
 Two pages, rendered to site/: the index is the *needs a review* track (open pull requests with no review at their
 current head, ranked by risk tier, then age, then size), and site/maintainers/ is the *needs a maintainer* track
 (reviewed, CI green, mergeable; ranked by days waiting), opening with the open upstream pull requests this test suite
-carries as patches, because merging one of those lets a scenario read true on the plain release. The ranking rules
-are data (queue/rules.json) and every row shows the rule lines that placed it. Every author is scored the same way.
+carries as patches, because merging one of those lets a scenario read true on the plain release (one already merged into a
+development branch is listed apart, at the end: carried until a release contains it, nothing for a maintainer). The
+ranking rules are data (queue/rules.json) and every row shows the rule lines that placed it. Every author is scored the
+same way.
 
     GITHUB_TOKEN=... python3 queue/build.py [--repo ergoplatform/ergo] [--out site] [--limit N]
 
@@ -203,19 +205,23 @@ def pr_cell(r):
 
 
 def carried_state_cell(c, token):
-    """A carried pull request missing from the open, non-draft list: say what it is (draft, closed, merged), from public data."""
+    """A carried pull request missing from the open, non-draft list: say what it is (draft, closed, merged), from public data.
+    Returns (cell, merged_into): merged_into is the base branch of a merged pull request, else None."""
     repo, n = c["repo"], c["number"]
     link = f"<a href='https://github.com/{repo}/pull/{n}'>#{n}</a>"
     try:
         p = api(f"/repos/{repo}/pulls/{n}", token=token)
     except Exception:
-        return f"{link} (state not readable today)"
+        return f"{link} (state not readable today)", None
     title = html.escape(p.get("title", ""))
     if p["state"] == "open":
         kind = "open as a draft" if p.get("draft") else "open"
-        return f"{link} {title}<br><small>{html.escape(p['user']['login'])}, base {html.escape(p['base']['ref'])}, {kind}</small>"
+        return f"{link} {title}<br><small>{html.escape(p['user']['login'])}, base {html.escape(p['base']['ref'])}, {kind}</small>", None
     if p.get("merged_at"):
-        return f"{link} {title}<br><small>merged {p['merged_at'][:10]}; the patch leaves the stack with the release that carries it</small>"
+        # still in patches.json without merged-in-<tag>: the release the rig uses does not contain it yet
+        base = p["base"]["ref"]
+        return (f"{link} {title}<br><small>merged into {html.escape(base)}, carried until release (merged {p['merged_at'][:10]}; "
+                f"the patch leaves the stack with the release that contains it)</small>", base)
     base = p["base"]["ref"]
     try:
         api(f"/repos/{repo}/branches/{urllib.parse.quote(base, safe='')}", token=token); base_note = ""
@@ -230,7 +236,7 @@ def carried_state_cell(c, token):
             st = "state unknown"
         issues.append(f"<a href='https://github.com/{repo}/issues/{num}'>#{num}</a> {st}")
     fixes = f"; fixes {', '.join(issues)}" if issues else ""
-    return f"{link} {title}<br><small>closed unmerged {(p.get('closed_at') or '')[:10]}{base_note}{fixes}</small>"
+    return f"{link} {title}<br><small>closed unmerged {(p.get('closed_at') or '')[:10]}{base_note}{fixes}</small>", None
 
 
 def why_cell(r):
@@ -271,18 +277,22 @@ def main():
         (f"Older than {stale_days} days at their head ({len(stale)})", "Unranked. A pull request comes back into the work list when its author pushes.",
          [(f"<a href='{r['url']}'>#{r['number']}</a> {html.escape(r['title'])} <small>({html.escape(r['author'])}, {r['days_at_head']} d)</small>", "") for r in stale], ["pull request", ""]),
     ], generated, a.repo)
-    carried_rows = []
+    carried_rows, merged_rows = [], []
     for c in carried:
         r = by_number.get(c["number"])
-        cell = pr_cell(r) if r else carried_state_cell(c, token)
-        carried_rows.append((cell, f"<span class=why>carried as {', '.join(c['patches'])} ({c['status']}); "
-                             f"unblocks {len(c['needed_by'])} example(s): {html.escape(', '.join(c['needed_by']) or 'none named')}</span>"))
+        cell, c["merged_into"] = (pr_cell(r), None) if r else carried_state_cell(c, token)
+        why = (f"<span class=why>carried as {', '.join(c['patches'])} ({c['status']}); "
+               f"unblocks {len(c['needed_by'])} example(s): {html.escape(', '.join(c['needed_by']) or 'none named')}</span>")
+        (merged_rows if c["merged_into"] else carried_rows).append((cell, why))
     maint_page = page("Ergo node pull requests that need a maintainer", [
         ("Pull requests the peeryard test suite depends on", "Upstream pull requests carried as patches in the reference node; "
          "merging one lets an example read true on the plain release. Ranked by how many examples need it. A row that is not an "
          "open, ready pull request says what it is instead (a draft, or closed with the issue it fixes still open).", carried_rows, ["pull request", "why here"]),
         ("Needs a maintainer", "Reviewed at the current head, CI green, mergeable; ranked by days since the last activity.",
          [(pr_cell(r), why_cell(r)) for r in maint], cols),
+        ("Merged upstream, carried until release", "Carried pull requests already merged into a development branch: nothing "
+         "for a maintainer to do. The reference node is a release that does not contain them yet, so the patches stay until "
+         "a release does.", merged_rows, ["pull request", "why here"]),
     ], generated, a.repo, path_prefix="../")
     with open(os.path.join(a.out, "index.html"), "w") as f:
         f.write(index)

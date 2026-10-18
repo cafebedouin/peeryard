@@ -48,6 +48,11 @@ jobs:
           [[ "$ROUNDS" =~ ^[1-5]$ ]] || { echo "rounds: 1-5"; exit 1; }
           [[ "$BLOCKS" =~ ^[0-9]+$ ]] && (( BLOCKS >= 1 && BLOCKS <= 4800 )) || { echo "blocks: 1-4800"; exit 1; }
           for a in $ARMS; do [[ "$a" =~ ^[a-z0-9]+=[A-Za-z0-9/._-]+$ ]] || { echo "arm: $a is not label=ref"; exit 1; }; done
+          # an arm label of a letter, an optional dash and three digits reads as a private tracking id, and labels are public in the run name: refuse it
+          shopt -s nocasematch; idlike='(^|[^A-Za-z0-9])[abceklmprsx]-?[0-9]{3}([^0-9]|$)'
+          for a in $ARMS; do if [[ "${a%%=*}" =~ $idlike ]]; then
+            echo "arm label: '${a%%=*}' looks like a tracking id (a letter and three digits); use a descriptive label, and delete this run"; exit 1; fi; done
+          shopt -u nocasematch
           printf 'ARMS=%s\nBLOCKS=%s\nROUNDS=%s\n' "$ARMS" "$BLOCKS" "$ROUNDS" | tee -a "$GITHUB_ENV"
       - name: ergo trees, one per arm, with the bench spec
         run: |

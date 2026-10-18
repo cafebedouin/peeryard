@@ -34,6 +34,12 @@ jobs:
           [[ "$SPEC" =~ ^[A-Za-z0-9_.]+$ ]] || { echo "spec: a class name"; exit 1; }
           [[ "$REPEATS" =~ ^([1-9]|[12][0-9]|30)$ ]] || { echo "repeats: 1-30"; exit 1; }
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "label: [A-Za-z0-9._-]{1,40}"; exit 1; }
+          # A letter, an optional dash and exactly three digits reads as a private tracking id, and the label is
+          # public in the run name: refuse it. Descriptive labels (pr2784-base, v609, arm) pass.
+          shopt -s nocasematch; idlike='(^|[^A-Za-z0-9])[abceklmprsx]-?[0-9]{3}([^0-9]|$)'
+          if [[ "$LABEL" =~ $idlike ]]; then
+            echo "label: '$LABEL' looks like a tracking id (a letter and three digits); use a descriptive label, and delete this run, whose name shows it"; exit 1
+          fi
       - name: ergo at the commit (any ref, pull request heads included)
         env: { SHA: '${{ inputs.sha }}' }
         run: |

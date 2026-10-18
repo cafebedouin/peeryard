@@ -30,8 +30,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '8', cache: sbt }
+        with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
+      - name: Cache the sbt dependencies (the ergo build files are not in this checkout)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/.ivy2/cache
+            ~/.sbt
+          key: indexer-bench-sbt-${{ hashFiles('.github/workflows/indexer-bench.yml') }}
+          restore-keys: indexer-bench-sbt-
       - name: Check the inputs
         env: { IN_ARMS: '${{ inputs.arms }}', IN_BLOCKS: '${{ inputs.blocks }}', IN_ROUNDS: '${{ inputs.rounds }}' }
         run: |

@@ -57,8 +57,10 @@ PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/exam
 pull requests that need a review, ranked by public rules (`queue/rules.json`), and
 [`/maintainers`](https://cafebedouin.github.io/peeryard/maintainers/) the ones waiting on a maintainer, opening with the
 PRs this test suite depends on. Both pages also list open PRs that make the same production change (same
-`git patch-id`) and open PRs by different authors on the same issue that touch the same production files. Generated
-daily from public GitHub data; a disagreement with a rank is a pull request against the rules.
+`git patch-id` of the changed lines) and open PRs by different authors on the same issue that touch the same production
+files. Generated daily from public GitHub data; a disagreement with a rank is a pull request against the rules. The same
+data, with a daily snapshot of the duplicate groups, is published as JSON for tools: fields, update times and the
+stability promise in [`docs/queue-data.md`](docs/queue-data.md).
 
 **What it is not.** peeryard checks whether a change does what it says and whether it holds under bad network
 conditions. It does not judge whether a change is the right design, and it has nothing to say about cryptography or

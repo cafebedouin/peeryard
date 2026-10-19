@@ -25,7 +25,9 @@ jobs:
       - name: Render the pages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 queue/build.py --out site
+        # The Pages deploy replaces the whole site, so the daily snapshots so far (site/history/) are read back from the
+        # published site first; if a listed day cannot be read the build fails and yesterday's site stays up, intact.
+        run: python3 queue/build.py --out site --history-from "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
       - uses: actions/upload-pages-artifact@v3
         with: { path: site }
   deploy:

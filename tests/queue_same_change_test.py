@@ -28,9 +28,9 @@ def commit(src, files, msg):
     return sh(src, "git", "rev-parse", "HEAD")
 
 
-def pr(n, author, created, head, title="", body="", draft=False, head_ref="topic", head_repo="fork/r"):
+def pr(n, author, created, head, title="", body="", draft=False, head_ref="topic", head_repo="fork/r", base="master"):
     return {"number": n, "user": {"login": author}, "created_at": created, "draft": draft, "title": title, "body": body,
-            "html_url": f"https://github.com/{REPO}/pull/{n}", "base": {"ref": "master", "sha": ""},
+            "html_url": f"https://github.com/{REPO}/pull/{n}", "base": {"ref": base, "sha": ""},
             "head": {"sha": head, "ref": head_ref, "repo": {"full_name": head_repo}}}
 
 
@@ -41,7 +41,8 @@ class SameChange(unittest.TestCase):
         src = os.path.join(cls.tmp.name, "src")
         os.makedirs(src)
         sh(src, "git", "init", "-q", "-b", "master")
-        commit(src, {"src/main/A.scala": "a\n", "core/src/main/B.scala": "b\n", "src/test/T.scala": "t\n"}, "base")
+        commit(src, {"src/main/A.scala": "a\n", "core/src/main/B.scala": "b\n", "src/test/T.scala": "t\n",
+                     "src/main/C.scala": "".join(f"c{i}\n" for i in range(10))}, "base")
         heads = {}
         # 1 and 2: the same production change (2 also edits a test); 3: a different change to the same file;
         # 4: a test-only change; 5: a change to another production file
@@ -55,6 +56,19 @@ class SameChange(unittest.TestCase):
             heads[n] = commit(src, files, f"pr {n}")
             sh(src, "git", "update-ref", f"refs/pull/{n}/head", heads[n])
         sh(src, "git", "update-ref", "refs/pull/6/head", heads[3])   # 6: from a release branch, at 3's head
+        # 11 on master and 12 on dev (where a neighbouring line differs): one change on two bases, same -U0 id
+        lines = [f"c{i}\n" for i in range(10)]
+        changed = lines[:5] + ["c5 fixed\n"] + lines[6:]
+        sh(src, "git", "checkout", "-q", "master")
+        sh(src, "git", "checkout", "-q", "-b", "p11")
+        heads[11] = commit(src, {"src/main/C.scala": "".join(changed)}, "pr 11")
+        sh(src, "git", "checkout", "-q", "master")
+        sh(src, "git", "checkout", "-q", "-b", "dev")
+        commit(src, {"src/main/C.scala": "".join(lines[:4] + ["c4 dev\n"] + lines[5:])}, "dev moves a neighbour")
+        sh(src, "git", "checkout", "-q", "-b", "p12")
+        heads[12] = commit(src, {"src/main/C.scala": "".join(lines[:4] + ["c4 dev\n", "c5 fixed\n"] + lines[6:])}, "pr 12")
+        for n in (11, 12):
+            sh(src, "git", "update-ref", f"refs/pull/{n}/head", heads[n])
         cls.gdir = os.path.join(cls.tmp.name, "cache.git")
         sh(cls.tmp.name, "git", "clone", "-q", "--bare", src, cls.gdir)
         cls.heads = heads
@@ -71,27 +85,41 @@ class SameChange(unittest.TestCase):
                 pr(4, "dan", "2026-03-02T00:00:00Z", h[4], body="Fixes #9"),
                 pr(5, "amy", "2026-03-03T00:00:00Z", h[5], body="see #8"),
                 pr(6, "rel", "2026-03-04T00:00:00Z", h[3], body="#9 #8", head_ref="v1.2.3", head_repo=REPO),
-                pr(10, "eve", "2026-03-05T00:00:00Z", "0" * 40, body="#9")]       # no ref: reported, not fatal
+                pr(10, "eve", "2026-03-05T00:00:00Z", "0" * 40, body="#9"),       # no ref: reported, not fatal
+                pr(11, "fay", "2026-03-06T00:00:00Z", h[11]),
+                pr(12, "gus", "2026-03-07T00:00:00Z", h[12], base="dev")]
 
-    def run_view(self, kinds):
+    def run_view(self, kinds, cfg=None):
         old = build.api
         build.api = lambda path, *a, **k: {"html_url": "u", "title": "t", "state": "open",
                                           **({"pull_request": {}} if kinds.get(int(path.rsplit("/", 1)[1])) == "pr" else {})}
         try:
             diffs = build.production_diffs(REPO, self.prs(), self.gdir)
-            return (diffs,) + build.same_change(REPO, self.prs(), diffs, None, {"same_change": {"release_head": "^v[0-9]"}})
+            return (diffs,) + build.same_change(REPO, self.prs(), diffs, None,
+                                                {"same_change": {"release_head": "^v[0-9]", **(cfg or {})}})
         finally:
             build.api = old
 
     def test_exact_group_earliest_first_draft_included(self):
         diffs, exact, related, meta = self.run_view({9: "issue", 8: "issue"})
-        self.assertEqual(diffs[4], {"files": [], "patch_id": None})
+        self.assertEqual(diffs[4], {"files": [], "patch_id": None, "patch_id_context": None, "changed_lines": 0})
         self.assertIn("error", diffs[10])
         self.assertEqual(diffs[1]["patch_id"], diffs[2]["patch_id"])
         self.assertNotEqual(diffs[1]["patch_id"], diffs[3]["patch_id"])
         groups = [g["prs"] for g in exact]
         self.assertIn([1, 2], groups)                    # draft 1 opened earlier: first
         self.assertIn([3, 6], groups)                    # same head: same change, whatever the branch
+
+    def test_same_change_on_another_base(self):
+        diffs, exact, _, _ = self.run_view({9: "issue", 8: "issue"})
+        self.assertEqual(diffs[11]["patch_id"], diffs[12]["patch_id"])                  # changed lines only: one id
+        self.assertNotEqual(diffs[11]["patch_id_context"], diffs[12]["patch_id_context"])  # the neighbour is in the context
+        self.assertEqual(diffs[11]["changed_lines"], 2)
+        self.assertIn([11, 12], [g["prs"] for g in exact])
+
+    def test_minimum_size(self):
+        _, exact, _, _ = self.run_view({9: "issue", 8: "issue"}, {"min_changed_lines": 3})
+        self.assertEqual([g["prs"] for g in exact], [])                                 # every change here is 2 lines
 
     def test_same_issue_pairs(self):
         _, exact, related, _ = self.run_view({9: "issue", 8: "issue"})

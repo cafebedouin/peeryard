@@ -55,11 +55,12 @@
   "needs_maintainer": "open, not a draft, at least one review at the current head, CI green or absent, mergeable state clean (or not yet computed by GitHub, which recomputes lazily after the base branch moves; asked again before judging, and shown as such); ordered by days since the last activity",
   "carried": "open upstream pull requests this tree carries as patches (patches/*/patches.json with an upstream_pr and a status that is not candidate, withdrawn or merged-in-<tag>), ordered by how many examples need them; one GitHub reports merged (into a branch not yet in the release the rig uses) is listed apart as merged into its base and carried until release, not as needing a maintainer",
   "stale": "open pull requests whose head is older than stale_days: listed at the end, unranked, so the work list stays a work list",
-  "same_change": "open pull requests, drafts included, whose production diff (src/main and */src/main, from the merge base with their base branch to the head) has the same git patch-id --stable: one group, earliest opened first, the others marked as the same production change as it; the author is not a factor (two open copies of one change are one review), and tests, docs and base branch may differ",
+  "same_change": "open pull requests, drafts included, whose production diff (src/main and */src/main, from the merge base with their base branch to the head, changed lines only: git diff -U0) has the same git patch-id --stable, so one change made on two bases still matches: one group, earliest opened first, the others marked as the same production change as it; the author is not a factor (two open copies of one change are one review), and tests, docs and base branch may differ",
   "same_issue": "open pull requests, drafts included, by different authors (one author's pull requests on one issue are usually parts of a series), that reference the same issue (#N or a link, in the title or body; GitHub says N is an issue, not a pull request) and change at least one of the same production files; a pair already in one same-change group is not repeated, and a pull request from a release branch (same_change.release_head) is left out, since it lists every pull request in the release"
  },
  "same_change": {
-  "release_head": "^v[0-9]"
+  "release_head": "^v[0-9]",
+  "min_changed_lines": 1
  },
  "not_a_factor": [
   "the author (every pull request is scored the same way, peeryard's own included)",

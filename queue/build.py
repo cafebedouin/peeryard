@@ -14,7 +14,8 @@ same way.
 Standard library and git. Reads: the repository's open pull requests, their files, reviews, issue comments, head commit
 and check runs (public data), and, for the same-change view, each open pull request's head fetched into a blobless bare
 clone (--git-cache; kept between local runs, fresh on a hosted runner). Writes: <out>/index.html,
-<out>/maintainers/index.html, <out>/queue.json. A pull request
+<out>/maintainers/index.html, <out>/queue.json, <out>/history/<date>.json and <out>/history/index.json (the fields and
+their stability: docs/queue-data.md). A pull request
 reviewed with peeryard at its current head (an issue comment carrying "using peeryard" or the earlier "using
 forkbench", posted after the head commit) is shown with that review's link instead of being offered for one.
 """
@@ -201,14 +202,25 @@ def production_diffs(repo, prs, gdir):
             "--recurse-submodules=no", "--filter=blob:none", "--stdin", stdin="".join(o + "\n" for o in sorted(blobs)))
     for n, (mb, head, files) in ranges.items():
         try:
-            pid = None
+            pid = pid_ctx = None
+            changed = 0
             if files:
-                patch = git(gdir, "diff", "--no-renames", "--no-color", "--no-ext-diff", mb, head, "--", *PROD_PATHSPEC)
-                pid = (git(gdir, "patch-id", "--stable", stdin=patch).split() or [None])[0]
-            out[n] = {"files": files, "patch_id": pid}
+                pid, changed = production_patch_id(gdir, mb, head, "-U0")
+                pid_ctx, _ = production_patch_id(gdir, mb, head)
+            out[n] = {"files": files, "patch_id": pid, "patch_id_context": pid_ctx, "changed_lines": changed}
         except Exception as e:
             out[n] = {"files": None, "patch_id": None, "error": str(e)[:200]}
     return out
+
+
+def production_patch_id(gdir, mb, head, *opts):
+    """(git patch-id --stable of the production diff mb..head, number of changed lines). With -U0 the diff carries the
+    changed lines only, so one change applied on top of a different base (other neighbouring lines) keeps its id; without
+    it, the id also covers three lines of context on each side."""
+    patch = git(gdir, "diff", *opts, "--no-renames", "--no-color", "--no-ext-diff", mb, head, "--", *PROD_PATHSPEC)
+    changed = sum(1 for line in patch.splitlines()
+                  if line[:1] in "+-" and not line.startswith(("+++ ", "--- ")))
+    return (git(gdir, "patch-id", "--stable", stdin=patch).split() or [None])[0], changed
 
 
 def issue_refs(repo, p):
@@ -233,15 +245,16 @@ def same_change(repo, prs, diffs, token, rules):
     cfg = rules.get("same_change", {})
     meta = {p["number"]: {"number": p["number"], "author": p["user"]["login"], "created": p["created_at"], "draft": p["draft"],
                           "base": p["base"]["ref"], "title": p["title"], "url": p["html_url"]} for p in prs}
-    by_pid = {}
+    by_pid, min_lines = {}, cfg.get("min_changed_lines", 1)
     for n, d in diffs.items():
-        if d.get("patch_id"):
+        if d.get("patch_id") and d.get("changed_lines", min_lines) >= min_lines:
             by_pid.setdefault(d["patch_id"], []).append(n)
     exact = []
     for pid, ns in by_pid.items():
         if len(ns) > 1:
             ns.sort(key=lambda n: (meta[n]["created"], n))
-            exact.append({"patch_id": pid, "prs": ns, "files": diffs[ns[0]]["files"]})
+            exact.append({"patch_id": pid, "prs": ns, "files": diffs[ns[0]]["files"],
+                          "changed_lines": diffs[ns[0]].get("changed_lines")})
     exact.sort(key=lambda g: g["prs"][0])
     exact_of = {n: g["patch_id"] for g in exact for n in g["prs"]}
     # same issue: a number referenced by two or more open pull requests, that GitHub says is an issue (not a pull request)
@@ -374,7 +387,10 @@ def same_change_sections(exact, related, meta, error, uncompared):
     return [
         ("Open pull requests that make the same change", "Open pull requests (drafts included) whose production diff "
          "(<code>src/main</code> and <code>*/src/main</code>, from the merge base with their base branch) is identical by "
-         "<code>git patch-id --stable</code>; earliest opened first. Tests, docs and base branch may differ." + intro_tail,
+         "<code>git patch-id --stable</code> over the changed lines only (<code>git diff -U0</code>), so the same change made "
+         "on another base still matches; earliest opened first. Tests, docs and base branch may differ. Machine-readable in "
+         "<a href='https://cafebedouin.github.io/peeryard/queue.json'>queue.json</a> (<a href='https://github.com/cafebedouin/peeryard/blob/main/docs/queue-data.md'>fields</a>; "
+         "daily snapshots in <a href='https://cafebedouin.github.io/peeryard/history/index.json'>history/</a>): a hint for maintainers, not a verdict." + intro_tail,
          ex_rows, ["pull requests", "what they share"]),
         ("Open pull requests on the same issue", "Open pull requests by different authors that reference the same issue and "
          "change at least one of the same production files: alternatives a maintainer may want to read together. A pair "
@@ -418,6 +434,82 @@ def carried_state_cell(c, token):
     return f"{link} {title}<br><small>closed unmerged {(p.get('closed_at') or '')[:10]}{base_note}{fixes}</small>", None
 
 
+# ---- history: one small snapshot of the duplicate data per day, so a baseline accumulates -------------------------------
+
+SCHEMA_VERSION = 1
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def fetch_json(url, tries=4):
+    """GET url as JSON; None on 404; raises on anything else after retries (a history that cannot be read must not be
+    overwritten with a shorter one)."""
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "peeryard-queue"}), timeout=60) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if attempt == tries - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == tries - 1:
+                raise
+        time.sleep(10 * (attempt + 1))
+
+
+def load_history(source):
+    """The snapshots published so far, {date: snapshot}. source is the base URL of the published site (the Pages deploy
+    replaces the whole site each run, so the previous days are read back from it), or a local directory holding
+    history/. No index yet means no history yet; an index whose listed days cannot all be read is an error."""
+    if not source:
+        return {}
+    if not source.startswith(("http://", "https://")):
+        d = os.path.join(source, "history")
+        return {f[:-5]: json.load(open(os.path.join(d, f))) for f in sorted(os.listdir(d))
+                if DATE_RE.match(f[:-5]) and f.endswith(".json")} if os.path.isdir(d) else {}
+    base, bust = source.rstrip("/") + "/history/", f"?t={int(time.time())}"   # past the Pages CDN cache (10 min)
+    idx = fetch_json(base + "index.json" + bust)
+    if idx is None:
+        return {}
+    out = {}
+    for day in idx.get("dates", []):
+        if not DATE_RE.match(day):
+            continue
+        snap = fetch_json(base + day + ".json" + bust)
+        if snap is None:
+            raise RuntimeError(f"history: {day} is in the published index but not served")
+        out[day] = snap
+    return out
+
+
+def snapshot(generated_at, repo, allprs, rows, exact, related, sc_error, uncompared):
+    """Today's duplicate data, small: the groups by number, not the rows."""
+    return {"schema_version": SCHEMA_VERSION, "date": generated_at[:10], "generated_at": generated_at, "repo": repo,
+            "open_prs": len(allprs), "open_ready_prs": len(rows),
+            "same_change": [{"patch_id": g["patch_id"], "prs": g["prs"], "files": len(g["files"]),
+                             "changed_lines": g.get("changed_lines")} for g in exact],
+            "same_issue": [{"issue": g["issue"], "prs": g["prs"], "pairs": [p["prs"] for p in g["pairs"]]} for g in related],
+            "same_change_error": sc_error, "same_change_uncompared": uncompared}
+
+
+def write_history(out, prior, snap):
+    """Writes every prior snapshot and today's (today's replaces an earlier run of the same day) to <out>/history/, with
+    history/index.json listing the dates, oldest first."""
+    days = dict(prior)
+    days[snap["date"]] = snap
+    d = os.path.join(out, "history")
+    os.makedirs(d, exist_ok=True)
+    for day, s in days.items():
+        with open(os.path.join(d, day + ".json"), "w") as f:
+            json.dump(s, f, separators=(",", ":"))
+    dates = sorted(days)
+    with open(os.path.join(d, "index.json"), "w") as f:
+        json.dump({"schema_version": SCHEMA_VERSION, "repo": snap["repo"], "dates": dates, "latest": dates[-1],
+                   "path": "history/<date>.json"}, f, indent=1)
+    return dates
+
+
 def why_cell(r):
     return "<span class=why>" + "; ".join(html.escape(w) for w in r["why"]) + "</span>"
 
@@ -430,9 +522,13 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="only the first N open PRs (for a local test)")
     ap.add_argument("--git-cache", default=os.path.join(os.path.expanduser("~"), ".cache", "peeryard", "queue"),
                     help="where the blobless bare clone for the same-change view lives (kept between runs)")
+    ap.add_argument("--history-from", default=None,
+                    help="where the snapshots so far are read from: the published site's base URL, or a local directory "
+                         "with history/ (default: --out itself, so local runs accumulate)")
     a = ap.parse_args()
     token = os.environ.get("GITHUB_TOKEN")
     RULES = load_rules()
+    prior = load_history(a.history_from or a.out)        # first, so an unreadable history fails before any work
     rows, allprs = collect(a.repo, token, a.limit)
     by_number = {r["number"]: r for r in rows}
     t0, sc_error = time.time(), None
@@ -445,6 +541,8 @@ def main():
         if n in by_number:
             by_number[n]["production_patch_id"] = d.get("patch_id")
             by_number[n]["production_files"] = d.get("files")
+            by_number[n]["production_patch_id_context"] = d.get("patch_id_context")
+            by_number[n]["production_changed_lines"] = d.get("changed_lines")
     for g in exact:
         for n in g["prs"][1:]:
             if n in by_number:
@@ -465,7 +563,8 @@ def main():
     wip = [r for r in rows if is_wip(r) and r["days_at_head"] <= stale_days]
     carried = [c for c in carried_patches() if c["repo"] == a.repo]
     carried.sort(key=lambda c: (-len(c["needed_by"]), c["number"]))
-    generated = now_utc().strftime("%Y-%m-%d %H:%M UTC")
+    now = now_utc()
+    generated, generated_at = now.strftime("%Y-%m-%d %H:%M UTC"), now.strftime("%Y-%m-%dT%H:%M:%SZ")
     os.makedirs(os.path.join(a.out, "maintainers"), exist_ok=True)
     reviewed = [r for r in rows if r["peeryard_review"]]
     same_secs = same_change_sections(exact, related, meta, sc_error, uncompared)
@@ -506,13 +605,15 @@ def main():
     with open(os.path.join(a.out, "maintainers", "index.html"), "w") as f:
         f.write(maint_page)
     with open(os.path.join(a.out, "queue.json"), "w") as f:
-        json.dump({"generated": generated, "repo": a.repo, "needs_review": [r["number"] for r in review],
+        json.dump({"schema_version": SCHEMA_VERSION, "generated": generated, "generated_at": generated_at, "repo": a.repo, "needs_review": [r["number"] for r in review],
                    "needs_maintainer": [r["number"] for r in maint], "carried": carried,
                    "same_change": exact, "same_issue": related, "same_change_error": sc_error,
-                   "same_change_uncompared": uncompared, "rows": rows}, f, indent=1, default=str)
+                   "same_change_uncompared": uncompared, "min_changed_lines": RULES.get("same_change", {}).get("min_changed_lines", 1),
+                   "open_prs": len(allprs), "rows": rows}, f, indent=1, default=str)
+    dates = write_history(a.out, prior, snapshot(generated_at, a.repo, allprs, rows, exact, related, sc_error, uncompared))
     print(f"{len(rows)} open PRs: {len(review)} need a review, {len(maint)} need a maintainer, {len(reviewed)} reviewed with peeryard, "
           f"{len(carried)} carried; same change: {len(exact)} group(s), same issue: {len(related)} group(s) ({sc_secs} s"
-          + (f", not computed: {sc_error}" if sc_error else "") + f"); written to {a.out}")
+          + (f", not computed: {sc_error}" if sc_error else "") + f"); history: {len(dates)} day(s); written to {a.out}")
 
 
 if __name__ == "__main__":

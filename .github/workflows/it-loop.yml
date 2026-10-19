@@ -1,0 +1,105 @@
+# Run one of ergo's Docker integration specs (src/it) N times on a given commit, on GitHub-hosted runners: spec-loop's
+# shape for the `it:` configuration. The node image is built once per job (`sbt docker`; upstream's `it:test` builds it
+# the same way, via `test dependsOn docker`); each run is a fresh sbt process `it:testOnly <spec>` under a time limit,
+# TMPDIR as in upstream CI. An optional patch (a unified diff, base64) is applied before the image is built, so the
+# nodes in the containers run the patched code; the patch and its sha256 are printed in the summary. Node logs are kept
+# only for runs that did not pass (passing runs keep the sbt log), and logs are gzipped, so the artifact stays small.
+#
+#   gh workflow run it-loop.yml -f sha=<ergo commit> -f spec=org.ergoplatform.it.UtxoStateNodesSyncSpec \
+#     -f repeats=10 -f run_minutes=18 [-f patch_b64="$(base64 -w0 x.patch)"] -f label=pr-head
+name: it loop
+run-name: "it loop ${{ inputs.label }}: ${{ inputs.spec }} x${{ inputs.repeats }} @ ${{ inputs.sha }}"
+on:
+  workflow_dispatch:
+    inputs:
+      sha: { description: 'ergoplatform/ergo commit (full sha; a pull request head is fine)', required: true }
+      spec: { description: 'integration spec class for it:testOnly', required: true }
+      repeats: { description: 'runs (1-20)', default: '5' }
+      run_minutes: { description: 'per-run limit in minutes (1-20)', default: '18' }
+      patch_b64: { description: 'optional unified diff to apply first, base64', default: '' }
+      label: { description: 'short arm label for the run name and results', default: 'arm' }
+permissions:
+  contents: read
+jobs:
+  loop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
+      - name: Check the inputs
+        env: { SHA: '${{ inputs.sha }}', SPEC: '${{ inputs.spec }}', REPEATS: '${{ inputs.repeats }}', RUNMIN: '${{ inputs.run_minutes }}', LABEL: '${{ inputs.label }}' }
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "sha: a full 40-hex commit"; exit 1; }
+          [[ "$SPEC" =~ ^[A-Za-z0-9_.]+$ ]] || { echo "spec: a class name"; exit 1; }
+          [[ "$REPEATS" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "repeats: 1-20"; exit 1; }
+          [[ "$RUNMIN" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "run_minutes: 1-20"; exit 1; }
+          [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "label: [A-Za-z0-9._-]{1,40}"; exit 1; }
+          shopt -s nocasematch; idlike='(^|[^A-Za-z0-9])[abceklmprsx]-?[0-9]{3}([^0-9]|$)'
+          if [[ "$LABEL" =~ $idlike ]]; then
+            echo "label: '$LABEL' looks like a tracking id (a letter and three digits); use a descriptive label, and delete this run, whose name shows it"; exit 1
+          fi
+      - name: ergo at the commit (any ref, pull request heads included)
+        env: { SHA: '${{ inputs.sha }}' }
+        run: |
+          git init -q ergo && cd ergo && git remote add origin https://github.com/ergoplatform/ergo
+          git fetch -q --depth 1 origin "$SHA" || git fetch -q origin '+refs/pull/*/head:refs/remotes/pr/*' '+refs/heads/*:refs/remotes/origin/*'
+          git checkout -q --detach "$SHA"; echo "ergo: $(git rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Apply the patch
+        if: inputs.patch_b64 != ''
+        env: { PATCH_B64: '${{ inputs.patch_b64 }}' }
+        run: |
+          printf '%s' "$PATCH_B64" | base64 -d > "$RUNNER_TEMP/input.patch"
+          git -C ergo apply --verbose "$RUNNER_TEMP/input.patch"
+          { echo "patch sha256: $(sha256sum "$RUNNER_TEMP/input.patch" | cut -c1-64)"; echo '```diff'; cat "$RUNNER_TEMP/input.patch"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        with: { path: peeryard }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ivy2/local/org.scorexfoundation
+          key: it-loop-sigma-${{ hashFiles('ergo/build.sbt', 'peeryard/patches/sigma-snapshot.sh') }}
+      - name: sigma-state snapshot (weak-blocks pins a -SNAPSHOT that is on no public repository; a release version needs nothing)
+        run: DIFFRUN_ERGO_CLONE="$PWD/ergo" JAVA8_HOME="$JAVA_HOME" bash peeryard/patches/sigma-snapshot.sh HEAD
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.cache/coursier/v1
+          key: it-loop-sbt-${{ hashFiles('ergo/**/*.sbt', 'ergo/project/build.properties') }}
+      - name: Build the node image and compile the integration tests once
+        run: cd ergo && mkdir -p tmp && TMPDIR="$PWD/tmp" sbt -Denv=test docker IntegrationTest/compile > "$RUNNER_TEMP/build.log" 2>&1 || { tail -80 "$RUNNER_TEMP/build.log"; exit 1; }
+      - name: Loop
+        env: { SPEC: '${{ inputs.spec }}', REPEATS: '${{ inputs.repeats }}', RUNMIN: '${{ inputs.run_minutes }}', LABEL: '${{ inputs.label }}' }
+        run: |
+          mkdir -p out; printf 'arm\trun\texit\tseconds\ttests\tfirst_failure\n' > out/RESULTS.tsv
+          echo "command: sbt -Denv=test 'it:testOnly $SPEC' (limit ${RUNMIN} min per run)" | tee -a "$GITHUB_STEP_SUMMARY"
+          for i in $(seq 1 "$REPEATS"); do
+            log="out/run-$i.log"; rc=0; t0=$(date +%s)
+            ( cd ergo && TMPDIR="$PWD/tmp" timeout -k 30 "${RUNMIN}m" sbt -Denv=test "it:testOnly $SPEC" ) > "$log" 2>&1 || rc=$?
+            secs=$(( $(date +%s) - t0 ))
+            sed -i 's/\x1b\[[0-9;]*m//g' "$log"
+            tests="$(grep -o 'Tests: succeeded [0-9]*, failed [0-9]*' "$log" | tail -1 || true)"
+            fail="$(grep -A1 -m1 '\*\*\* FAILED \*\*\*' "$log" | tail -1 | sed 's/^\[info\] *//' | cut -c1-240 | tr '\t' ' ' || true)"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$LABEL" "$i" "$rc" "$secs" "${tests:-none}" "$fail" | tee -a out/RESULTS.tsv
+            # node logs: Docker.close() saves them to target/logs; a run killed by the limit leaves containers, whose logs
+            # are saved here before they are removed. Kept for a run that did not pass; a passing run keeps its sbt log.
+            nl="out/node-logs-$i"; mkdir -p "$nl"
+            docker ps -a --filter name=ergo-itest- --format '{{.ID}} {{.Names}}' | while read -r id name; do
+              docker logs --timestamps "$id" > "$nl/leftover-$name.log" 2>&1 || true
+              docker rm -f "$id" > /dev/null 2>&1 || true
+            done
+            docker network ls -q --filter name=ergo-itest- | xargs -r docker network rm > /dev/null 2>&1 || true
+            if [[ -d ergo/target/logs ]]; then mv ergo/target/logs/* "$nl/" 2>/dev/null || true; fi
+            rm -f "$nl/test.log"   # the test JVM's own log, the same lines as the sbt log
+            if [[ "$tests" == "Tests: succeeded 1, failed 0" ]]; then rm -rf "$nl"; else find "$nl" -type f -exec gzip -9 {} +; fi
+            gzip -9 "$log"
+          done
+          pass=$(awk -F'\t' 'NR>1 && $5=="Tests: succeeded 1, failed 0"' out/RESULTS.tsv | wc -l)
+          fail=$(awk -F'\t' 'NR>1 && $5=="Tests: succeeded 0, failed 1"' out/RESULTS.tsv | wc -l)
+          other=$(( REPEATS - pass - fail ))
+          { echo "**$LABEL: $pass passed, $fail failed, $other other (of $REPEATS)**"; echo '```'; cat out/RESULTS.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: 'it-loop-${{ inputs.label }}', path: out/, retention-days: 30 }

@@ -17,6 +17,12 @@ for d in "$OUT"/runs/*/; do
   printf '%s\t%s\n' "$d" "$role" >> "$labels"; [[ $role == base ]] && nb=$((nb+1)) || nc=$((nc+1))
 done
 if [[ $nb -eq 0 || $nc -eq 0 ]]; then echo "logab: node logs for $nb base and $nc candidate runs; nothing to compare" >&2; exit 0; fi
+# One run per role separates nothing from chance: every line one run logged and the other did not is "novel", and a
+# features ranking over two samples is noise. The comparison needs at least two runs in each role (DIFFRUN_LOGAB_MIN).
+min="${DIFFRUN_LOGAB_MIN:-2}"
+if [[ $nb -lt $min || $nc -lt $min ]]; then
+  echo "logab: $nb base / $nc candidate runs; skipped: one run per role cannot separate the jars from run-to-run noise (needs $min or more each; DIFFRUN_LOGAB_MIN=1 forces it)" >&2; exit 0
+fi
 src=(); [[ -n "${DIFFRUN_LOG_SOURCE:-}" ]] && src=(--source "$DIFFRUN_LOG_SOURCE")
 python3 "$DIAG/features.py" --labels "$labels" --target candidate --top 15 "${src[@]}" > "$OUT/logab_features.txt" 2>&1
 mapfile -t cand < <(awk -F'\t' '$2=="candidate"{print $1}' "$labels"); mapfile -t base < <(awk -F'\t' '$2=="base"{print $1}' "$labels")

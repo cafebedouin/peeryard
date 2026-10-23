@@ -20,7 +20,8 @@ declare -A HIT
 while read -r f; do
   case "$f" in
     *network/*|*scorex/core/network*) HIT[network]=1 ;;
-    *modifierprocessors/*|*nodeView/history/*) HIT[history]=1 ;;
+    *ToDownloadProcessor*) HIT[history]=1; HIT[todownload]=1 ;;
+    *modifierprocessors/*|*nodeView/history/*) HIT[history]=1; HIT[history-other]=1 ;;
     *Snapshot*|*DigestState*) HIT[bootstrap]=1 ;;
     *nodeView/state/*) HIT[state]=1 ;;
     *mining/*|*settings/*) HIT[mining]=1 ;;
@@ -33,7 +34,15 @@ if [[ -n "$ROWS" ]]; then for k in network history state bootstrap mining mempoo
 echo "production files changed by #$PR on $BASE: $(wc -l <<< "$files")"; while read -r f; do echo "  $f"; done <<< "$files"
 echo; echo "recipes that fit (diffrun/scenarios/FIT.md):"
 [[ -n "${HIT[network]:-}" ]] && echo "  network       -> scenario:fork-convergence (or its smoke), interop"
-[[ -n "${HIT[history]:-}" ]] && echo "  history       -> scenario:sibling-fork (or its smoke), scenario:fork-convergence"
+if [[ -n "${HIT[todownload]:-}" && -z "${HIT[history-other]:-}" ]]; then
+  # FIT.md's history row, the ToDownloadProcessor caveat: nothing shipped reaches the download scheduler's lookback
+  # thresholds; a sibling-fork smoke here only shows the scenario still runs, which is not evidence about the change
+  echo "  history       -> ToDownloadProcessor only: no shipped scenario reaches its lookback thresholds (100 near the tip, 128 far behind);"
+  echo "                   revert check plus a read, not a smoke (FIT.md, history row). A sibling-fork smoke would only show the scenario still runs."
+elif [[ -n "${HIT[history]:-}" ]]; then
+  echo "  history       -> scenario:sibling-fork (or its smoke), scenario:fork-convergence"
+  [[ -n "${HIT[todownload]:-}" ]] && echo "                   (the ToDownloadProcessor part of the diff is reached by no shipped scenario: revert check plus a read for it; FIT.md, history row)"
+fi
 [[ -n "${HIT[state]:-}" ]]   && echo "  state         -> scenario:fork-convergence (a switch is a rollback), interop"
 [[ -n "${HIT[bootstrap]:-}" ]] && echo "  snapshot/digest -> bootstrap-modes (one pair; there is no smoke manifest, the scenario is one pair already); rig-example RIG_EXAMPLE=utxo-bootstrap or nipopow-bootstrap"
 [[ -n "${HIT[mining]:-}" ]]  && echo "  mining/params -> interop; rig-example RIG_EXAMPLE=mining, or soak (block rate across the retarget)"

@@ -3,6 +3,7 @@
   "description": "SMOKE: one pair, no cited verdict; the only expectation is that every node still answers afterwards. A follower on a lighter, static fork is connected to a peer holding a heavier fork: does it switch?",
   "script": "fork-convergence.sh",
   "tier": "public",
+  "smoke": true,
   "env": {
     "PREFIX_MIN": 14,
     "LMIN": 17,

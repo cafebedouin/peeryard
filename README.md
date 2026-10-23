@@ -41,6 +41,9 @@ echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $HOME/er
 bash rig/preflight.sh                                             # can this host run the rig?
 PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh   # two nodes, about a minute
 ```
+In a container instead (macOS, or a host you would rather not change): `bash docker/run.sh` builds the image and opens a
+shell in it with the flags the rig needs; then the last two lines above, unchanged (`PEERYARD_JAR` set before `run.sh`
+is mounted in). Details under *What it needs* below.
 
 **Who it is for.**
 - Ergo node maintainers: not to run, unless you want to. What reaches you is the output: an issue with a reproduction,
@@ -217,11 +220,15 @@ Example output of a finished run is in `diffrun/examples/`.
   `patches/stack.sh --build ergo-matrix`; `patches/README.md`), and the Rust examples an arkadianet or ergo-node-rust
   binary (`rig/README.md`); `rig/run-suite.sh` skips what is not set;
 - about 1.5 GB of free RAM for a four-node scenario;
-- **Docker is optional, two ways:** `docker/` builds an image with the whole run card (the rig runs inside it with no
-  root: `docker run --security-opt seccomp=unconfined --security-opt apparmor=unconfined -v "$PWD":/peeryard peeryard`;
-  witnessed: preflight and `bringup` pass inside), for hosts where unprivileged user namespaces are locked; and
-  `review/it-spec.sh` runs one of ergo's own Docker integration specs on a PR's tree, the suite upstream's CI runs,
-  which peeryard treats as a dependency it calls, not code it carries.
+- **Docker is optional, two ways:** `bash docker/run.sh` builds an image with the whole run card and starts a shell in
+  it at `/peeryard`, with the flags the rig needs already set (`docker/Dockerfile` explains each; by hand they are
+  `--init --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined`,
+  no `--privileged`, no root inside). The clone, your `PEERYARD_JAR` and `DIFFRUN_ERGO_CLONE` are mounted, and the
+  container's home is a host directory so caches survive restarts (`docker/run.sh --help`). This is the route for macOS
+  and for hosts where unprivileged user namespaces are locked; the first command inside is `bash rig/preflight.sh`,
+  which checks the container the same way it checks a host. And `review/it-spec.sh` runs one of ergo's own Docker
+  integration specs on a PR's tree, the suite upstream's CI runs, which peeryard treats as a dependency it calls, not
+  code it carries.
 
 A fork-convergence run takes 3–7 minutes; a full verdict takes 8–12 paired runs, 1.5 to 2.5 hours. The timings in
 this README come from a development host from 2019 and GitHub-hosted runners (2 and 4 vCPUs); a newer machine is
@@ -239,7 +246,7 @@ written, and where:
 The no-node self-tests take seconds: `T=$(mktemp -d) bash tests/sequential.sh`, `T=$(mktemp -d) bash tests/lint.sh`,
 `T=$(mktemp -d) bash tests/precheck.sh` and `T=$(mktemp -d) bash tests/tooling.sh`, the last on the patch check,
 sidecar registration and provenance helpers. `T` must be a fresh empty directory: each test deletes it first. In a
-container, the rig needs the two `--security-opt` flags in the Docker item above (`docker/`).
+container, the rig needs the flags in the Docker item above, which `docker/run.sh` passes.
 
 The mnemonics, the REST API key `hello` (and its hash) and the solver key in `rig/rig.sh` and the example topologies
 are public devnet test values, not secrets: they unlock only the private devnets peeryard starts.

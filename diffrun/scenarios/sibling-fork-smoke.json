@@ -3,6 +3,7 @@
   "description": "SMOKE: one pair, no cited verdict; the only expectation is that every node still answers afterwards. Four devnet nodes, two miners behind a slow link: does a node's best full block ever sit on a different fork from its best header at the same height, in two consecutive samples?",
   "script": "sibling-fork.sh",
   "tier": "public",
+  "smoke": true,
   "env": {
     "D_AC": 500,
     "P": "4s",

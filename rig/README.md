@@ -458,9 +458,12 @@ top of them mean nothing.
 The hooks compare chains with `same_chain` (header ids at the lower of two heights), never by tip equality: a
 node that follows a live miner is always a block or two behind, which is lag, not a fork.
 
-**In a container:** the rig needs unprivileged user namespaces, which Docker's default seccomp and AppArmor
-profiles block. Run the container with `--security-opt seccomp=unconfined --security-opt apparmor=unconfined`
-(no `--privileged` and no root inside are needed); the host must have `sch_netem` loaded.
+**In a container:** start it with `bash docker/run.sh` (`docker/Dockerfile` explains each flag it passes). By hand, the
+rig needs `--security-opt seccomp=unconfined --security-opt apparmor=unconfined` (its own user namespace, which the
+default profiles block), `--security-opt systempaths=unconfined` (`ip netns exec` remounts `/sys`, which Docker's masked
+`/sys` paths refuse: "mount of /sys failed: Operation not permitted"; seen on Docker Desktop) and `--init` (an init
+reaps orphans; without one, `<defunct>` children survive a run). No `--privileged` and no root inside are needed; the
+kernel the container runs on (Docker Desktop: its VM's) must have netem, which `rig/preflight.sh` checks.
 
 ## Applications under test (first: the Lithos client)
 

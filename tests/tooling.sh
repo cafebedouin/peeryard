@@ -105,14 +105,17 @@ if python3 tests/matrix_value_test.py > "$T/matrix_value.txt" 2>&1; then ok "mat
 else bad "matrix_value.py: value split and request matching" "see $T/matrix_value.txt"; fi
 
 # diffrun/logab.sh: base vs candidate node logs (synthetic runs, no node): a line only the candidate logs is novel,
-# identical logs give no novel message
+# identical logs give no novel message; one run per role is skipped by default (DIFFRUN_LOGAB_MIN=1 forces it)
 mkrun(){ mkdir -p "$1/logs"; for i in $(seq 1 30); do echo "10:00:$(printf %02d $((i % 60))).000 INFO  [x] o.e.n.Foo - step $i done"; done > "$1/logs/node_A.log"; }
 LA="$T/logab"; mkrun "$LA/runs/base-1"; mkrun "$LA/runs/candidate-1"
 echo "10:01:00.000 WARN  [x] o.e.n.Bar - something new appeared" >> "$LA/runs/candidate-1/logs/node_A.log"
-bash diffrun/logab.sh "$LA" 2>/dev/null
-if grep -q "something new appeared" "$LA/logab_novelty.txt" 2>/dev/null; then ok "logab.sh: a candidate-only line is novel"
+skip_msg="$(bash diffrun/logab.sh "$LA" 2>&1 >/dev/null)"
+if [[ ! -e "$LA/logab_novelty.txt" && "$skip_msg" == *"1 base / 1 candidate runs; skipped"* ]]; then ok "logab.sh: one run per role -> skipped, says why, writes nothing"
+else bad "logab.sh: one run per role -> skipped" "$skip_msg"; fi
+DIFFRUN_LOGAB_MIN=1 bash diffrun/logab.sh "$LA" 2>/dev/null
+if grep -q "something new appeared" "$LA/logab_novelty.txt" 2>/dev/null; then ok "logab.sh: a candidate-only line is novel (DIFFRUN_LOGAB_MIN=1)"
 else bad "logab.sh: a candidate-only line is novel" "see $LA/logab_novelty.txt"; fi
-LB="$T/logab-same"; mkrun "$LB/runs/base-1"; mkrun "$LB/runs/candidate-1"; bash diffrun/logab.sh "$LB" 2>/dev/null
+LB="$T/logab-same"; mkrun "$LB/runs/base-1"; mkrun "$LB/runs/candidate-1"; DIFFRUN_LOGAB_MIN=1 bash diffrun/logab.sh "$LB" 2>/dev/null
 if grep -q "new message" "$LB/logab_novelty.txt" 2>/dev/null; then bad "logab.sh: identical logs give no new message" "see $LB/logab_novelty.txt"
 else ok "logab.sh: identical logs give no new message"; fi
 

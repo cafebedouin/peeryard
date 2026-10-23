@@ -120,9 +120,11 @@ on_signal(){ [[ -n "$CUR_TPID" ]] && kill -TERM "$CUR_TPID" 2>/dev/null; echo "d
 trap on_signal INT TERM HUP
 
 # Processes that belong to a run: in the timeout's process group, or with the run's WORKDIR in their command line.
-# The WORKDIR is passed to awk through the environment, so awk's own command line does not match itself.
+# The WORKDIR is passed to awk through the environment, so awk's own command line does not match itself. A zombie
+# (state Z, <defunct>) is not a leftover: it holds no namespace, socket or file, only a pid table entry its parent has
+# not collected yet (a container without an init as PID 1 keeps them for good; docker/run.sh runs one).
 leftovers(){ local wd="$1" pg="$2"
-  ps -eo pid=,pgid=,args= | W="$wd" G="$pg" awk -v me="$$" '$1 != me && ($2 == ENVIRON["G"] || index($0, ENVIRON["W"])) {print}'; }
+  ps -eo pid=,pgid=,stat=,args= | W="$wd" G="$pg" awk -v me="$$" '$1 != me && $3 !~ /^Z/ && ($2 == ENVIRON["G"] || index($0, ENVIRON["W"])) {print}'; }
 
 # launch <timeout> <workdir> <script> <jar> <stdout> <stderr>: run the script under `timeout` in its own process group
 # (TERM, then KILL of the whole group 30 s later), with WORKDIR and the manifest env. Sets RC, T0, T1, TIMED_OUT, TPID.
@@ -261,7 +263,7 @@ jql -n --slurpfile m "$MAN" --slurpfile runs "$OUT/runs.jsonl" --argjson minv "$
   include "diffrun";
   $m[0] as $m
   | { base: role_summary($m; "base"; $runs), candidate: role_summary($m; "candidate"; $runs) } as $pr
-  | { verdict_schema_version: 1, scenario: $m.name, tier: $m.tier, verdict: decide($pr; $minv),
+  | { verdict_schema_version: 1, scenario: $m.name, tier: $m.tier, smoke: ($m.smoke // false), verdict: decide($pr; $minv),
       precedence: ["DEGENERATE", "AGAINST", "NULL", "SUPPORTS"],
       same_jar: ($bsha == $csha),
       provenance: { scenario_script_sha256: $ssha, precheck_sha256: (if $psha == "" then null else $psha end),

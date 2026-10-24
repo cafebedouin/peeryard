@@ -1,0 +1,31 @@
+# Changed path -> release-check scenarios (ci/release-check/scope.py). Tab-separated:
+#   pattern     an extended regular expression (Python re.search) matched against each path that differs between the
+#               baseline tag and the candidate commit
+#   scenarios   space-separated catalog.tsv names, or - when no scenario here exercises the path
+#   note        printed beside the path in the scope report
+# Every matching row applies (the union). A path no row matches is listed as unmapped. The rows follow
+# diffrun/scenarios/FIT.md, coarser: the release check picks scenarios to run, it does not judge a change.
+^src/main/scala/org/ergoplatform/network/	netsplit flap loss churn reorder-dup-phases mixed fork-convergence sibling-fork txload	sync negotiation, download, peer handling, transaction relay
+^src/main/scala/scorex/	netsplit flap loss churn reorder-dup-phases mixed	the network layer and utilities inherited from Scorex
+^src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/	fork-convergence sibling-fork netsplit reorg-mempool bootstrap-modes utxo-bootstrap nipopow-bootstrap	best-chain choice, section application, download scheduling, pruning, NiPoPoW
+^src/main/scala/org/ergoplatform/nodeView/history/[^/]+\.scala$	fork-convergence sibling-fork reorg-mempool corruption netsplit	history storage and reads
+^src/main/scala/org/ergoplatform/nodeView/history/extra/	-	the extra indexer: not run here (review/release-check.sh runs indexer-diff)
+^src/main/scala/org/ergoplatform/nodeView/state/	utxo-bootstrap bootstrap-modes corruption mixed-roles-phases	UTXO and digest state, snapshots, recovery
+^src/main/scala/org/ergoplatform/nodeView/mempool/	txload txchain mempool-evict reorg-mempool	mempool policy and ordering
+^src/main/scala/org/ergoplatform/nodeView/wallet/	txload wallet-oracle-restart	the node's wallet
+^src/main/scala/org/ergoplatform/nodeView/[^/]+\.scala$	reorg-mempool netsplit soak corruption	the node view holder: applying blocks, chain switches, mempool updates
+^src/main/scala/org/ergoplatform/mining/	mining txload soak	block candidates and the internal miner
+^src/main/scala/org/ergoplatform/modifiers/	txload reorg-mempool	transactions and modifiers on the node side
+^src/main/scala/org/ergoplatform/http/	bootstrap-modes	REST routes (the scenarios read /info, /blocks, /wallet, /transactions)
+^src/main/scala/org/ergoplatform/settings/	floor bringup	node settings
+^src/main/resources/(?!api/)	floor bringup	shipped configuration (application.conf and the network confs)
+^src/main/resources/api/	-	the REST API description (openapi.yaml)
+^ergo-core/src/main/scala/org/ergoplatform/modifiers/	bringup netsplit nipopow-bootstrap txload	headers, sections, extensions, transactions (serialization and validation)
+^ergo-core/src/main/scala/org/ergoplatform/nodeView/history/	nipopow-bootstrap fork-convergence	core history types, NiPoPoW
+^ergo-core/src/main/scala/org/ergoplatform/network/	netsplit churn mixed	sync messages and their codecs
+^ergo-core/src/main/	bringup	other core code
+^ergo-wallet/src/main/	txload wallet-oracle-restart	wallet library: keys, secret storage, box selection, signing
+^avldb/src/main/	utxo-bootstrap bootstrap-modes corruption	the authenticated AVL+ tree store and its serialization
+^(build\.sbt|project/)	-	build definition: the build job builds it, the scenarios run the result
+^(src/(test|it)/|[^/]+/src/test/)	-	tests: upstream CI runs them, this check does not
+^(docs?/|papers/|[^/]+\.md$|\.github/)	-	documentation and upstream CI configuration

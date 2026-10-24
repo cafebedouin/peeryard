@@ -1,0 +1,6 @@
+# Rows the release check appends to rig/examples/suite.tsv in its own job checkout (never committed there): examples
+# outside the suite that the release check runs. Same columns as suite.tsv: name, PASS marker, timeout in seconds,
+# extra environment, needs. `needs: release` passes the baseline jar as PEERYARD_JAR_B (rig/run-suite.sh).
+loss	LOSS: PASS	900	-	-
+upgrade-restart	UPGRADE-RESTART: PASS	1200	-	release
+upgrade-mixed	UPGRADE-MIXED: PASS	1500	-	release

@@ -6,6 +6,10 @@ One command dispatches the network checks a release decision can use, on GitHub-
 published jar when built from source); candidate = the tag + the release PR's production diff. First used for
 ergoplatform/ergo#2640 (6.0.8 candidate vs v6.0.7).
 
+Its complement, `.github/workflows/release-check.yml` ([docs/release-check.md](../docs/release-check.md)), takes a
+release branch or any ref instead of a PR and runs what this set does not: the rig examples on both jars, the upgrade
+path, and the two rates pooled per role.
+
 ## The set and how to read each
 
 | set | what runs | the reading |

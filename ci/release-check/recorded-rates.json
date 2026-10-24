@@ -1,0 +1,9 @@
+{
+  "comment": "Hosted rates already measured on a release (GitHub ubuntu-24.04, 4 vCPU / 16 GB). The release check compares its own baseline arm with these as a reproduction check. k of n VALID runs meet the condition; source = the run that measured it.",
+  "v6.0.8": {
+    "fork-convergence": { "when": "switched==true", "k": 38, "n": 38, "kind": "A/A (the release in both roles, 5 shards x 4 pairs; 2 of 40 runs INCONCLUSIVE)",
+                          "source": "https://github.com/cafebedouin/peeryard/actions/runs/38833185418" },
+    "sibling-fork": { "when": "E_total>0", "k": 20, "n": 20, "kind": "A/A (the release in both roles, 5 shards x 2 pairs)",
+                      "source": "https://github.com/cafebedouin/peeryard/actions/runs/38833185418" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "M", "mining": true, "mine_poll": "2s", "knownPeers": [], "jar": "${PEERYARD_JAR_B}" },
+    { "name": "U", "mining": false, "knownPeers": ["M"], "jar": "${PEERYARD_JAR_B}",
+      "conf": { "ergo.wallet.testMnemonic": "null" } }
+  ],
+  "links": [ { "a": "M", "b": "U", "delay_ms": 0 } ]
+}

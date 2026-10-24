@@ -1,0 +1,293 @@
+# A release-candidate check of ergoplatform/ergo on GitHub-hosted runners: what upstream CI does not run. Given a
+# candidate ref and a baseline release, it lists what changed (commits, pull requests, paths since the baseline tag,
+# ci/release-check/scope.py), maps the changed paths to scenarios (ci/release-check/path-map.tsv) and adds the core set
+# (ci/release-check/catalog.tsv); builds the candidate from source (ci/build-ref.sh, i.e. diffrun/build.sh <commit>) and
+# takes the baseline from the release's own jar asset, checked against its .jar.sha256 asset; then runs
+#   suite    rig examples on several nodes, each on the candidate and (one-jar examples) on the baseline in the same job
+#   upgrade  the baseline's data dir restarted on the candidate, and mixed baseline/candidate networks
+#   rates    diffrun rate scenarios, base = baseline and candidate = candidate in counterbalanced pairs, pooled per role
+# and a summary job writes the table to the step summary and a draft results note (artifact release-check). A rate is
+# flagged when the candidate's exact 95% interval excludes the baseline's point estimate: a change, not a verdict.
+# Runs by hand only (docs/release-check.md); one dispatch is capped at 30 jobs, so a full check is split by `parts`.
+# Hand-maintained (not exported by ci/export-workflows.sh).
+#
+#   gh workflow run release-check.yml -f candidate=v6.0.9 -f baseline=v6.0.8 -f parts=suite,upgrade
+#   gh workflow run release-check.yml -f candidate=v6.0.9 -f baseline=v6.0.8 -f parts=rates -f rate_pairs=20
+name: release check
+run-name: "release check ${{ inputs.candidate || 'newest v6 branch' }} vs ${{ inputs.baseline || 'latest release' }} (${{ inputs.parts }}; ${{ inputs.scenarios }}; x${{ inputs.repeats }}; ${{ inputs.rate_pairs }} pairs)"
+on:
+  workflow_dispatch:
+    inputs:
+      candidate: { description: 'ergoplatform/ergo branch, tag or 40-hex commit to check (empty = the newest v6.N.N release branch by version)', default: '' }
+      baseline: { description: 'baseline release tag, vN.N.N, with an ergo-<version>.jar and .jar.sha256 asset (empty = the latest non-prerelease)', default: '' }
+      scenarios: { description: 'auto (the paths'' scenarios plus the core set), core, or space-separated names from ci/release-check/catalog.tsv', default: 'auto' }
+      parts: { description: 'comma-separated: suite, upgrade, rates (a full check of auto is usually over the cap: dispatch suite,upgrade and rates apart)', default: 'suite,upgrade' }
+      repeats: { description: 'jobs per example (1-3); the order of candidate and baseline alternates by repeat', default: '1' }
+      rate_pairs: { description: 'pairs per rate scenario (1-40), split into shards of the catalog''s pairs per shard', default: '12' }
+permissions:
+  contents: read
+env:
+  ERGO_REPO: https://github.com/ergoplatform/ergo
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      candidate_sha: ${{ steps.refs.outputs.candidate_sha }}
+      candidate_ref: ${{ steps.refs.outputs.candidate_ref }}
+      baseline: ${{ steps.refs.outputs.baseline }}
+      examples: ${{ steps.plan.outputs.examples }}
+      shards: ${{ steps.plan.outputs.shards }}
+      n_examples: ${{ steps.plan.outputs.n_examples }}
+      n_shards: ${{ steps.plan.outputs.n_shards }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IN_CANDIDATE: ${{ inputs.candidate }}
+      IN_BASELINE: ${{ inputs.baseline }}
+      IN_SCENARIOS: ${{ inputs.scenarios }}
+      IN_PARTS: ${{ inputs.parts }}
+      IN_REPEATS: ${{ inputs.repeats }}
+      IN_PAIRS: ${{ inputs.rate_pairs }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inputs and refs (validated before anything is fetched or built)
+        id: refs
+        run: |
+          set -euo pipefail
+          fail(){ echo "::error::$*"; exit 1; }
+          [[ "$IN_SCENARIOS" =~ ^[a-z0-9\ -]{1,400}$ ]] || fail "scenarios: auto, core, or catalog names ([a-z0-9-], space-separated)"
+          [[ "$IN_PARTS" =~ ^[a-z,\ ]{1,40}$ ]] || fail "parts: suite, upgrade, rates"
+          [[ "$IN_REPEATS" =~ ^[1-3]$ ]] || fail "repeats: 1-3"
+          if ! [[ "$IN_PAIRS" =~ ^[0-9]{1,2}$ ]] || (( IN_PAIRS < 1 || IN_PAIRS > 40 )); then fail "rate_pairs: 1-40"; fi
+          b="$IN_BASELINE"
+          if [ -z "$b" ]; then b="$(gh api repos/ergoplatform/ergo/releases/latest --jq .tag_name)"; fi
+          [[ "$b" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "baseline: a release tag vN.N.N (got '$b')"
+          rel="$(gh api "repos/ergoplatform/ergo/releases/tags/$b")" || fail "baseline $b: no GitHub release with that tag"
+          [ "$(jq -r .prerelease <<< "$rel")" = false ] || fail "baseline $b is a pre-release"
+          v="${b#v}"
+          jq -e --arg j "ergo-$v.jar" --arg s "ergo-$v.jar.sha256" '[.assets[].name] | index($j) and index($s)' <<< "$rel" > /dev/null \
+            || fail "baseline $b: the release has no ergo-$v.jar and ergo-$v.jar.sha256 assets (published since v6.0.8)"
+          c="$IN_CANDIDATE"
+          if [ -z "$c" ]; then
+            c="$(git ls-remote --heads "$ERGO_REPO" 'refs/heads/v6.*' | sed 's#.*refs/heads/##' | grep -E '^v6\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            [ -n "$c" ] || fail "no v6.N.N release branch found"
+          fi
+          [[ "$c" =~ ^[A-Za-z0-9._/-]{1,100}$ && "$c" != *..* && "$c" != -* ]] || fail "candidate: a branch, tag or 40-hex commit"
+          if [[ "$c" =~ ^[0-9a-f]{40}$ ]]; then sha="$c"
+          else
+            sha="$(git ls-remote "$ERGO_REPO" "refs/heads/$c" | cut -f1)"
+            [ -n "$sha" ] || sha="$(git ls-remote "$ERGO_REPO" "refs/tags/$c^{}" "refs/tags/$c" | sort -k2 | tail -1 | cut -f1)"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || fail "candidate $c: not a branch, tag or commit of ergoplatform/ergo"
+          { echo "candidate_ref=$c"; echo "candidate_sha=$sha"; echo "baseline=$b"; } | tee -a "$GITHUB_OUTPUT"
+          echo "candidate \`$c\` = \`$sha\`, baseline \`$b\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Scope (commits, pull requests and changed paths since the baseline tag)
+        env:
+          C_SHA: ${{ steps.refs.outputs.candidate_sha }}
+          C_REF: ${{ steps.refs.outputs.candidate_ref }}
+          B_TAG: ${{ steps.refs.outputs.baseline }}
+        run: |
+          set -euo pipefail
+          git clone -q --filter=blob:none "$ERGO_REPO" "$RUNNER_TEMP/ergo"
+          git -C "$RUNNER_TEMP/ergo" cat-file -e "$C_SHA^{commit}" 2>/dev/null || git -C "$RUNNER_TEMP/ergo" fetch -q origin "$C_SHA"
+          python3 ci/release-check/scope.py --clone "$RUNNER_TEMP/ergo" --baseline "$B_TAG" --candidate "$C_SHA" --candidate-ref "$C_REF" --api --out rc-scope
+          cat rc-scope/scope.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Job plan (refused over 30 jobs)
+        id: plan
+        run: |
+          mkdir -p rc-plan
+          python3 ci/release-check/plan.py --scope rc-scope/scope.json --scenarios "$IN_SCENARIOS" --parts "$IN_PARTS" \
+            --repeats "$IN_REPEATS" --rate-pairs "$IN_PAIRS" --max-jobs 30 --out rc-plan/plan.json --github-output | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
+      - uses: actions/upload-artifact@v4
+        with: { name: rc-scope, path: rc-scope/, retention-days: 90 }
+      - uses: actions/upload-artifact@v4
+        with: { name: rc-plan, path: rc-plan/, retention-days: 90 }
+
+  build:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      DIFFRUN_NO_LOCK: 1
+      DIFFRUN_ERGO_CLONE: ${{ github.workspace }}/../ergo-clone
+      C_SHA: ${{ needs.plan.outputs.candidate_sha }}
+      B_TAG: ${{ needs.plan.outputs.baseline }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
+      - name: Cache the candidate build (keyed by its commit and the build script)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/diffrun/builds
+          key: rc-build-${{ needs.plan.outputs.candidate_sha }}-${{ hashFiles('diffrun/build.sh') }}
+      - name: Cache sbt dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ivy2/cache
+            ~/.cache/coursier/v1
+            ~/.sbt
+          key: rc-sbt-${{ needs.plan.outputs.candidate_sha }}
+          restore-keys: rc-sbt-
+      - name: Build the candidate (ci/build-ref.sh -> diffrun/build.sh <commit>)
+        run: |
+          set -euo pipefail
+          git clone -q --filter=blob:none "$ERGO_REPO" "$DIFFRUN_ERGO_CLONE"
+          export JAVA8_HOME="$JAVA_HOME"
+          bash ci/build-ref.sh "$C_SHA" jars candidate
+      - name: The baseline release asset, checked against its .jar.sha256 asset
+        run: |
+          set -euo pipefail
+          v="${B_TAG#v}"; u="https://github.com/ergoplatform/ergo/releases/download/$B_TAG"
+          curl -fsSL -o jars/baseline.jar "$u/ergo-$v.jar"
+          want="$(curl -fsSL "$u/ergo-$v.jar.sha256" | awk '{print $1}')"
+          [[ "$want" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::ergo-$v.jar.sha256: no sha256 in the asset"; exit 1; }
+          echo "$want  jars/baseline.jar" | sha256sum -c
+          bash diffrun/register.sh jars/baseline.jar "$v"
+          cv="$(jq -r .expected_app_version jars/candidate.jar.json)"
+          [ "$cv" != "$v" ] || { echo "::error::the candidate reports the baseline's version $v: the two jars cannot be told apart in a run"; exit 1; }
+          jq -n --arg cs "$C_SHA" --arg cv "$cv" --arg ch "$(sha256sum jars/candidate.jar | cut -d' ' -f1)" \
+                --arg cst "$(jq -r '.stripped_jar_sha256 // ""' jars/candidate.jar.json)" --arg bt "$B_TAG" --arg bv "$v" \
+                --arg bh "$(sha256sum jars/baseline.jar | cut -d' ' -f1)" --arg bu "$u/ergo-$v.jar" \
+            '{candidate_sha: $cs, candidate_version: $cv, candidate_sha256: $ch, candidate_stripped_sha256: $cst,
+              baseline_tag: $bt, baseline_version: $bv, baseline_sha256: $bh, baseline_url: $bu, baseline_sha256_checked: true}' > jars/build-info.json
+          { echo '```'; jq . jars/build-info.json; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: rc-jars, path: jars/, retention-days: 30 }
+
+  example:
+    needs: [plan, build]
+    if: needs.plan.outputs.n_examples != '0'
+    name: ${{ matrix.name }} (${{ matrix.repeat }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.examples) }}
+    env:
+      EX: ${{ matrix.name }}
+      REP: ${{ matrix.repeat }}
+      BASE_ARM: ${{ matrix.baseline_arm }}
+      FIRST: ${{ matrix.first }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          sudo apt-get install -y -qq jq iproute2 >/dev/null
+          unshare -Urmn true && echo "userns ok"
+          { uname -r; nproc; free -m | head -2; } | tee host.txt
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: rc-jars, path: jars }
+      - name: Run the example (candidate, and baseline when it runs on one jar)
+        run: |
+          set -uo pipefail
+          # the release check's extra rows join the suite in this checkout only (rig/run-suite.sh reads suite.tsv)
+          grep -vE '^#|^$' ci/release-check/extra-suite.tsv >> rig/examples/suite.tsv
+          arms=(candidate); if [ "$BASE_ARM" = true ]; then if [ "$FIRST" = baseline ]; then arms=(baseline candidate); else arms=(candidate baseline); fi; fi
+          mkdir -p up; cp host.txt up/
+          for arm in "${arms[@]}"; do
+            echo "::group::$arm"
+            # the baseline is PEERYARD_JAR_RELEASE in both arms: an example that needs two versions gets it as PEERYARD_JAR_B
+            PEERYARD_JAR="$PWD/jars/$arm.jar" PEERYARD_JAR_RELEASE="$PWD/jars/baseline.jar" \
+              bash rig/run-suite.sh --out "out/$arm" "$EX" | tee "up/$arm.txt"
+            echo "::endgroup::"
+          done
+          c="$(grep -m1 "^rig $EX: " up/candidate.txt || true)"; b=""
+          [ -f up/baseline.txt ] && b="$(grep -m1 "^rig $EX: " up/baseline.txt || true)"
+          jq -n --arg n "$EX" --argjson r "$REP" --argjson a "$GITHUB_RUN_ATTEMPT" --arg f "$FIRST" --arg c "$c" --arg b "$b" --argjson ba "$BASE_ARM" \
+            '{name: $n, repeat: $r, attempt: $a, first: $f, candidate: $c, baseline: (if $ba then $b else null end)}' > up/result.json
+          { echo "| arm | result |"; echo "|---|---|"; echo "| candidate | ${c:-no result line} |"
+            [ "$BASE_ARM" = true ] && echo "| baseline | ${b:-no result line} |"; } >> "$GITHUB_STEP_SUMMARY"
+          for arm in "${arms[@]}"; do [ -d "out/$arm" ] && cp -r "out/$arm" "up/out-$arm"; done
+          # the job's status is the candidate's: a FAIL fails the job (an experimental FAIL does not), a baseline FAIL never does
+          case "$c" in *": PASS"*|*": FAIL (experimental"*) exit 0 ;; *) exit 1 ;; esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: 'ex-${{ matrix.name }}-${{ matrix.repeat }}-a${{ github.run_attempt }}', path: up/, retention-days: 30 }
+
+  rate:
+    needs: [plan, build]
+    if: needs.plan.outputs.n_shards != '0'
+    name: rate ${{ matrix.scenario }} shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      SCEN: ${{ matrix.scenario }}
+      SHARD: ${{ matrix.shard }}
+      PAIRS: ${{ matrix.pairs }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host prerequisites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo modprobe sch_netem
+          sudo apt-get install -y -qq jq iproute2 >/dev/null
+          unshare -Urmn true && echo "userns ok"
+          { uname -r; nproc; free -m | head -2; } | tee host.txt
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: rc-jars, path: jars }
+      - name: Pairs (base = baseline, candidate = candidate; fixed pairs, no stop rule)
+        run: |
+          m="diffrun/scenarios/rc-$SCEN.json"
+          jq --argjson n "$PAIRS" 'del(.stop_when, .max_n) | .n = $n' "diffrun/scenarios/$SCEN.json" > "$m"
+          o="$RUNNER_TEMP/out"
+          DIFFRUN_ORDER_OFFSET=$((SHARD - 1)) bash diffrun/run.sh "$m" --base "$PWD/jars/baseline.jar" --candidate "$PWD/jars/candidate.jar" --out "$o" || echo "run.sh exit $?"
+          mkdir -p up; cp host.txt up/
+          [ -f "$o/verdict.json" ] || { echo "no verdict for $SCEN shard $SHARD"; exit 1; }
+          cp "$o/verdict.json" "$o/table.txt" up/; tee -a "$GITHUB_STEP_SUMMARY" < up/table.txt
+          cp "$o"/logab_*.txt up/ 2>/dev/null || true
+          # a run that is not VALID keeps its evidence: the scenario's reason line, its stdout, and node log tails
+          for md in "$o"/runs/*/metadata.json; do
+            [ "$(jq -r .class "$md")" = VALID ] && continue
+            r="$(dirname "$md")"; t="up/runs/$(basename "$r")"; mkdir -p "$t"
+            cp "$md" "$t/"; cp "$r"/stdout.txt "$r"/stderr.txt "$t/" 2>/dev/null || true
+            find "$r" -name 'node_*.log' -print0 2>/dev/null | while IFS= read -r -d '' l; do tail -n 400 "$l" > "$t/$(basename "$l").tail"; done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: 'rate-${{ matrix.scenario }}-${{ matrix.shard }}-a${{ github.run_attempt }}', path: up/, retention-days: 30 }
+
+  summary:
+    needs: [plan, build, example, rate]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: art }
+      - name: Table and draft note
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > jobs.json \
+            || { echo "::warning::job list not read; the table has no job links"; echo '{"jobs": []}' > jobs.json; }
+          mkdir -p rc-report
+          python3 ci/release-check/report.py --art art --jobs jobs.json --out rc-report \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
+          rc=$?
+          cat rc-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          cp art/rc-scope/scope.md rc-report/ 2>/dev/null || true
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: 'release-check-a${{ github.run_attempt }}', path: rc-report/, retention-days: 90 }

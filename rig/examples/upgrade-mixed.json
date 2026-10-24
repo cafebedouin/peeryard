@@ -1,0 +1,17 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "B1", "mining": true, "mine_poll": "2s", "knownPeers": [], "jar": "${PEERYARD_JAR_B}" },
+    { "name": "C1", "mining": false, "mine_poll": "2s", "knownPeers": ["B1"],
+      "conf": { "ergo.wallet.testMnemonic": "\"letter advice cage absurd amount doctor acoustic avoid letter advice cage above\"" } },
+    { "name": "C2", "mining": false, "knownPeers": ["B1"],
+      "conf": { "ergo.wallet.testMnemonic": "\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"" } },
+    { "name": "B2", "mining": false, "knownPeers": ["C1"], "jar": "${PEERYARD_JAR_B}",
+      "conf": { "ergo.wallet.testMnemonic": "\"legal winner thank year wave sausage worth useful legal winner thank yellow\"" } }
+  ],
+  "links": [
+    { "a": "B1", "b": "C1", "delay_ms": 100 },
+    { "a": "B1", "b": "C2", "delay_ms": 20 },
+    { "a": "C1", "b": "B2", "delay_ms": 20 }
+  ]
+}

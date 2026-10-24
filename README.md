@@ -105,6 +105,9 @@ split and rejoined, inspected, repaired and sent back out.
   times on a commit, with an optional patch applied first: a flaky test's count before and after a change.
   `review/release-check.sh` dispatches the release-candidate set (interop, indexer, fork convergence, sibling fork:
   previous release vs the release PR) through `pr-scenario.yml` and collects one table; `review/RELEASE-CHECK.md` reads it.
+  `release-check.yml` checks a release branch (or any ref) against the previous release in one workflow: what changed
+  since the tag, the multi-node rig examples on both jars, the upgrade path (a data dir restarted on the new jar, a
+  mixed-version network) and the two rates per role ([docs/release-check.md](docs/release-check.md)).
 - `audits/` — where a run's evidence lives (ignored by git except the layout and an example), so a reviewer
   can answer follow-up questions from what actually ran.
 

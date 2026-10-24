@@ -1,0 +1,33 @@
+# The scenarios the release check can run (.github/workflows/release-check.yml; docs/release-check.md). Tab-separated:
+#   name          a rig example (suite.tsv or extra-suite.tsv row) or a diffrun rate scenario (diffrun/scenarios/<name>.json)
+#   part          suite (a rig example on one jar), upgrade (a rig example with both jars on one network or data dir),
+#                 rates (a diffrun scenario, base = baseline, candidate = candidate, rates pooled per role)
+#   core          1 = always selected, whatever the changed paths; 0 = selected when path-map.tsv maps a changed path to it
+#   baseline_arm  1 = the example also runs on the baseline jar alone in the same job (a red on both is not a regression);
+#                 0 = it needs both jars by construction, so there is no baseline-only arm
+#   rate          rates only: the condition pooled per role (diffrun/aa_pool.py syntax), then the pairs per shard
+#   covers        one line, for the report
+bringup	suite	1	1	-	a follower syncs a miner; peer sets match the topology
+floor	suite	1	1	-	sole-peer full sync; a restarted node keeps its chain
+churn	suite	1	1	-	late joins and a crash while the chain moves; every node back on the miner's tip
+txload	suite	1	1	-	20 payments: mempool, relay, block assembly, two wallets
+bootstrap-modes	suite	1	1	-	digest and pruned followers agree with a full miner by state root
+upgrade-restart	upgrade	1	0	-	a node's baseline data dir and wallet, restarted on the candidate: chain, state, wallet kept; progress after
+upgrade-mixed	upgrade	1	0	-	two baseline and two candidate nodes: each version's blocks followed by the other, both mining at once, payments across versions
+fork-convergence	rates	1	1	switched==true 4	a follower on a lighter static fork switches to a heavier one it meets
+sibling-fork	rates	1	1	E_total>0 4	best full block and best header on different forks at one height (the divergence rate)
+mixed	upgrade	0	0	-	candidate mines, baseline follows (one direction of upgrade-mixed, two nodes)
+netsplit	suite	0	1	-	partition and heal; crash, revive while cut (height from disk), re-sync
+flap	suite	0	1	-	a link that comes and goes; agreement after the last edge
+loss	suite	0	1	-	followers on lossy links (3% both ways, 10% one way) reach the miner's state
+reorder-dup-phases	suite	0	1	-	payments across a relay on reordering and duplicating links
+reorg-mempool	suite	0	1	-	payments confirmed on a losing fork are re-confirmed on the winning chain
+txchain	suite	0	1	-	a dependency chain of payments in the mempool, all confirmed
+mempool-evict	suite	0	1	-	a full fee-sorted mempool declines a low fee, evicts for a high one
+utxo-bootstrap	suite	0	1	-	a late node bootstraps from a UTXO-set snapshot
+nipopow-bootstrap	suite	0	1	-	a late node bootstraps from a NiPoPoW proof, then a snapshot
+mixed-roles-phases	suite	0	1	-	digest and pruned followers through partitions and a crash
+wallet-oracle-restart	suite	0	1	-	a wallet's view after a restart equals a reference wallet's
+soak	suite	0	1	-	five minutes of mining with crash-and-revive every two minutes
+corruption	suite	0	1	-	a damaged data dir on revive: refused, recovered or stuck, never a wrong state root (experimental)
+mining	suite	0	1	-	mine, quiescence, start and stop mining (experimental)

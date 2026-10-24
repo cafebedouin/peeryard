@@ -189,7 +189,8 @@ jobs:
         with: { name: rc-jars, path: jars }
       - name: Run the example (candidate, and baseline when it runs on one jar)
         run: |
-          set -uo pipefail
+          # not -e (the step shell's default): a red arm must not stop the other arm or the result file
+          set +e -uo pipefail
           # the release check's extra rows join the suite in this checkout only (rig/run-suite.sh reads suite.tsv)
           grep -vE '^#|^$' ci/release-check/extra-suite.tsv >> rig/examples/suite.tsv
           arms=(candidate); if [ "$BASE_ARM" = true ]; then if [ "$FIRST" = baseline ]; then arms=(baseline candidate); else arms=(candidate baseline); fi; fi
@@ -198,7 +199,7 @@ jobs:
             echo "::group::$arm"
             # the baseline is PEERYARD_JAR_RELEASE in both arms: an example that needs two versions gets it as PEERYARD_JAR_B
             PEERYARD_JAR="$PWD/jars/$arm.jar" PEERYARD_JAR_RELEASE="$PWD/jars/baseline.jar" \
-              bash rig/run-suite.sh --out "out/$arm" "$EX" | tee "up/$arm.txt"
+              bash rig/run-suite.sh --out "out/$arm" "$EX" | tee "up/$arm.txt" || echo "run-suite exit ${PIPESTATUS[0]} ($arm)"
             echo "::endgroup::"
           done
           c="$(grep -m1 "^rig $EX: " up/candidate.txt || true)"; b=""
@@ -282,9 +283,9 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > jobs.json \
             || { echo "::warning::job list not read; the table has no job links"; echo '{"jobs": []}' > jobs.json; }
           mkdir -p rc-report
+          rc=0
           python3 ci/release-check/report.py --art art --jobs jobs.json --out rc-report \
-            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
-          rc=$?
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null || rc=$?
           cat rc-report/summary.md >> "$GITHUB_STEP_SUMMARY"
           cp art/rc-scope/scope.md rc-report/ 2>/dev/null || true
           exit $rc

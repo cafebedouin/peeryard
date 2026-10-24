@@ -14,11 +14,11 @@
 #   gh workflow run release-check.yml -f candidate=v6.0.9 -f baseline=v6.0.8 -f parts=suite,upgrade
 #   gh workflow run release-check.yml -f candidate=v6.0.9 -f baseline=v6.0.8 -f parts=rates -f rate_pairs=20
 name: release check
-run-name: "release check ${{ inputs.candidate || 'newest v6 branch' }} vs ${{ inputs.baseline || 'latest release' }} (${{ inputs.parts }}; ${{ inputs.scenarios }}; x${{ inputs.repeats }}; ${{ inputs.rate_pairs }} pairs)"
+run-name: "release check ${{ inputs.candidate || 'next release branch' }} vs ${{ inputs.baseline || 'latest release' }} (${{ inputs.parts }}; ${{ inputs.scenarios }}; x${{ inputs.repeats }}; ${{ inputs.rate_pairs }} pairs)"
 on:
   workflow_dispatch:
     inputs:
-      candidate: { description: 'ergoplatform/ergo branch, tag or 40-hex commit to check (empty = the newest v6.N.N release branch by version)', default: '' }
+      candidate: { description: 'ergoplatform/ergo branch, tag or 40-hex commit to check (empty = the lowest v6.N.N release branch above the baseline, by version)', default: '' }
       baseline: { description: 'baseline release tag, vN.N.N, with an ergo-<version>.jar and .jar.sha256 asset (empty = the latest non-prerelease)', default: '' }
       scenarios: { description: 'auto (the paths'' scenarios plus the core set), core, or space-separated names from ci/release-check/catalog.tsv', default: 'auto' }
       parts: { description: 'comma-separated: suite, upgrade, rates (a full check of auto is usually over the cap: dispatch suite,upgrade and rates apart)', default: 'suite,upgrade' }
@@ -69,8 +69,10 @@ jobs:
             || fail "baseline $b: the release has no ergo-$v.jar and ergo-$v.jar.sha256 assets (published since v6.0.8)"
           c="$IN_CANDIDATE"
           if [ -z "$c" ]; then
-            c="$(git ls-remote --heads "$ERGO_REPO" 'refs/heads/v6.*' | sed 's#.*refs/heads/##' | grep -E '^v6\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
-            [ -n "$c" ] || fail "no v6.N.N release branch found"
+            # the next release: the lowest v6.N.N branch above the baseline (sort -u drops a branch named like the baseline)
+            c="$(git ls-remote --heads "$ERGO_REPO" 'refs/heads/v6.*' | sed 's#.*refs/heads/##' | grep -E '^v6\.[0-9]+\.[0-9]+$' \
+              | { cat; echo "$b"; } | sort -V -u | awk -v b="$b" 'f { print; exit } $0 == b { f = 1 }')"
+            [ -n "$c" ] || fail "no v6.N.N release branch above the baseline $b found"
           fi
           [[ "$c" =~ ^[A-Za-z0-9._/-]{1,100}$ && "$c" != *..* && "$c" != -* ]] || fail "candidate: a branch, tag or 40-hex commit"
           if [[ "$c" =~ ^[0-9a-f]{40}$ ]]; then sha="$c"

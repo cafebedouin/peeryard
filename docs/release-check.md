@@ -25,15 +25,16 @@ jobs, about 25 minutes with a cold build) to check that the candidate builds and
 
 | input | default | meaning |
 |---|---|---|
-| `candidate` | the newest `v6.N.N` branch of ergoplatform/ergo, by version | a branch, tag or 40-hex commit; a branch name wins over a tag of the same name (give the tag's commit to check the tag) |
+| `candidate` | the lowest `v6.N.N` branch of ergoplatform/ergo above the baseline, by version | a branch, tag or 40-hex commit; a branch name wins over a tag of the same name (give the tag's commit to check the tag) |
 | `baseline` | the latest non-prerelease | a release tag `vN.N.N` whose release has the `ergo-<version>.jar` and `ergo-<version>.jar.sha256` assets (every release since v6.0.8) |
 | `scenarios` | `auto` | `auto` = the scenarios the changed paths map to, plus the core set; `core` = the core set; or names from `ci/release-check/catalog.tsv` |
 | `parts` | `suite,upgrade` | any of `suite`, `upgrade`, `rates`, comma-separated |
 | `repeats` | `1` | jobs per example, 1-3; candidate and baseline alternate which runs first |
 | `rate_pairs` | `12` | pairs per rate scenario, 1-40, split into shards of four pairs |
 
-The default candidate is the highest release branch by version. When two release branches are open at once (the one
-being released and the next), it picks the later one: name the candidate explicitly.
+The default candidate is the next release: the lowest release branch above the baseline by version. When two release
+branches are open at once (the one being released and the next), it picks the one being released; name the later one to
+check it.
 
 Every input is checked in the `plan` job before anything is built. One dispatch is capped at **30 jobs** (plan, build
 and summary included); a plan over the cap is refused with a message. A full `auto` check of a release with many
@@ -124,7 +125,7 @@ the one below can be added to its `watch` job, guarded by a dispatch input that 
 runs without a person:
 
 ```yaml
-      - name: Release check of the newest release branch (by hand only)
+      - name: Release check of the next release branch (by hand only)
         if: inputs.release_check == 'true'
         run: gh workflow run release-check.yml -R "$GITHUB_REPOSITORY" --ref "${GITHUB_REF_NAME}" -f parts=suite,upgrade
 ```

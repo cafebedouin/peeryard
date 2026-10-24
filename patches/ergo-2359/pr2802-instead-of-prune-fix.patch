@@ -1,0 +1,32 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+index 08f2a8ee9..b66e401b6 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+@@ -76,6 +76,11 @@ trait FullBlockProcessor extends HeadersProcessor {
+       logStatus(Seq(), toApply, fullBlock, None)
+       val additionalIndexes = toApply.map(b => chainStatusKey(b.id) -> FullBlockProcessor.BestChainMarker)
+       updateStorage(newModRow, newBestBlockHeader.id, additionalIndexes).map { _ =>
++        if (nodeSettings.isFullBlocksPruned) {
++          val prevMinHeight = minimalFullBlockHeight
++          val lastKept = updateBestFullBlock(newBestBlockHeader)
++          pruneBlockDataAt((prevMinHeight until lastKept).filter(_ >= 0))
++        }
+         ProgressInfo(None, Seq.empty, headers.headers.dropRight(1) ++ toApply, Seq.empty)
+       }
+   }
+@@ -106,12 +111,9 @@ trait FullBlockProcessor extends HeadersProcessor {
+         if (nonBestChainsCache.nonEmpty) nonBestChainsCache = nonBestChainsCache.dropUntil(minForkRootHeight)
+ 
+         if (nodeSettings.isFullBlocksPruned) {
+-          val lastKept = updateBestFullBlock(fullBlock.header)
+-          val bestHeight: Int = newBestBlockHeader.height
+-          val diff = bestHeight - prevBest.header.height
+-          // A node catching up applies blocks below the floor (see shouldDownloadBlockAtHeight), so the new best
+-          // full block can sit in the pruned range; keep it, or the node cannot assemble its best full block
+-          pruneBlockDataAt(((lastKept - diff) until lastKept).filter(h => h >= 0 && h < bestHeight))
++          val prevMinHeight = minimalFullBlockHeight
++          val lastKept = updateBestFullBlock(newBestBlockHeader)
++          pruneBlockDataAt((prevMinHeight until lastKept).filter(_ >= 0))
+         }
+         ProgressInfo(branchPoint, toRemove, toApply, Seq.empty)
+       }

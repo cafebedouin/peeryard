@@ -1,0 +1,87 @@
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala b/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala
+index f16d017ba..9a17979b2 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/settings/ValidationRules.scala
+@@ -172,7 +172,7 @@ object ValidationRules {
+     bsHeadersChainSynced -> RuleStatus(im => recoverable(s"Headers-chain is not synchronized yet. ${im.error}", im.modifierId, im.modifierTypeId),
+       Seq(classOf[ADProofs], classOf[Extension], classOf[BlockTransactions]),
+       mayBeDisabled = false),
+-    bsTooOld -> RuleStatus(im => recoverable(s"Block section should correspond to a block header that is not pruned yet. ${im.error}", im.modifierId, im.modifierTypeId),
++    bsTooOld -> RuleStatus(im => fatal(s"Block section should correspond to a block header that is not pruned yet. ${im.error}", im.modifierId, im.modifierTypeId),
+       Seq(classOf[ADProofs], classOf[Extension], classOf[BlockTransactions]),
+       mayBeDisabled = false),
+     bsBlockTransactionsSize -> RuleStatus(im => fatal(s"Size of block transactions section should not exceed <maxBlockSize>. ${im.error}", im.modifierId, im.modifierTypeId),
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+index 08f2a8ee9..f9e89f91a 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+@@ -109,9 +109,7 @@ trait FullBlockProcessor extends HeadersProcessor {
+           val lastKept = updateBestFullBlock(fullBlock.header)
+           val bestHeight: Int = newBestBlockHeader.height
+           val diff = bestHeight - prevBest.header.height
+-          // A node catching up applies blocks below the floor (see shouldDownloadBlockAtHeight), so the new best
+-          // full block can sit in the pruned range; keep it, or the node cannot assemble its best full block
+-          pruneBlockDataAt(((lastKept - diff) until lastKept).filter(h => h >= 0 && h < bestHeight))
++          pruneBlockDataAt(((lastKept - diff) until lastKept).filter(_ >= 0))
+         }
+         ProgressInfo(branchPoint, toRemove, toApply, Seq.empty)
+       }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockPruningProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockPruningProcessor.scala
+index bacd66bf8..ceb6ed989 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockPruningProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockPruningProcessor.scala
+@@ -9,7 +9,7 @@ import scorex.util.ScorexLogging
+   * A class that keeps and calculates minimal height for full blocks starting from which we need to download these full
+   * blocks from the network and keep them in our history.
+   */
+-trait FullBlockPruningProcessor extends MinimalFullBlockHeightFunctions with ScorexLogging { self: BasicReaders =>
++trait FullBlockPruningProcessor extends MinimalFullBlockHeightFunctions with ScorexLogging {
+ 
+   protected def settings: ErgoSettings
+ 
+@@ -43,17 +43,10 @@ trait FullBlockPruningProcessor extends MinimalFullBlockHeightFunctions with Sco
+     */
+   def minimalFullBlockHeight: Int = readMinimalFullBlockHeight()
+ 
+-  /** Check if headers chain is synchronized with the network and modifier is not too old.
+-    *
+-    * A block within the pruning window (`height >= minimalFullBlockHeight`) is downloadable as usual.
+-    * Additionally, a block that is a direct successor of our best full block (`height > bestFullBlock`)
+-    * is downloadable even when it sits below `minimalFullBlockHeight`: after a long shutdown the network
+-    * tip - and thus `minimalFullBlockHeight` - can jump far ahead of our local best full block, and these
+-    * intermediate blocks are exactly the ones the node must apply to advance its state and catch up.
++  /** Check if headers chain is synchronized with the network and modifier is not too old
+     */
+   def shouldDownloadBlockAtHeight(height: Int): Boolean = {
+-    isHeadersChainSynced &&
+-      (height >= minimalFullBlockHeight || bestFullBlockOpt.exists(height > _.height))
++    isHeadersChainSynced && height >= minimalFullBlockHeight
+   }
+ 
+   /** Update minimal full block height and header chain synced flag
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
+index f5d3c1ad3..7801d228a 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
+@@ -106,17 +106,14 @@ trait ToDownloadProcessor
+         // when blockchain is about to be synced,
+         // download children blocks of last 100 full blocks applied to the best chain, to get block sections from forks
+         // (but not below minimal full block height: block sections below it fail `bsTooOld` validation and their sender
+-        // is penalized, and there could be no headers below it, e.g. after NiPoPoW bootstrap; the exception is a
+-        // successor of the best full block, which passes `bsTooOld` and is needed to catch up when a restart moved
+-        // the floor above the best full block, see shouldDownloadBlockAtHeight)
+-        val lowestHeight = Math.min(minimalFullBlockHeight, fb.header.height + 1)
++        // is penalized, and there could be no headers below it, e.g. after NiPoPoW bootstrap)
+         val lookbackHeight = Math.max(1, fb.header.height - 100)
+-        val minHeight = if (lookbackHeight > lowestHeight) {
++        val minHeight = if (lookbackHeight > minimalFullBlockHeight) {
+           commonAncestorOf(fb)
+-            .map(h => Math.max(lowestHeight, h.height + 1))
++            .map(h => Math.max(minimalFullBlockHeight, h.height + 1))
+             .fold(lookbackHeight)(Math.min(lookbackHeight, _))
+         } else {
+-          Math.max(lowestHeight, fb.header.height - 100)
++          Math.max(minimalFullBlockHeight, fb.header.height - 100)
+         }
+         continuation(minHeight, Map.empty, maxHeight = Int.MaxValue)
+       case None if (nodeSettings.utxoSettings.utxoBootstrap && !isUtxoSnapshotApplied) =>

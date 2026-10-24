@@ -1,0 +1,12 @@
+diff --git a/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala b/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala
+index 6e5d9c2c2..d7f9c9dc5 100644
+--- a/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala
++++ b/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala
+@@ -44,6 +44,7 @@ class PrunedDigestNodeCatchUpSpec
+   // pruning light (digest) node that syncs, goes offline, then has to catch up
+   private val digestConfig: Config = digestStatePeerConfig
+     .withFallback(prunedHistoryConfig(blocksToKeep))
++    .withFallback(headerChainDiffConfig(8))
+     .withFallback(blockIntervalConfig(500))
+     .withFallback(nonGeneratingPeerConfig)
+     .withFallback(specialDataDirConfig(remoteVolume))

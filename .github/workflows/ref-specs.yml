@@ -1,0 +1,220 @@
+# Run named ergo test classes on several trees ("arms"), one job per arm, on GitHub-hosted runners: the hosted
+# counterpart of a local before/after or revert table, so a review can cite runs anyone can re-run. An arm is
+# name:sha[:patch]: a commit of the `repo` input (any ergo repository or fork; the sha must be reachable from one of its
+# refs) and, optionally, a unified diff under patches/ in this repository, applied with `git apply --index`. Each job
+# records the patch's sha256 and the resulting git tree id, so a local tree can be checked for identity with
+# `git write-tree`. Unit classes run as `sbt "testOnly <classes>"` (JDK 8); the optional integration spec as upstream
+# CI's test_it job runs it, `sbt -Denv=test docker "it:testOnly <spec>"` with TMPDIR in the checkout, under a time
+# limit. Each job prints its `Tests:` line(s) to the step summary and uploads a filtered log, the gzipped full log, the
+# test reports and (integration) the node logs; a last job tabulates the arms. A red test is a result, not a job
+# failure: a job fails only when sbt printed no Tests line (a build or infrastructure failure). Runs by hand.
+#
+#   gh workflow run ref-specs.yml -f repo=https://github.com/<owner>/ergo -f label=pr-review \
+#     -f arms='base:<40-hex>:patches/<dir>/base.patch head:<40-hex>' \
+#     -f specs='org.ergoplatform.nodeView.history.SomeSpec org.ergoplatform.OtherSpec' \
+#     [-f it_spec=org.ergoplatform.it.SomeItSpec -f it_minutes=25] -f repeats=1
+name: ref specs
+run-name: "ref specs ${{ inputs.label }}: ${{ inputs.specs }}${{ inputs.it_spec && format(' it:{0}', inputs.it_spec) || '' }} x${{ inputs.repeats }}"
+on:
+  workflow_dispatch:
+    inputs:
+      repo: { description: 'ergo repository URL, https://github.com/<owner>/<name> (every arm sha must be reachable from one of its refs)', default: 'https://github.com/ergoplatform/ergo' }
+      arms: { description: 'space-separated arms, name:sha[:patch] (40-hex sha; patch = a .patch/.diff file under patches/)', required: true }
+      specs: { description: 'space-separated unit test classes for testOnly (empty = none)', default: '' }
+      it_spec: { description: 'optional integration spec class for it:testOnly (empty = none)', default: '' }
+      it_minutes: { description: 'limit for the integration step in minutes, image build included (5-40)', default: '25' }
+      repeats: { description: 'jobs per arm (1-3); arms x repeats is at most 12', default: '1' }
+      label: { description: 'short label for the run name', default: 'arms' }
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      arms: ${{ steps.p.outputs.arms }}
+      repeats: ${{ steps.p.outputs.repeats }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the inputs (before anything is fetched or built)
+        id: p
+        env:
+          REPO: ${{ inputs.repo }}
+          ARMS: ${{ inputs.arms }}
+          SPECS: ${{ inputs.specs }}
+          IT_SPEC: ${{ inputs.it_spec }}
+          IT_MIN: ${{ inputs.it_minutes }}
+          REPEATS: ${{ inputs.repeats }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          set -euo pipefail
+          fail(){ echo "::error::$*"; exit 1; }
+          # a letter, an optional dash and exactly three digits reads as a private tracking id; names here are public
+          idlike='(^|[^A-Za-z0-9])[AaBbCcEeKkLlMmPpRrSsXx]-?[0-9]{3}([^0-9]|$)'
+          [[ "$REPO" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "repo: https://github.com/<owner>/<name>"
+          [[ "$REPEATS" =~ ^[1-3]$ ]] || fail "repeats: 1-3"
+          { [[ "$IT_MIN" =~ ^[0-9]{1,2}$ ]] && (( IT_MIN >= 5 && IT_MIN <= 40 )); } || fail "it_minutes: 5-40"
+          [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || fail "label: [A-Za-z0-9._-]{1,40}"
+          if [[ "$LABEL" =~ $idlike ]]; then fail "label '$LABEL' looks like a tracking id; use a descriptive one"; fi
+          [[ -n "$SPECS$IT_SPEC" ]] || fail "specs, it_spec: give at least one"
+          for s in $SPECS; do [[ "$s" =~ ^org\.ergoplatform\.[A-Za-z0-9_.]+$ ]] || fail "spec: $s"; done
+          [[ -z "$IT_SPEC" || "$IT_SPEC" =~ ^org\.ergoplatform\.[A-Za-z0-9_.]+$ ]] || fail "it_spec: one class name"
+          json='[]'; n=0
+          for a in $ARMS; do
+            IFS=: read -r name sha patch extra <<< "$a"
+            [[ -z "${extra:-}" ]] || fail "arm $a: name:sha[:patch]"
+            [[ "$name" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || fail "arm name '$name': [A-Za-z0-9._-]{1,40}"
+            if [[ "$name" =~ $idlike ]]; then fail "arm name '$name' looks like a tracking id"; fi
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || fail "arm $name: sha must be 40 lowercase hex"
+            if [[ -n "${patch:-}" ]]; then
+              [[ "$patch" =~ ^patches/[A-Za-z0-9/._-]+\.(patch|diff)$ && "$patch" != *..* && -f "$patch" ]] || fail "arm $name: patch '$patch' is not a .patch/.diff file under patches/"
+            fi
+            jq -e --arg n "$name" 'map(.name) | index($n) | not' <<< "$json" > /dev/null || fail "arm name '$name' given twice"
+            json="$(jq -c --arg n "$name" --arg s "$sha" --arg p "${patch:-}" '. + [{name: $n, sha: $s, patch: $p}]' <<< "$json")"
+            n=$((n + 1))
+          done
+          (( n >= 1 )) || fail "arms: none given"
+          (( n * REPEATS <= 12 )) || fail "arms x repeats = $((n * REPEATS)): at most 12 jobs per dispatch (pace larger batches)"
+          echo "arms=$json" >> "$GITHUB_OUTPUT"
+          echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"
+          { echo "repo: $REPO"; echo "arms: $n, jobs: $((n * REPEATS))"; echo '```'; jq -r '.[] | "\(.name)  \(.sha)  \(if .patch == "" then "-" else .patch end)"' <<< "$json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  arm:
+    needs: plan
+    name: ${{ matrix.arm.name }} / ${{ matrix.repeat }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: ${{ fromJSON(needs.plan.outputs.arms) }}
+        repeat: ${{ fromJSON(needs.plan.outputs.repeats) }}
+    env:
+      REPO: ${{ inputs.repo }}
+      NAME: ${{ matrix.arm.name }}
+      SHA: ${{ matrix.arm.sha }}
+      PATCH: ${{ matrix.arm.patch }}
+      SPECS: ${{ inputs.specs }}
+      IT_SPEC: ${{ inputs.it_spec }}
+      IT_MIN: ${{ inputs.it_minutes }}
+      REP: ${{ matrix.repeat }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: peeryard }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
+      - name: ergo at the arm's commit, the patch applied
+        run: |
+          set -euo pipefail
+          git init -q ergo && cd ergo && git remote add origin "$REPO"
+          git fetch -q --depth 1 origin "$SHA" || git fetch -q origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+          git checkout -q --detach "$SHA"
+          [ "$(git rev-parse HEAD)" = "$SHA" ] || { echo "::error::HEAD is not $SHA"; exit 1; }
+          o="$GITHUB_WORKSPACE/out"; mkdir -p "$o"; pline="patch: none"
+          if [ -n "$PATCH" ]; then
+            git apply --index --verbose "$GITHUB_WORKSPACE/peeryard/$PATCH"
+            cp "$GITHUB_WORKSPACE/peeryard/$PATCH" "$o/arm.patch"
+            pline="patch: $PATCH sha256 $(sha256sum "$o/arm.patch" | cut -d' ' -f1)"
+          fi
+          { echo "arm: $NAME (job $REP)"; echo "repo: $REPO"; echo "commit: $SHA"; echo "$pline"
+            echo "tree: $(git write-tree)   (git write-tree after the patch; compare with a local tree)"
+            echo "peeryard: $GITHUB_SHA"; echo "java: $(java -version 2>&1 | head -1)"
+            echo "runner: $(uname -r), $(nproc) cpus, $(free -m | awk '/^Mem:/{print $2}') MB"; } | tee "$o/tree.txt"
+          git diff --cached --stat
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ivy2/local/org.scorexfoundation
+          key: ref-specs-sigma-${{ hashFiles('ergo/build.sbt', 'peeryard/patches/sigma-snapshot.sh') }}
+      - name: sigma-state snapshot (a -SNAPSHOT sigma pin is on no public repository; a release version needs nothing)
+        run: DIFFRUN_ERGO_CLONE="$PWD/ergo" JAVA8_HOME="$JAVA_HOME" bash peeryard/patches/sigma-snapshot.sh HEAD
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.cache/coursier/v1
+          key: ref-specs-sbt-${{ hashFiles('ergo/**/*.sbt', 'ergo/project/build.properties') }}
+      - name: Unit classes
+        if: inputs.specs != ''
+        run: |
+          set -uo pipefail
+          o="$GITHUB_WORKSPACE/out"; log="$o/unit.log"
+          echo "command: sbt -batch \"testOnly $SPECS\"" | tee "$o/unit-command.txt"
+          rc=0; t0=$(date +%s)
+          ( cd ergo && timeout -k 30 60m sbt -batch "testOnly $SPECS" ) > "$log" 2>&1 || rc=$?
+          secs=$(( $(date +%s) - t0 )); echo "exit $rc after $secs s" > "$o/unit-rc.txt"
+          sed -i 's/\x1b\[[0-9;]*m//g' "$log"
+          grep -E '^\[info\] [A-Za-z0-9]+:$|^\[info\] - |^\[info\]   |\*\*\* FAILED|Tests: |Total number of tests run|TESTS? FAILED|^\[error\]|Total time|Compilation failed' "$log" | cut -c1-2000 > "$o/unit-filtered.txt" || true
+          tests="$(grep -oE 'Tests: succeeded [0-9]+, failed [0-9]+, canceled [0-9]+, ignored [0-9]+, pending [0-9]+' "$log" | tail -1 || true)"
+          echo "${tests:-none}" > "$o/unit-tests.txt"
+          mkdir -p "$o/unit-reports"; cp ergo/target/test-reports/*.xml "$o/unit-reports/" 2>/dev/null || true
+          { echo "### $NAME (job $REP): unit"; echo '```'; cat "$o/tree.txt"; cat "$o/unit-command.txt"; echo "sbt exit $rc after $secs s"
+            echo "${tests:-no Tests line}"; grep -E '\*\*\* FAILED' "$log" | sed 's/^\[info\] //' || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$tests" ] || { echo "::error::no Tests line: a build or sbt failure, not a test result (see unit-filtered.txt)"; tail -40 "$log"; exit 1; }
+      - name: Integration spec
+        if: inputs.it_spec != ''
+        run: |
+          set -uo pipefail
+          o="$GITHUB_WORKSPACE/out"; log="$o/it.log"; cd ergo; mkdir -p tmp
+          echo "command: TMPDIR=\$PWD/tmp sbt -batch -Denv=test docker \"it:testOnly $IT_SPEC\" (limit $IT_MIN min)" | tee "$o/it-command.txt"
+          rc=0; t0=$(date +%s)
+          TMPDIR="$PWD/tmp" timeout -k 30 "${IT_MIN}m" sbt -batch -Denv=test docker "it:testOnly $IT_SPEC" > "$log" 2>&1 || rc=$?
+          secs=$(( $(date +%s) - t0 )); echo "exit $rc after $secs s" > "$o/it-rc.txt"
+          sed -i 's/\x1b\[[0-9;]*m//g' "$log"
+          # node logs: Docker.close() saves them to target/logs; a run stopped by the limit leaves containers, saved here
+          nl="$o/node-logs"; mkdir -p "$nl"
+          docker ps -a --filter name=ergo-itest- --format '{{.ID}} {{.Names}}' | while read -r id cname; do
+            docker logs --timestamps "$id" > "$nl/leftover-$cname.log" 2>&1 || true
+            docker rm -f "$id" > /dev/null 2>&1 || true
+          done
+          if [ -d target/logs ]; then cp -r target/logs/. "$nl/" 2>/dev/null || true; fi
+          find "$nl" -type f -exec gzip -9 {} +
+          grep -E 'waiting for|longest quiet|still waiting|no progress|NoProgress|Started node|Stopping|^\[info\] - |^\[info\]   |\*\*\* FAILED|Tests: |^\[error\]|Total time|Compilation failed|Successfully built' "$log" | cut -c1-600 > "$o/it-filtered.txt" || true
+          tests="$(grep -oE 'Tests: succeeded [0-9]+, failed [0-9]+, canceled [0-9]+, ignored [0-9]+, pending [0-9]+' "$log" | tail -1 || true)"
+          echo "${tests:-none}" > "$o/it-tests.txt"
+          mkdir -p "$o/it-reports"; cp target/it-reports/*.xml "$o/it-reports/" 2>/dev/null || true
+          { echo "### $NAME (job $REP): integration"; echo '```'; cat "$o/tree.txt"; cat "$o/it-command.txt"; echo "sbt exit $rc after $secs s"
+            echo "${tests:-no Tests line}"; grep -E 'longest quiet|no progress towards|\*\*\* FAILED' "$log" | cut -c1-400 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$tests" ] || { echo "::error::no Tests line: a build, image or sbt failure (or the time limit), not a test result"; tail -60 "$log"; exit 1; }
+      - name: Keep the logs small (over 20 MB, the first and last 10 MB), gzipped
+        if: always()
+        run: |
+          for f in out/unit.log out/it.log; do
+            [ -f "$f" ] || continue
+            sz=$(stat -c %s "$f")
+            if [ "$sz" -gt 20971520 ]; then
+              { head -c 10485760 "$f"; printf '\n[... %s bytes cut by the workflow ...]\n' "$((sz - 20971520))"; tail -c 10485760 "$f"; } > "$f.cut"; mv "$f.cut" "$f"
+            fi
+            gzip -9 "$f"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arm-${{ matrix.arm.name }}-${{ matrix.repeat }}
+          path: out/
+          retention-days: 90
+
+  table:
+    needs: [plan, arm]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: art, pattern: 'arm-*' }
+      - name: One table over the arms
+        run: |
+          mkdir -p art
+          { echo '```'
+            for d in art/arm-*/; do
+              [ -f "$d/tree.txt" ] || { echo "$(basename "$d"): no tree.txt"; continue; }
+              arm="$(sed -n 's/^arm: //p' "$d/tree.txt")"; tree="$(sed -n 's/^tree: \([0-9a-f]*\).*/\1/p' "$d/tree.txt")"
+              echo "$arm  tree $tree"
+              [ -f "$d/unit-tests.txt" ] && echo "  unit: $(cat "$d/unit-tests.txt")  ($(cat "$d/unit-rc.txt" 2>/dev/null))"
+              [ -f "$d/it-tests.txt" ] && echo "  it:   $(cat "$d/it-tests.txt")  ($(cat "$d/it-rc.txt" 2>/dev/null))"
+            done
+            echo '```'; } | tee table.txt >> "$GITHUB_STEP_SUMMARY"
+          cat table.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: ref-specs-table, path: table.txt, retention-days: 90 }

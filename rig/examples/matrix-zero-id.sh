@@ -1,7 +1,8 @@
 # matrix-zero-id: requests for the all-zero header id (Header.GenesisParentId, the parent of the genesis header) on the
-# Matrix line. Three Matrix-line nodes in a line, A - B - C, no delay; A mines from genesis; B and C follow. A is
-# deferred: B and C start and link first, then the hook launches A, which dials B, so the followers are connected when
-# A mines the genesis block and receive it as an ordering-block announcement (the path that requests its parent).
+# Matrix line. Three Matrix-line nodes in a line, A - B - C, no delay; A mines from genesis; B and C follow. A starts
+# without a wallet (testMnemonic null), so its miner waits for a key; once every link is connected the hook restores and
+# unlocks A's wallet (the rig's test mnemonic) and A mines the genesis block with B and C connected, so they receive it
+# as an ordering-block announcement (the path that requests its parent).
 #   PEERYARD_MATRIX_JAR=<weak-blocks jar> bash rig/rig.sh rig/examples/matrix-zero-id.json rig/examples/matrix-zero-id.sh
 #   PEERYARD_DURATION seconds to observe (default 300); MATRIX_SAMPLE_S (default 20)
 # After the observation, per follower log: the expired delivery checks for header 0…0 ("has not delivered network
@@ -14,7 +15,14 @@
 # Under diffrun (DIFFRUN_ROLE set; diffrun/scenarios/matrix-zero-id.json) the hook also prints one RESULT_JSON.
 DUR=${PEERYARD_DURATION:-300}; SAMPLE=${MATRIX_SAMPLE_S:-20}
 Z=0000000000000000000000000000000000000000000000000000000000000000
-launch A && wait_up A || { echo "[matrix-zero-id] INCONCLUSIVE: A did not come up"; rig_verdict=INCONCLUSIVE; return; }
+h0="$(full_height A)/$(full_height B)/$(full_height C)"
+[[ "$h0" == 0/0/0 ]] || { echo "[matrix-zero-id] INCONCLUSIVE: heights $h0 before A's wallet was restored (A mined without a key?)"; rig_verdict=INCONCLUSIVE; return; }
+PW=matrix-zero-id
+r=$(wallet A /wallet/restore "{\"pass\":\"$PW\",\"mnemonic\":\"$MNEMONIC\",\"usePre1627KeyDerivation\":false}")
+wallet A /wallet/unlock "{\"pass\":\"$PW\"}" >/dev/null
+echo "[matrix-zero-id] A's wallet restored (${r:0:80}) at heights $h0; links connected"
+for _ in $(seq 1 30); do [[ "$(full_height A)" -ge 1 ]] && break; sleep 2; done
+[[ "$(full_height A)" -ge 1 ]] || { echo "[matrix-zero-id] INCONCLUSIVE: A mined no block within 60 s of the wallet restore"; rig_verdict=INCONCLUSIVE; return; }
 VA=$(rest A /info | jq -r .appVersion); VB=$(rest B /info | jq -r .appVersion); VC=$(rest C /info | jq -r .appVersion)
 echo "[matrix-zero-id] A=$VA B=$VB C=$VC; observing ${DUR} s"
 t0=$SECONDS

@@ -8,10 +8,10 @@
       "name": "A",
       "mining": true,
       "jar": "${PEERYARD_MATRIX_JAR}",
-      "knownPeers": [
-        "B"
-      ],
-      "defer": true
+      "knownPeers": [],
+      "conf": {
+        "ergo.wallet.testMnemonic": "null"
+      }
     },
     {
       "name": "B",

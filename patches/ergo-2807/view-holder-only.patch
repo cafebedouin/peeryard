@@ -1,0 +1,33 @@
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 5b9aea252..1d4507619 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -474,7 +474,7 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+       case Older =>
+         // asking headers from older peers
+         val ids = syncInfo.lastHeaderIds.reverse
+-        val headerIds = ids.takeWhile(hId => !hr.isInBestChain(hId) && hId != Header.GenesisParentId)
++        val headerIds = ids.takeWhile(hId => !hr.isInBestChain(hId))
+         if (headerIds.nonEmpty) {
+           val maxHeadersToDownload = deliveryTracker.headersToDownload
+           log.debug(s"Requesting $maxHeadersToDownload headers from older peers after getting sync info from $remote")
+@@ -1633,8 +1633,7 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+         log.info(s"On processing $subBlockId, downloading its parent and unknown ordering block $orderingId from $remote")
+ 
+         val hid = Header.modifierTypeId
+-        if (orderingId != Header.GenesisParentId &&
+-            deliveryTracker.status(orderingId, hid, Seq(hr)) == ModifiersStatus.Unknown) {
++        if (deliveryTracker.status(orderingId, hid, Seq(hr)) == ModifiersStatus.Unknown) {
+           requestBlockSection(hid, Seq(orderingId), remote)
+         }
+       } else {
+@@ -2362,8 +2361,7 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+         case phError: ParentHeaderNotFoundError =>
+           // For missing parent header, request the parent header from peers if not already known
+           val parentId = phError.parentId
+-          if (parentId != Header.GenesisParentId &&
+-              deliveryTracker.status(parentId, Header.modifierTypeId, Seq(historyReader)) == ModifiersStatus.Unknown) {
++          if (deliveryTracker.status(parentId, Header.modifierTypeId, Seq(historyReader)) == ModifiersStatus.Unknown) {
+             val olderPeers = syncTracker.peersByStatus.getOrElse(Older, Seq.empty)
+             if (olderPeers.nonEmpty) {
+               val randomPeer = olderPeers(scala.util.Random.nextInt(olderPeers.size))

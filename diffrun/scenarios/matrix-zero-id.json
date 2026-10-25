@@ -1,0 +1,16 @@
+{
+  "name": "matrix-zero-id",
+  "description": "Requests for the all-zero header id (Header.GenesisParentId) on the Matrix line (weak-blocks): three nodes in a line, A - B - C, no delay, A mining from genesis, observed for PEERYARD_DURATION s (the rig example's hook, rig/examples/matrix-zero-id.{json,sh}); zero_undelivered = the followers' expired delivery checks for header 0…0, zero_parent_requested = their view holders' 'Requested parent header 0…0' lines; A is launched after B and C are linked so the genesis reaches them as an ordering-block announcement (the trigger); a run where neither follower received it that way, or A stays below height 10, is INCONCLUSIVE. Predicates from one local run per jar (weak-blocks 214d09cba: 32 + 32; with ergoplatform/ergo#2807: 0), not yet a hosted fit.",
+  "script": "matrix-zero-id.sh",
+  "tier": "public",
+  "env": { "PEERYARD_DURATION": "300" },
+  "metrics": { "zero_undelivered": "number", "zero_parent_requested": "number", "b_zero_undelivered": "number",
+               "c_zero_undelivered": "number", "undelivered_any": "number", "a_height": "number",
+               "followers_caught_up": "boolean", "genesis_announced": "number" },
+  "n": 3,
+  "timeout_seconds": 900,
+  "expect": {
+    "base":      { "all": { "key": "zero_undelivered", "op": ">", "value": 0 } },
+    "candidate": { "all": { "key": "zero_undelivered", "op": "==", "value": 0 } }
+  }
+}

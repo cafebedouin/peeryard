@@ -1,0 +1,154 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+index f9e89f91a..e62f9a420 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+@@ -106,10 +106,11 @@ trait FullBlockProcessor extends HeadersProcessor {
+         if (nonBestChainsCache.nonEmpty) nonBestChainsCache = nonBestChainsCache.dropUntil(minForkRootHeight)
+ 
+         if (nodeSettings.isFullBlocksPruned) {
+-          val lastKept = updateBestFullBlock(fullBlock.header)
+-          val bestHeight: Int = newBestBlockHeader.height
+-          val diff = bestHeight - prevBest.header.height
+-          pruneBlockDataAt(((lastKept - diff) until lastKept).filter(_ >= 0))
++          val prevMinHeight = minimalFullBlockHeight
++          // Use the received block, not the new best one: from the new best block,
++          // a step that fills a gap could prune blocks the state has not applied yet.
++          val newMinHeight = updateBestFullBlock(fullBlock.header)
++          pruneBlockDataAt(prevMinHeight until newMinHeight)
+         }
+         ProgressInfo(branchPoint, toRemove, toApply, Seq.empty)
+       }
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+index 919e4aa2b..0f319fd99 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+@@ -24,8 +24,15 @@ class VerifyADHistorySpecification extends ErgoCorePropertyTest with NoShrink {
+   type PM = BlockSection
+ 
+   private def genHistory(blocksNum: Int = 0,
+-                         minFullHeight: Option[Int] = Some(GenesisHeight)): (ErgoHistory, Seq[ErgoFullBlock]) = {
+-    val inHistory = generateHistory(verifyTransactions = true, StateType.Digest, PoPoWBootstrap = false, BlocksToKeep)
++                         minFullHeight: Option[Int] = Some(GenesisHeight),
++                         votingLength: Option[Int] = None): (ErgoHistory, Seq[ErgoFullBlock]) = {
++    val inHistory = generateHistory(
++      verifyTransactions = true,
++      StateType.Digest,
++      PoPoWBootstrap = false,
++      BlocksToKeep,
++      votingLength = votingLength
++    )
+     minFullHeight.foreach { h =>
+       inHistory.writeMinimalFullBlockHeight(h)
+       inHistory.isHeadersChainSyncedVar = true
+@@ -380,6 +387,51 @@ class VerifyADHistorySpecification extends ErgoCorePropertyTest with NoShrink {
+     }
+   }
+ 
++  property("prune blocks applied together with the first full block") {
++    val votingLength = 4
++    var history = genHistory(votingLength = Some(votingLength))._1
++    history.bestFullBlockOpt shouldBe None
++
++    val blocksToPrune = 7
++    val chain = genChain(BlocksToKeep + blocksToPrune)
++
++    val firstBatch = chain.dropRight(2) // heights 1..16
++    val next       = chain.init.last // height 17
++
++    def sectionIds(bs: Seq[ErgoFullBlock]) = bs.flatMap(_.header.sectionIds.map(_._2))
++    def stored(bs: Seq[ErgoFullBlock])     = sectionIds(bs).filter(history.contains)
++    def missing(bs: Seq[ErgoFullBlock])    = sectionIds(bs).filterNot(history.contains)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    history.bestHeaderOpt.value shouldBe chain.last.header
++    history.bestFullBlockOpt shouldBe None
++
++    // Append heights 2..16 before the first full block (height 1) arrives
++    firstBatch.tail.foreach { b =>
++      history = applyBlock(history, b)
++    }
++    history.bestFullBlockOpt shouldBe None
++
++    // Applying height 1 queues heights 1..16 for state application without pruning them yet
++    history = applyBlock(history, firstBatch.head)
++    history.bestFullBlockOpt.value.header shouldBe firstBatch.last.header
++    missing(firstBatch) shouldBe empty
++
++    // Next block (height 17): h = 7 > votingLength (4), so the floor rounds down to epoch start 4 and prunes 1..3
++    history = applyBlock(history, next)
++    history.bestFullBlockOpt.value.header shouldBe next.header
++    val (prunedAtNext, keptAtNext) = chain.init.splitAt(votingLength - 1)
++    stored(prunedAtNext) shouldBe empty
++    missing(keptAtNext) shouldBe empty
++
++    // Next block (height 18): h = 8 reaches the next epoch start, so the floor jumps 4 -> 8 and prunes 4..7
++    history = applyBlock(history, chain.last)
++    history.bestFullBlockOpt.value.header shouldBe chain.last.header
++    val (prunedAtLast, keptAtLast) = chain.splitAt(blocksToPrune)
++    stored(prunedAtLast) shouldBe empty
++    missing(keptAtLast) shouldBe empty
++  }
++
+   property("process fork from genesis") {
+     var (history, c) = genHistory(1)
+     val genesis = c.head
+@@ -533,4 +585,26 @@ class VerifyADHistorySpecification extends ErgoCorePropertyTest with NoShrink {
+     history.bestFullBlockOpt.value shouldBe chain.last
+   }
+ 
++  property("prune the height below a step that applies a block stored ahead of it") {
++    var history = genHistory()._1
++    val chain = genChain(BlocksToKeep + 9) // heights 1..20
++    def at(h: Int) = chain(h - 1)
++    def stored(h: Int) = at(h).header.sectionIds.map(_._2).filter(history.contains)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    (1 to 14).foreach(h => history = applyBlock(history, at(h)))
++    history.readMinimalFullBlockHeight() shouldBe 4
++
++    // height 16 arrives before 15, so receiving 15 applies 15 and 16 in one step
++    history = applyBlock(history, at(16))
++    history = applyBlock(history, at(15))
++    history.bestFullBlockOpt.value.header shouldBe at(16).header
++    (17 to 20).foreach(h => history = applyBlock(history, at(h)))
++
++    val floor = history.readMinimalFullBlockHeight()
++    floor shouldBe 10
++    (2 until floor).filter(h => stored(h).nonEmpty) shouldBe empty
++    (floor to 20).filter(h => stored(h).isEmpty) shouldBe empty
++  }
++
+ }
+diff --git a/src/test/scala/org/ergoplatform/utils/HistoryTestHelpers.scala b/src/test/scala/org/ergoplatform/utils/HistoryTestHelpers.scala
+index f978a5a12..50e9a24e0 100644
+--- a/src/test/scala/org/ergoplatform/utils/HistoryTestHelpers.scala
++++ b/src/test/scala/org/ergoplatform/utils/HistoryTestHelpers.scala
+@@ -47,7 +47,8 @@ object HistoryTestHelpers extends FileUtils {
+                       initialDiffOpt: Option[BigInt] = None,
+                       genesisIdOpt: Option[ModifierId] = None,
+                       utxoBootstrap: Boolean = false,
+-                      keepVersions: Int = 200): ErgoHistory = {
++                      keepVersions: Int = 200,
++                      votingLength: Option[Int] = None): ErgoHistory = {
+ 
+     val txCostLimit     = initSettings.nodeSettings.maxTransactionCost
+     val txSizeLimit     = initSettings.nodeSettings.maxTransactionSize
+@@ -59,13 +60,17 @@ object HistoryTestHelpers extends FileUtils {
+ )
+     val scorexSettings: ScorexSettings = null
+     val walletSettings: WalletSettings = null
+-    val chainSettings = initialDiffOpt match {
++    val defaultChainSettings = initialDiffOpt match {
+       case Some(diff) =>
+         val diffHex = Base16.encode(diff.toByteArray)
+         settings.chainSettings.copy(epochLength = epochLength, useLastEpochs = useLastEpochs, initialDifficultyHex = diffHex, genesisId = genesisIdOpt)
+       case _ =>
+         settings.chainSettings.copy(epochLength = epochLength, useLastEpochs = useLastEpochs, genesisId = genesisIdOpt)
+     }
++    val chainSettings = votingLength.fold(defaultChainSettings) { length =>
++      val voting = defaultChainSettings.voting.copy(votingLength = length)
++      defaultChainSettings.copy(voting = voting)
++    }
+ 
+     val dir = createTempDir
+     val fullHistorySettings: ErgoSettings = ErgoSettings(dir.getAbsolutePath, NetworkType.TestNet, chainSettings,

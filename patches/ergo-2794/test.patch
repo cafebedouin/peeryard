@@ -1,0 +1,31 @@
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+index 919e4aa2b..d397231ab 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+@@ -533,4 +533,26 @@ class VerifyADHistorySpecification extends ErgoCorePropertyTest with NoShrink {
+     history.bestFullBlockOpt.value shouldBe chain.last
+   }
+ 
++  property("prune the height below a step that applies a block stored ahead of it") {
++    var history = genHistory()._1
++    val chain = genChain(BlocksToKeep + 9) // heights 1..20
++    def at(h: Int) = chain(h - 1)
++    def stored(h: Int) = at(h).header.sectionIds.map(_._2).filter(history.contains)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    (1 to 14).foreach(h => history = applyBlock(history, at(h)))
++    history.readMinimalFullBlockHeight() shouldBe 4
++
++    // height 16 arrives before 15, so receiving 15 applies 15 and 16 in one step
++    history = applyBlock(history, at(16))
++    history = applyBlock(history, at(15))
++    history.bestFullBlockOpt.value.header shouldBe at(16).header
++    (17 to 20).foreach(h => history = applyBlock(history, at(h)))
++
++    val floor = history.readMinimalFullBlockHeight()
++    floor shouldBe 10
++    (2 until floor).filter(h => stored(h).nonEmpty) shouldBe empty
++    (floor to 20).filter(h => stored(h).isEmpty) shouldBe empty
++  }
++
+ }

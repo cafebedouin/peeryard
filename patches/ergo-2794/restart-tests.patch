@@ -1,0 +1,55 @@
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+index 3023a11e8..ee5d4f6ec 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+@@ -585,4 +585,50 @@ class VerifyADHistorySpecification extends ErgoCorePropertyTest with NoShrink {
+     history.bestFullBlockOpt.value shouldBe chain.last
+   }
+ 
++  property("prune the height below a step that applies a block stored ahead of it") {
++    var history = genHistory()._1
++    val chain = genChain(BlocksToKeep + 9) // heights 1..20
++    def at(h: Int) = chain(h - 1)
++    def sections(h: Int) = at(h).header.sectionIds.map(_._2)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    (1 to 14).foreach(h => history = applyBlock(history, at(h)))
++    history.readMinimalFullBlockHeight() shouldBe 4
++
++    // height 16 arrives before 15 and is only stored; receiving 15 then applies 15 and 16 in one step
++    history = applyBlock(history, at(16))
++    history.bestFullBlockOpt.value.header shouldBe at(14).header
++    history.readMinimalFullBlockHeight() shouldBe 4
++    history = applyBlock(history, at(15))
++    history.bestFullBlockOpt.value.header shouldBe at(16).header
++    (17 to 20).foreach(h => history = applyBlock(history, at(h)))
++
++    val floor = history.readMinimalFullBlockHeight()
++    floor shouldBe 10
++    (2 until floor).filter(h => sections(h).exists(history.contains)) shouldBe empty
++    (floor to 20).filter(h => !sections(h).forall(history.contains)) shouldBe empty
++  }
++
++  property("prune the floor height that a restart moves past") {
++    var history = genHistory()._1
++    val chain = genChain(BlocksToKeep + 9) // heights 1..20
++    def at(h: Int) = chain(h - 1)
++    def sections(h: Int) = at(h).header.sectionIds.map(_._2)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    (1 to 14).foreach(h => history = applyBlock(history, at(h)))
++    history.readMinimalFullBlockHeight() shouldBe 4
++
++    // a restart: the headers-synced flag is not stored, so the first fresh header after it latches the flag again
++    // and moves the floor (markHeadersSyncedIfFresh calls updateBestFullBlock), before any block is applied
++    history.isHeadersChainSyncedVar = false
++    history.updateBestFullBlock(at(15).header) shouldBe 5
++    (15 to 20).foreach(h => history = applyBlock(history, at(h)))
++
++    val floor = history.readMinimalFullBlockHeight()
++    floor shouldBe 10
++    (2 until floor).filter(h => sections(h).exists(history.contains)) shouldBe empty
++    (floor to 20).filter(h => !sections(h).forall(history.contains)) shouldBe empty
++  }
++
+ }

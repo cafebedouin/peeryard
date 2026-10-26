@@ -1,0 +1,116 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+index e62f9a420..b6aa29830 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
+@@ -106,11 +106,20 @@ trait FullBlockProcessor extends HeadersProcessor {
+         if (nonBestChainsCache.nonEmpty) nonBestChainsCache = nonBestChainsCache.dropUntil(minForkRootHeight)
+ 
+         if (nodeSettings.isFullBlocksPruned) {
+-          val prevMinHeight = minimalFullBlockHeight
++          // Start where the last prune stopped, not at the floor before this step: the floor also moves without a
++          // prune (after a restart, the first fresh header sets it again), and a prune can fail after it moved.
++          val pruneFrom = readPrunedBelowHeight().getOrElse(minimalFullBlockHeight)
+           // Use the received block, not the new best one: from the new best block,
+           // a step that fills a gap could prune blocks the state has not applied yet.
+           val newMinHeight = updateBestFullBlock(fullBlock.header)
+-          pruneBlockDataAt(prevMinHeight until newMinHeight)
++          if (pruneFrom < newMinHeight) {
++            pruneBlockDataAt(pruneFrom until newMinHeight) match {
++              case Success(_) => writePrunedBelowHeight(newMinHeight)
++              case Failure(e) =>
++                log.warn(s"Pruning full blocks at heights $pruneFrom until $newMinHeight failed, " +
++                  s"to be retried with the next block: ${e.getMessage}")
++            }
++          }
+         }
+         ProgressInfo(branchPoint, toRemove, toApply, Seq.empty)
+       }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+index 44a75ce1f..61b09d7ad 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+@@ -47,6 +47,11 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     ByteArrayWrapper(Base16.decode("4987eb6a8fecbed88a6f733f456cdf4e334b944f4436be4cab50cacb442e15e6").get)
+   }
+ 
++  /**
++    * Key for database record storing the height below which full block sections are pruned
++    */
++  protected val PrunedBelowHeightKey: ByteArrayWrapper = ByteArrayWrapper(Algos.hash("prunedbelow".getBytes(CharsetName)))
++
+ 
+   protected val historyStorage: HistoryStorage
+ 
+@@ -81,6 +86,17 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     historyStorage.getIndex(MinFullBlockHeightKey).map(Ints.fromByteArray).getOrElse(GenesisHeight)
+   }
+ 
++  protected def writePrunedBelowHeight(height: Height): Unit = {
++    historyStorage.insert(
++      indexesToInsert = Array(PrunedBelowHeightKey -> Ints.toByteArray(height)),
++      objectsToInsert = BlockSection.emptyArray)
++  }
++
++  /** Height below which full block sections are pruned; None before the first prune with this record */
++  protected def readPrunedBelowHeight(): Option[Height] = {
++    historyStorage.getIndex(PrunedBelowHeightKey).map(Ints.fromByteArray)
++  }
++
+   def bestHeaderIdOpt: Option[ModifierId] = historyStorage.getIndex(BestHeaderKey).map(bytesToId)
+ 
+   /**
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+index 3023a11e8..ee5d4f6ec 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/history/VerifyADHistorySpecification.scala
+@@ -585,4 +585,50 @@ class VerifyADHistorySpecification extends ErgoCorePropertyTest with NoShrink {
+     history.bestFullBlockOpt.value shouldBe chain.last
+   }
+ 
++  property("prune the height below a step that applies a block stored ahead of it") {
++    var history = genHistory()._1
++    val chain = genChain(BlocksToKeep + 9) // heights 1..20
++    def at(h: Int) = chain(h - 1)
++    def sections(h: Int) = at(h).header.sectionIds.map(_._2)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    (1 to 14).foreach(h => history = applyBlock(history, at(h)))
++    history.readMinimalFullBlockHeight() shouldBe 4
++
++    // height 16 arrives before 15 and is only stored; receiving 15 then applies 15 and 16 in one step
++    history = applyBlock(history, at(16))
++    history.bestFullBlockOpt.value.header shouldBe at(14).header
++    history.readMinimalFullBlockHeight() shouldBe 4
++    history = applyBlock(history, at(15))
++    history.bestFullBlockOpt.value.header shouldBe at(16).header
++    (17 to 20).foreach(h => history = applyBlock(history, at(h)))
++
++    val floor = history.readMinimalFullBlockHeight()
++    floor shouldBe 10
++    (2 until floor).filter(h => sections(h).exists(history.contains)) shouldBe empty
++    (floor to 20).filter(h => !sections(h).forall(history.contains)) shouldBe empty
++  }
++
++  property("prune the floor height that a restart moves past") {
++    var history = genHistory()._1
++    val chain = genChain(BlocksToKeep + 9) // heights 1..20
++    def at(h: Int) = chain(h - 1)
++    def sections(h: Int) = at(h).header.sectionIds.map(_._2)
++
++    history = applyHeaderChain(history, HeaderChain(chain.map(_.header)))
++    (1 to 14).foreach(h => history = applyBlock(history, at(h)))
++    history.readMinimalFullBlockHeight() shouldBe 4
++
++    // a restart: the headers-synced flag is not stored, so the first fresh header after it latches the flag again
++    // and moves the floor (markHeadersSyncedIfFresh calls updateBestFullBlock), before any block is applied
++    history.isHeadersChainSyncedVar = false
++    history.updateBestFullBlock(at(15).header) shouldBe 5
++    (15 to 20).foreach(h => history = applyBlock(history, at(h)))
++
++    val floor = history.readMinimalFullBlockHeight()
++    floor shouldBe 10
++    (2 until floor).filter(h => sections(h).exists(history.contains)) shouldBe empty
++    (floor to 20).filter(h => !sections(h).forall(history.contains)) shouldBe empty
++  }
++
+ }

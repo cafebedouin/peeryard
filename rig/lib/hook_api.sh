@@ -107,3 +107,31 @@ companion_stop(){ local name="$1" pid; pid="$(companion_pid "$name")"; [[ -n "$p
   kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true; rm -f "$SCRATCH/companions/$name.pid"
   declare -F rig_event >/dev/null && rig_event companion "" "" "" "stop $name" || true; echo "[rig] companion $name stopped"; }
 companions_stop_all(){ local f; for f in "$SCRATCH"/companions/*.pid; do [[ -f "$f" ]] && companion_stop "$(basename "$f" .pid)"; done; }
+# pruning_check PRUNED FULL TOP K: does the pruned node PRUNED (blocksToKeep K), settled at height TOP, prune at every
+# old height? It must no longer serve the full block of any height from 2 to TOP - 2K, must serve each of the last K,
+# and must keep every header; the full node FULL must serve the lowest and the highest of the pruned heights. Height 1
+# is left out (ergo's own pruning test leaves it out), and the K heights between are not judged: the floor trails the
+# tip by a few heights more than K on the release (23 kept for K 20 on v6.0.9, 2026-10-26), so a height in that band
+# may still go. A height below TOP - 2K that is still served is kept for good. Pruning lands a step after a block is
+# applied, so heights still served are re-read for up to
+# PRUNE_WAIT_S (90) seconds; a removed height stays removed, so each pass re-reads only those. Sets PRUNE_OK (yes/no),
+# PRUNE_KEPT (heights still served below the floor), PRUNE_MISSING (recent heights not served) and PRUNE_NOHDR (heights
+# whose header is gone), and prints one line. A served full block carries at least one (coinbase) transaction.
+_prune_txs(){ local id; id=$(header_at "$1" "$2"); [[ -n "$id" ]] || { echo nohdr; return; }; rest "$1" "/blocks/$id" | jq -r '.blockTransactions.transactions | length' 2>/dev/null; }
+pruning_check(){
+  local c="$1" a="$2" top="$3" k="$4" lo=2 hi keep_lo h n end still a_lo a_hi
+  hi=$((top - 2 * k)); keep_lo=$((top - k + 1)); PRUNE_KEPT=""; PRUNE_MISSING=""; PRUNE_NOHDR=""; PRUNE_OK=no
+  a_lo=$(_prune_txs "$a" "$lo"); a_hi=$(_prune_txs "$a" "$hi")
+  PRUNE_KEPT=$(seq "$lo" "$hi" | tr '\n' ' '); end=$((SECONDS + ${PRUNE_WAIT_S:-90}))
+  while :; do
+    still=""
+    for h in $PRUNE_KEPT; do n=$(_prune_txs "$c" "$h"); if [[ "$n" == nohdr ]]; then PRUNE_NOHDR+=" $h"; elif [[ "${n:-0}" =~ ^[0-9]+$ ]] && (( n >= 1 )); then still+=" $h"; fi; done
+    PRUNE_KEPT="${still# }"
+    [[ -z "$PRUNE_KEPT" || $SECONDS -ge $end ]] && break; sleep 5
+  done
+  for h in $(seq "$keep_lo" "$top"); do n=$(_prune_txs "$c" "$h"); [[ "${n:-0}" =~ ^[0-9]+$ ]] && (( n >= 1 )) || PRUNE_MISSING+=" $h"; done
+  PRUNE_MISSING="${PRUNE_MISSING# }"; PRUNE_NOHDR="${PRUNE_NOHDR# }"
+  echo "[prune] $c (blocksToKeep $k) at $top: $lo..$hi pruned, $keep_lo..$top kept; $a serves $lo:${a_lo:-none} $hi:${a_hi:-none}; $c still serves below the floor: ${PRUNE_KEPT:-none}; lacks recent: ${PRUNE_MISSING:-none}; lacks headers: ${PRUNE_NOHDR:-none}"
+  (( hi >= lo )) && [[ -z "$PRUNE_KEPT$PRUNE_MISSING$PRUNE_NOHDR" && "${a_lo:-0}" =~ ^[0-9]+$ && "${a_hi:-0}" =~ ^[0-9]+$ ]] && (( a_lo >= 1 && a_hi >= 1 )) && PRUNE_OK=yes
+  return 0
+}

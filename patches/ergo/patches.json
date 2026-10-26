@@ -165,6 +165,24 @@
       "responses": [
         "2026-10-13: #2313 closed by jozanek: Replaced by #2721 on v6.0.9 (thanks us for the reproduction and the stall report)"
       ]
+    },
+    {
+      "id": "011",
+      "file": "011-pr2802-prune-floor-delta.patch",
+      "title": "Prune full blocks from the previous minimal full block height on a better chain",
+      "origin": "upstream PR by ocakciomursel-pixel (not ours; co-authored by jozanek); production diff only",
+      "upstream_pr": 2802,
+      "upstream_head": "a319435527",
+      "status": "merged-unreleased",
+      "added": "2026-10-26",
+      "fixes": "a pruned node that keeps old full blocks for good: the blocks applied with its first full block (issue #2794), one height whenever a block arrives ahead of its parent (the step that applies both takes its floor from the lower one), and all but one height of each voting-epoch move of the floor",
+      "needed_by": [
+        "rig bootstrap-modes (pruning checked at every height)"
+      ],
+      "witness": "ref-specs on GitHub-hosted runners, run 40256526836 (patches/ergo-2794/): a VerifyADHistorySpecification property (a block stored ahead of its parent) fails on v6.0.8 c1a69f65d and v6.0.9 9f77ea638 with Vector(5) and passes on 9f77ea638 + #2802 and on v6.0.10 f2f932bd6; the v6.0.9 release check (40225118118) had bootstrap-modes red with block 5 kept on the pruned node",
+      "responses": [
+        "2026-10-24: merged into v6.0.10 (a31943552); issue #2794 still open"
+      ]
     }
   ],
   "clone_env": "DIFFRUN_ERGO_CLONE",

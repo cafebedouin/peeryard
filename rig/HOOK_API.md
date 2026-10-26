@@ -46,6 +46,13 @@ Used in: `netsplit.sh`, `matrix-fork.sh`, `three-body.sh`.
 `same_state A B`
 Used in: `matrix-pair.sh`, `soak.sh`, `loss.sh`.
 
+## pruning_check
+
+`pruning_check <pruned> <full> <top> <k>` checks a node that prunes full blocks (`blocksToKeep` `<k>`) after it has settled at height `<top>`. The pruned node must serve none of the full blocks from height 2 to `<top> - 2<k>`, must serve each of the last `<k>`, and must keep every header; the full node must serve the lowest and the highest of the pruned heights. Height 1 is not judged, and neither are the `<k>` heights between: the floor trails the tip by a few heights more than `<k>` (23 blocks kept for `<k>` 20 on v6.0.9), so a height there may still be pruned. A height below `<top> - 2<k>` that is still served is kept for good. Heights still served are re-read every 5 seconds for up to `PRUNE_WAIT_S` (default 90) seconds, since pruning lands a step after a block is applied. It prints one `[prune]` line and returns 0. It sets `PRUNE_OK` (`yes`/`no`), `PRUNE_KEPT` (heights still served below the floor), `PRUNE_MISSING` (recent heights not served) and `PRUNE_NOHDR` (heights whose header is gone).
+
+`pruning_check C A "$ah" 20`
+Used in: `bootstrap-modes.sh` (rig example and diffrun hook).
+
 ## settle_follow
 
 `settle_follow <leader> <follower> <min_h> [window_s]` (the window defaults to 150). Call it directly, not in `$(...)`, so the relaunch bookkeeping (PID, mining overrides) stays in the caller's shell. Stdout from the two mining restarts is discarded. It returns 0 when `same_state` prints `SAME@<h>:<root>` with `<h>` at least `<min_h>` inside the window, and 1 on `DIFF@...` or when the window ends. `LAG@...`, `NOHEIGHT` and `NOROOT@...` keep the poll going, every 3 seconds.

@@ -4,8 +4,8 @@
 # mining stops, B and C catch up to A's exact final height, and only then are the state roots compared (under a
 # live miner same_state reports LAG@ because followers trail by a block, which is not a fault but is not proof of
 # agreement either). PASS = B and C reach A's final height on the same header ids and the same state root, and C's
-# pruning is visible: an old full block (height 5) is served by the full node A but not by the pruned node C,
-# while C still holds its header. Env: PEERYARD_DURATION (mining seconds before the settle, default 120).
+# pruning holds at every old height (pruning_check, rig/HOOK_API.md): C serves none of the full blocks more than twice
+# blocksToKeep below the tip (height 1 aside), still serves the last blocksToKeep, and keeps every header. Env: PEERYARD_DURATION (mining seconds before the settle, default 120).
 MINE_S=${PEERYARD_DURATION:-120}
 # full_height reads 0 for a few seconds after a (re)launch while the node reloads its chain, so read a height
 # after a mining stop only through wait_h.
@@ -36,20 +36,9 @@ done
 sb=$(same_state A B); sc=$(same_state A C)
 echo "[modes] settled=$settled  A=$ah B=$(full_height B) C=$(full_height C)  same_state(A,B)=$sb same_state(A,C)=$sc"
 
-# 3) pruning visible on C: the old full block at height 5 is served by the full node A but not by the pruned C,
-# while C keeps its header. A served full block always carries >= 1 (coinbase) transaction, so a count < 1 from C
-# means the block sections are gone.
-# the pruned node drops old block sections some time after applying newer blocks (not at once), so re-read for up to
-# 90 s; A's answer is read every time too, so a PASS still needs the full node to serve the block
-hdr5=$(header_at A 5); end=$((SECONDS+90))
-while :; do
-  a_block=$(rest A "/blocks/$hdr5" | jq -r '.blockTransactions.transactions | length' 2>/dev/null)
-  c_hdr5=$(header_at C 5); c_block=$(rest C "/blocks/$c_hdr5" | jq -r '.blockTransactions.transactions | length' 2>/dev/null)
-  { [ "${a_block:-0}" -ge 1 ] && [ "${c_block:-0}" -lt 1 ]; } && break
-  [ $SECONDS -ge $end ] && break; sleep 5
-done
-echo "[modes] block 5 header on C: $([ -n "$c_hdr5" ] && echo yes || echo no); full-block transactions served: A(full)=${a_block:-none} C(pruned)=${c_block:-none}"
-pruned=no; [ -n "$c_hdr5" ] && [ "${a_block:-0}" -ge 1 ] && [ "${c_block:-0}" -lt 1 ] && pruned=yes
+# 3) pruning on C at every height (pruning_check in rig/lib/hook_api.sh)
+k=$(grep -h blocksToKeep "$SCRATCH"/conf_C.conf | tail -1 | grep -oE '[0-9]+' | tail -1)
+pruning_check C A "$ah" "${k:-20}"; pruned=$PRUNE_OK
 
 state_ok=no; { [ "${sb%%@*}" = SAME ] && [ "${sc%%@*}" = SAME ]; } && state_ok=yes
 echo "[modes] settled=$settled state_agree=$state_ok pruned_visible=$pruned"

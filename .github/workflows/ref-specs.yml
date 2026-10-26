@@ -57,8 +57,8 @@ jobs:
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || fail "label: [A-Za-z0-9._-]{1,40}"
           if [[ "$LABEL" =~ $idlike ]]; then fail "label '$LABEL' looks like a tracking id; use a descriptive one"; fi
           [[ -n "$SPECS$IT_SPEC" ]] || fail "specs, it_spec: give at least one"
-          for s in $SPECS; do [[ "$s" =~ ^org\.ergoplatform\.[A-Za-z0-9_.]+$ ]] || fail "spec: $s"; done
-          [[ -z "$IT_SPEC" || "$IT_SPEC" =~ ^org\.ergoplatform\.[A-Za-z0-9_.]+$ ]] || fail "it_spec: one class name"
+          for s in $SPECS; do [[ "$s" =~ ^(org\.ergoplatform|scorex)\.[A-Za-z0-9_.]+$ ]] || fail "spec: $s"; done
+          [[ -z "$IT_SPEC" || "$IT_SPEC" =~ ^(org\.ergoplatform|scorex)\.[A-Za-z0-9_.]+$ ]] || fail "it_spec: one class name"
           json='[]'; n=0
           for a in $ARMS; do
             IFS=: read -r name sha patch extra <<< "$a"

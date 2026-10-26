@@ -1,8 +1,8 @@
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
-index 9b9ae4d93..8e67747ab 100644
+index 9b9ae4d93..9e3d738d7 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
-@@ -499,6 +499,16 @@ object ErgoHistory extends ScorexLogging {
+@@ -499,6 +499,18 @@ object ErgoHistory extends ScorexLogging {
        history.setHeadersChainSynced()
      }
  
@@ -12,8 +12,10 @@ index 9b9ae4d93..8e67747ab 100644
 +    // range after a UTXO-snapshot or NiPoPoW bootstrap does not start at genesis.
 +    if (nodeSettings.isFullBlocksPruned && history.bestFullBlockOpt.isDefined && history.readPrunedBelowHeight().isEmpty) {
 +      val floor = history.readMinimalFullBlockHeight()
-+      history.writePrunedBelowHeight(floor).get
-+      log.info(s"Full blocks below height $floor are taken as pruned")
++      history.writePrunedBelowHeight(floor) match {
++        case Success(_) => log.info(s"Full blocks below height $floor are taken as pruned")
++        case Failure(e) => log.warn(s"Pruned height record not written at start: ${e.getMessage}")
++      }
 +    }
 +
      log.info("History database read")

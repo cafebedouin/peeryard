@@ -50,9 +50,9 @@ property.
 |---|---|---|---|
 | `restart-tests.patch` | v6.0.10 `f2f932bd6` | `d071eeb0d692b049a313028030b900306f0cef23` | the two properties |
 | `restart-tests.patch` | v6.0.9 `9f77ea638` | `760d313f83f524252b07cbf7b80b54a031c957ca` | the two properties (no #2802) |
-| `restart-fix.patch` | v6.0.10 `f2f932bd6` | `e4d1bbcc01a65aecba88ede6fc45564903ec1953` | the properties and the fix |
-| `restart-fix-no-open-record.patch` | v6.0.10 `f2f932bd6` | `5a4628a6c03af213734ded5d0950af2ba65f5305` | the same without the record written on read |
-| `v609-pr2802-restart-fix.patch` | v6.0.9 `9f77ea638` | `b3e4d059b4da1aff24146f168fa00287f95326da` | #2802 (cherry-picked), the properties, the fix (the record write in `readOrGenerate` without `stopOnFailure`, which v6.0.9 does not have) |
+| `restart-fix.patch` | v6.0.10 `f2f932bd6` | `238a67a37955d457e34fc9c55e940f09533136e6` | the properties and the fix |
+| `restart-fix-no-open-record.patch` | v6.0.10 `f2f932bd6` | `4103fab370eef1d6177bbd63551153bb56359341` | the same without the record written on read |
+| `v609-pr2802-restart-fix.patch` | v6.0.9 `9f77ea638` | `495eaa75e55cd78278697e1d5768b1a80d596fc1` | #2802 (cherry-picked), the properties, the fix (the record write in `readOrGenerate` without `stopOnFailure`, which v6.0.9 does not have) |
 
 ```
 gh workflow run ref-specs.yml -f label=prune-restart-r2 \

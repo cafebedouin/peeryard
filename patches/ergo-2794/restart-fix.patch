@@ -1,5 +1,5 @@
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
-index acd9b83a0..07b2946c7 100644
+index acd9b83a0..7d1ea3b64 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistory.scala
 @@ -579,6 +579,18 @@ object ErgoHistory extends ScorexLogging {
@@ -13,7 +13,7 @@ index acd9b83a0..07b2946c7 100644
 +    stopOnFailure("Pruned height record", Try {
 +      if (nodeSettings.isFullBlocksPruned && history.bestFullBlockOpt.isDefined && history.readPrunedBelowHeight().isEmpty) {
 +        val floor = history.readMinimalFullBlockHeight()
-+        history.writePrunedBelowHeight(floor)
++        history.writePrunedBelowHeight(floor).get
 +        log.info(s"Full blocks below height $floor are taken as pruned")
 +      }
 +    })(history.closeStorage())
@@ -22,7 +22,7 @@ index acd9b83a0..07b2946c7 100644
      history
    }
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
-index e62f9a420..86af906dc 100644
+index e62f9a420..9c5dd1d0e 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/FullBlockProcessor.scala
 @@ -106,11 +106,24 @@ trait FullBlockProcessor extends HeadersProcessor {
@@ -34,7 +34,7 @@ index e62f9a420..86af906dc 100644
 +          // prune (after a restart the first fresh header sets it again), and a prune can fail after it moved.
 +          val pruneFrom = readPrunedBelowHeight().getOrElse {
 +            val floor = minimalFullBlockHeight
-+            writePrunedBelowHeight(floor)
++            writePrunedBelowHeight(floor).failed.foreach(e => log.warn(s"Pruned height record not written: ${e.getMessage}"))
 +            floor
 +          }
            // Use the received block, not the new best one: from the new best block,
@@ -42,18 +42,18 @@ index e62f9a420..86af906dc 100644
            val newMinHeight = updateBestFullBlock(fullBlock.header)
 -          pruneBlockDataAt(prevMinHeight until newMinHeight)
 +          if (pruneFrom < newMinHeight) {
-+            pruneBlockDataAt(pruneFrom until newMinHeight) match {
-+              case Success(_) => writePrunedBelowHeight(newMinHeight)
-+              case Failure(e) =>
++            pruneBlockDataAt(pruneFrom until newMinHeight)
++              .flatMap(_ => writePrunedBelowHeight(newMinHeight))
++              .failed.foreach { e =>
 +                log.warn(s"Pruning full blocks at heights $pruneFrom until $newMinHeight failed, " +
 +                  s"to be retried with the next block: ${e.getMessage}")
-+            }
++              }
 +          }
          }
          ProgressInfo(branchPoint, toRemove, toApply, Seq.empty)
        }
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
-index 44a75ce1f..b217793ed 100644
+index 44a75ce1f..511f39853 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
 @@ -47,6 +47,12 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
@@ -73,7 +73,7 @@ index 44a75ce1f..b217793ed 100644
      historyStorage.getIndex(MinFullBlockHeightKey).map(Ints.fromByteArray).getOrElse(GenesisHeight)
    }
  
-+  private[history] def writePrunedBelowHeight(height: Height): Unit = {
++  private[history] def writePrunedBelowHeight(height: Height): Try[Unit] = {
 +    historyStorage.insert(
 +      indexesToInsert = Array(PrunedBelowHeightKey -> Ints.toByteArray(height)),
 +      objectsToInsert = BlockSection.emptyArray)

@@ -1,0 +1,40 @@
+diff --git a/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala
+index 0b73e6730..5c60a8689 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala
+@@ -34,7 +34,7 @@ class ScanningPredicateSpecification extends ErgoCorePropertyTest {
+       //look for exact p2pk script bytes
+       val box = testBox(value = 1, p2pkAddress.script, creationHeight = 0)
+       val scriptBytes = p2pkAddress.script.bytes
+-      EqualsScanningPredicate(R1, scriptBytes).filter(box) shouldBe true
++      EqualsScanningPredicate(R1, scriptBytes).filter(box) shouldBe false
+ 
+       //then change random byte
+       val scriptBytesModified = mutateRandomByte(scriptBytes)
+@@ -52,7 +52,7 @@ class ScanningPredicateSpecification extends ErgoCorePropertyTest {
+ 
+       //look for exact miner script bytes
+       val box = testBox(value = 1, minerProp, creationHeight = 0)
+-      EqualsScanningPredicate(R1, mpBytes).filter(box) shouldBe true
++      EqualsScanningPredicate(R1, mpBytes).filter(box) shouldBe false
+ 
+       //then change random byte
+       val scriptBytesModified = mutateRandomByte(mpBytes)
+@@ -65,7 +65,7 @@ class ScanningPredicateSpecification extends ErgoCorePropertyTest {
+       //look for exact p2pk script bytes
+       val box = testBox(value = 1, p2pkAddress.script, creationHeight = 0)
+       val pkBytes = p2pkAddress.asInstanceOf[P2PKAddress].pubkeyBytes
+-      ContainsScanningPredicate(R1, pkBytes).filter(box) shouldBe true
++      ContainsScanningPredicate(R1, pkBytes).filter(box) shouldBe false
+ 
+       //then change random byte in filter
+       val pkBytesModified = mutateRandomByte(pkBytes)
+@@ -83,7 +83,7 @@ class ScanningPredicateSpecification extends ErgoCorePropertyTest {
+       val box = testBox(value = 1, minerProp, creationHeight = 0)
+       val pkBytes = p2pkAddress.asInstanceOf[P2PKAddress].pubkeyBytes
+ 
+-      ContainsScanningPredicate(R1, pkBytes).filter(box) shouldBe true
++      ContainsScanningPredicate(R1, pkBytes).filter(box) shouldBe false
+ 
+       //then change random byte in filter
+       val pkBytesModified = mutateRandomByte(pkBytes)

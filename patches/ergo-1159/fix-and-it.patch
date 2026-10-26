@@ -1,0 +1,222 @@
+diff --git a/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala b/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala
+new file mode 100644
+index 000000000..fa0a97537
+--- /dev/null
++++ b/src/it/scala/org/ergoplatform/it/PrunedDigestNodeCatchUpSpec.scala
+@@ -0,0 +1,97 @@
++package org.ergoplatform.it
++
++import java.io.File
++
++import com.typesafe.config.Config
++import org.ergoplatform.it.container.{IntegrationSuite, Node}
++import org.scalatest.OptionValues
++import org.scalatest.flatspec.AnyFlatSpec
++
++import scala.concurrent.Await
++import scala.concurrent.duration._
++
++/**
++  * End-to-end reproduction of a pruning node that fell behind by more than its `blocksToKeep` window
++  * while it was offline. After such a shutdown the network tip - and therefore `minimalFullBlockHeight`
++  * after the headers re-sync - is far above the node's local best full block, and the node has to apply
++  * the intermediate full blocks to catch up. A node that refuses those intermediate blocks as "too old"
++  * gets permanently stuck at its pre-shutdown height; a healthy node downloads them and reaches the tip.
++  */
++class PrunedDigestNodeCatchUpSpec
++  extends AnyFlatSpec
++    with IntegrationSuite
++    with OptionValues {
++
++  private val blocksToKeep = 5
++  // height the pruned node reaches before going offline (best full block inside the keep window)
++  private val syncHeight = 8
++
++  private val remoteVolume = "/app"
++  private val minerVolume = s"$localDataDir/pruned-catchup-spec/miner"
++  private val digestVolume = s"$localDataDir/pruned-catchup-spec/digest"
++  // start each run from clean volumes so a previous run's chain/state cannot interfere with recovery
++  freshDir(minerVolume)
++  freshDir(digestVolume)
++
++  // single miner that keeps mining throughout, so the chain advances while the pruned node is offline
++  private val minerConfig: Config = offlineGeneratingPeerConfig
++    .withFallback(shortInternalMinerPollingInterval)
++    .withFallback(blockIntervalConfig(500))
++    .withFallback(specialDataDirConfig(remoteVolume))
++    .withFallback(nodeSeedConfigs.head)
++    .withFallback(allowLocalConfig)
++
++  // pruning light (digest) node that syncs, goes offline, then has to catch up; headers count as fresh for
++  // blockInterval * headerChainDiff = 500 ms * 8 = 4 s, so after the restart the headers chain is declared synced near
++  // the miner's tip, not at the first header after the best full block, and minimalFullBlockHeight jumps above it
++  private val digestConfig: Config = digestStatePeerConfig
++    .withFallback(prunedHistoryConfig(blocksToKeep))
++    .withFallback(headerChainDiffConfig(8))
++    .withFallback(blockIntervalConfig(500))
++    .withFallback(nonGeneratingPeerConfig)
++    .withFallback(specialDataDirConfig(remoteVolume))
++    .withFallback(nodeSeedConfigs(1))
++    .withFallback(allowLocalConfig)
++
++  // Testing scenario:
++  // 1. Start the miner and a pruning digest node; let the digest node sync ({stoppedAt} full blocks);
++  // 2. Stop the digest node gracefully (the "long shutdown") and let the miner mine past
++  //    {stoppedAt + blocksToKeep}, so every block the node still needs is below minimalFullBlockHeight;
++  // 3. Restart the digest node and assert it catches up to {target} instead of being stuck at {stoppedAt}.
++  it should "Pruned digest node catches up after being offline longer than blocksToKeep" in {
++
++    val minerNode: Node =
++      docker.startDevNetNode(minerConfig, specialVolumeOpt = Some((minerVolume, remoteVolume))).get
++    val digestNode: Node =
++      docker.startDevNetNode(digestConfig, specialVolumeOpt = Some((digestVolume, remoteVolume))).get
++
++    val result = for {
++      _         <- digestNode.waitForHeight(syncHeight)
++      // best full block height of the pruning node at the moment it goes offline
++      stoppedAt <- digestNode.fullHeight
++      // graceful stop so DigestState is flushed and can be reloaded on restart
++      _          = docker.stopNode(digestNode, secondsToWait = 20)
++      // the chain must advance strictly more than blocksToKeep beyond where the node stopped
++      target     = stoppedAt + blocksToKeep + 6
++      _         <- minerNode.waitForHeight(target)
++      restarted  = docker
++        .startDevNetNode(digestConfig, specialVolumeOpt = Some((digestVolume, remoteVolume))).get
++      // with the fix the node downloads the now-"too old" intermediate blocks and crosses the window;
++      // without it the node stays stuck at stoppedAt and this wait times out
++      caughtUp  <- restarted.waitForHeight(target)
++    } yield caughtUp should be >= target
++
++    Await.result(result, 10.minutes)
++  }
++
++  private def freshDir(path: String): Unit = {
++    val dir = new File(path)
++    def delete(f: File): Unit = {
++      if (f.isDirectory) Option(f.listFiles()).foreach(_.foreach(delete))
++      f.delete()
++    }
++    delete(dir)
++    dir.mkdirs()
++  }
++
++}
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
+index 7801d228a..c1c1d31ab 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/ToDownloadProcessor.scala
+@@ -163,17 +163,28 @@ trait ToDownloadProcessor
+     * the chain is at the tip then). When `updateBestBlock` is true the best full block pointer
+     * is persisted as well, which advances minimalFullBlockHeight; callers in the UTXO snapshot
+     * bootstrap path must not do that (see above).
++    * A node that can continue from its best full block (e.g. after a restart) keeps minimalFullBlockHeight,
++    * which then moves as blocks are applied: a height computed from this header could be above the best
++    * full block, and the blocks the node needs next would be rejected as too old. If such a height is
++    * already stored (by an earlier version), it is lowered to the height after the best full block.
+     */
+   private def markHeadersSyncedIfFresh(header: Header, updateBestBlock: Boolean = false): Unit = {
+     if (!isHeadersChainSynced && header.isNew(chainSettings.blockInterval * headerChainDiff)) {
+       if (updateBestBlock) {
+         val lowestHeight = lowestApplicableHeight(header)
+-        updateBestFullBlock(header, lowestHeight)
++        bestFullBlockOpt.filter(fb => headerIdsAtHeight(fb.height + 1).nonEmpty) match {
++          case Some(fb) =>
++            if (minimalFullBlockHeight > fb.height + 1) writeMinimalFullBlockHeight(fb.height + 1)
++            setHeadersChainSynced()
++          case None =>
++            updateBestFullBlock(header, lowestHeight)
++        }
+         if (lowestHeight > GenesisHeight) warnIfBestFullBlockBelowGap(header)
+       } else {
+         setHeadersChainSynced()
+       }
+-      log.info(s"Headers chain is likely synced after header ${header.encodedId} at height ${header.height}")
++      log.info(s"Headers chain is likely synced after header ${header.encodedId} at height ${header.height}, " +
++        s"minimal full block height $minimalFullBlockHeight")
+     }
+   }
+ 
+diff --git a/src/test/scala/org/ergoplatform/nodeView/history/PrunedHistoryRestartSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/history/PrunedHistoryRestartSpecification.scala
+new file mode 100644
+index 000000000..c26352dc9
+--- /dev/null
++++ b/src/test/scala/org/ergoplatform/nodeView/history/PrunedHistoryRestartSpecification.scala
+@@ -0,0 +1,78 @@
++package org.ergoplatform.nodeView.history
++
++import org.ergoplatform.modifiers.history.HeaderChain
++import org.ergoplatform.nodeView.history.ErgoHistoryUtils._
++import org.ergoplatform.nodeView.state.StateType
++import org.ergoplatform.settings.ErgoSettings
++import org.ergoplatform.utils.{ErgoCorePropertyTest, NoShrink}
++import org.ergoplatform.utils.ErgoNodeTestConstants.initSettings
++
++class PrunedHistoryRestartSpecification extends ErgoCorePropertyTest with NoShrink {
++  import org.ergoplatform.utils.HistoryTestHelpers._
++  import org.ergoplatform.utils.generators.ChainGenerator._
++
++  // A pruned digest history on its own settings, so that a test can close it and read it again, as a restart does
++  private def prunedHistorySettings(votingLength: Int): ErgoSettings = initSettings.copy(
++    directory = createTempDir.getAbsolutePath,
++    chainSettings = initSettings.chainSettings.copy(epochLength = 100000000, useLastEpochs = 10,
++      voting = initSettings.chainSettings.voting.copy(votingLength = votingLength)),
++    nodeSettings = initSettings.nodeSettings.copy(
++      stateType = StateType.Digest, verifyTransactions = true, blocksToKeep = BlocksToKeep, extraIndex = false))
++
++  // Applies heights 1..`applied` and stores headers up to 29, runs `beforeRestart`, closes the history and reads it
++  // again (the headers-synced flag is not stored, so it starts false), appends header 30 (fresh: it sets the flag; the
++  // network tip is past the kept window), applies the rest up to 30 and checks the floor (the kept window's start,
++  // rounded down to a voting epoch start) and the pruning from `prunedFrom` up.
++  private def checkContinueAfterRestart(prunedFrom: Int,
++                                        applied: Int = 5,
++                                        votingLength: Int = initSettings.chainSettings.voting.votingLength)
++                                       (beforeRestart: ErgoHistory => Unit): Unit = {
++    val settings = prunedHistorySettings(votingLength)
++    var history = ErgoHistory.readOrGenerate(settings)(null)
++    history.writeMinimalFullBlockHeight(GenesisHeight)
++    history.isHeadersChainSyncedVar = true
++    val chain = genChain(30) // heights 1..30, stamped with the current time, so each header is fresh
++    def at(h: Int) = chain(h - 1)
++    def sections(h: Int) = at(h).header.sectionIds.map(_._2)
++
++    (1 to applied).foreach(h => history = applyBlock(history, at(h)))
++    history = applyHeaderChain(history, HeaderChain((applied + 1 to 29).map(at(_).header)))
++    beforeRestart(history)
++    history.closeStorage()
++
++    history = ErgoHistory.readOrGenerate(settings)(null)
++    history.isHeadersChainSynced shouldBe false
++    history = applyHeaderChain(history, HeaderChain(Seq(at(30).header)))
++    history.isHeadersChainSynced shouldBe true
++    history.bestFullBlockOpt.map(_.header) shouldBe Some(at(applied).header)
++
++    // the node continues from its best full block, so the next block must be applicable
++    history.applicableTry(at(applied + 1).blockTransactions) shouldBe 'success
++    (applied + 1 to 30).foreach(h => history = applyBlock(history, at(h)))
++    history.bestFullBlockOpt.map(_.header) shouldBe Some(at(30).header)
++
++    val floor = history.readMinimalFullBlockHeight()
++    val windowStart = 30 - BlocksToKeep + 1
++    floor shouldBe (if (windowStart > votingLength) windowStart - windowStart % votingLength else windowStart)
++    (prunedFrom until floor).filter(h => sections(h).exists(history.contains)) shouldBe empty
++    (floor to 30).filter(h => !sections(h).forall(history.contains)) shouldBe empty
++    history.closeStorage()
++  }
++
++  property("continue from the best full block after a restart, when the network tip is past the kept window") {
++    checkContinueAfterRestart(prunedFrom = 2)(_.readMinimalFullBlockHeight() shouldBe GenesisHeight)
++  }
++
++  property("continue from the best full block after a restart, when an earlier start stored a floor above it") {
++    // what the headers-synced latch of an earlier version writes for header 30
++    checkContinueAfterRestart(prunedFrom = 6)(_.writeMinimalFullBlockHeight(30 - BlocksToKeep + 1))
++  }
++
++  property("continue from the best full block after a restart, when an earlier start stored a floor above it, " +
++    "with voting epochs of 8 blocks") {
++    // the earlier latch writes 20 rounded down to the voting epoch start 16; the floor is lowered to 13, the next block
++    // rounds it down to 8 (below the best full block, 12), and it ends at 16 with 8..15 pruned
++    checkContinueAfterRestart(prunedFrom = 8, applied = 12, votingLength = 8)(_.writeMinimalFullBlockHeight(16))
++  }
++
++}

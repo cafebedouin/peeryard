@@ -1,0 +1,193 @@
+diff --git a/src/test/scala/org/ergoplatform/nodeView/wallet/WalletScanLogicSpec.scala b/src/test/scala/org/ergoplatform/nodeView/wallet/WalletScanLogicSpec.scala
+index 11bc1fe7f..2211008c8 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/wallet/WalletScanLogicSpec.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/wallet/WalletScanLogicSpec.scala
+@@ -4,13 +4,16 @@ import org.ergoplatform.utils.{ErgoCorePropertyTest, WalletTestOps}
+ import WalletScanLogic.{extractWalletOutputs, scanBlockTransactions}
+ import org.ergoplatform.db.DBSpec
+ import org.ergoplatform.modifiers.mempool.ErgoTransaction
+-import org.ergoplatform.nodeView.wallet.persistence.{OffChainRegistry, WalletRegistry}
+-import org.ergoplatform.nodeView.wallet.scanning.{EqualsScanningPredicate, ScanRequest, ScanWalletInteraction}
++import org.ergoplatform.nodeView.wallet.persistence.{OffChainRegistry, WalletRegistry, WalletStorage}
++import org.ergoplatform.nodeView.wallet.scanning.{EqualsScanningPredicate, ScanRequest, ScanSerializer, ScanWalletInteraction}
+ import org.ergoplatform.wallet.Constants
+ import org.ergoplatform.wallet.Constants.ScanId
+ import org.ergoplatform.{ErgoBox, ErgoBoxCandidate, Input}
+ import org.scalacheck.Gen
+-import sigma.ast.{ByteArrayConstant, ErgoTree}
++import org.iq80.leveldb.Options
++import scorex.db.{LDBFactory, LDBKVStore}
++import sigma.Colls
++import sigma.ast.{ByteArrayConstant, ErgoTree, IntConstant, LongConstant}
+ import org.ergoplatform.settings.Constants.{FalseTree, TrueTree}
+ 
+ import scala.util.Random
+@@ -281,4 +284,50 @@ class WalletScanLogicSpec extends ErgoCorePropertyTest with DBSpec with WalletTe
+     boxes.head.scans shouldBe Set(scanId, Constants.PaymentsScanId)
+   }
+ 
++  property("persisted Long equality scan classifies future outputs after reopen") {
++    val directory = createTempDir
++    val options = new Options().createIfMissing(true)
++    val marker = ByteArrayConstant(Array[Byte](7, 6, 5))
++    val longRequest = ScanRequest("Long R4", EqualsScanningPredicate(ErgoBox.R4, LongConstant(42L)),
++      Some(ScanWalletInteraction.Off), None)
++    val byteRequest = ScanRequest("Byte R4", EqualsScanningPredicate(ErgoBox.R4, marker),
++      Some(ScanWalletInteraction.Off), None)
++
++    try {
++      val original = new WalletStorage(new LDBKVStore(LDBFactory.factory.open(directory, options)), s)
++      val (longScan, byteScan) = try {
++        original.addScan(longRequest).get -> original.addScan(byteRequest).get
++      } finally original.close()
++
++      val reopened = new WalletStorage(new LDBKVStore(LDBFactory.factory.open(directory, options)), s)
++      try {
++        val scansById = reopened.allScans.map(scan => scan.scanId -> scan).toMap
++        scansById.keySet shouldBe Set(longScan.scanId, byteScan.scanId)
++        ScanSerializer.toBytes(scansById(longScan.scanId)).toSeq shouldBe ScanSerializer.toBytes(longScan).toSeq
++        ScanSerializer.toBytes(scansById(byteScan.scanId)).toSeq shouldBe ScanSerializer.toBytes(byteScan).toSeq
++
++        val walletVars = WalletVars(reopened, s)
++        walletVars.stateCacheOpt shouldBe None
++        walletVars.externalScans.map(_.scanId).toSet shouldBe Set(longScan.scanId, byteScan.scanId)
++
++        val outputs = IndexedSeq(
++          new ErgoBoxCandidate(1001L, TrueTree, 1, Colls.emptyColl,
++            Map(ErgoBox.R4 -> LongConstant(42L))),
++          new ErgoBoxCandidate(1002L, TrueTree, 1, Colls.emptyColl,
++            Map(ErgoBox.R4 -> IntConstant(42))),
++          new ErgoBoxCandidate(1003L, TrueTree, 1, Colls.emptyColl,
++            Map(ErgoBox.R4 -> marker))
++        )
++        val tx = new ErgoTransaction(fakeInputs, IndexedSeq.empty, outputs)
++        val found = extractWalletOutputs(tx, Some(1), walletVars, None)
++
++        found.find(_.value == 1003L).map(_.scans) shouldBe Some(Set(byteScan.scanId))
++        withClue("PERSISTED_LONG_SCAN_AFTER_REOPEN: ") {
++          found.map(_.value).toSet shouldBe Set(1001L, 1003L)
++          found.find(_.value == 1001L).map(_.scans) shouldBe Some(Set(longScan.scanId))
++        }
++      } finally reopened.close()
++    } finally deleteRecursive(directory)
++  }
++
+ }
+diff --git a/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala b/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala
+index 0b73e6730..3c5f921b3 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicateSpecification.scala
+@@ -1,11 +1,11 @@
+ package org.ergoplatform.nodeView.wallet.scanning
+ 
+ import io.circe.parser._
+-import org.ergoplatform.ErgoBox.R1
++import org.ergoplatform.ErgoBox.{AdditionalRegisters, R0, R1, R4}
+ import org.ergoplatform.utils.ErgoCorePropertyTest
+ import org.ergoplatform.wallet.serialization.JsonCodecsWrapper
+ import org.ergoplatform.{ErgoTreePredef, P2PKAddress}
+-import sigma.ast.{ByteArrayConstant, ErgoTree}
++import sigma.ast.{ByteArrayConstant, ErgoTree, IntConstant, LongConstant, ShortConstant}
+ import sigmastate.eval.Extensions.ArrayByteOps
+ import sigmastate.helpers.TestingHelpers._
+ 
+@@ -60,6 +60,99 @@ class ScanningPredicateSpecification extends ErgoCorePropertyTest {
+     }
+   }
+ 
++  property("equals - short register matches") {
++    forAll(ergoAddressGen) { address =>
++      Seq(Short.MinValue, 0.toShort, 42.toShort, Short.MaxValue).foreach { value =>
++        val registers: AdditionalRegisters = Map(R4 -> ShortConstant(value))
++        val box = testBox(1, address.script, 0, Seq.empty, registers)
++
++        EqualsScanningPredicate(R4, ShortConstant(value)).filter(box) shouldBe true
++      }
++    }
++  }
++
++  property("equals - short predicate rejects int register") {
++    forAll(ergoAddressGen) { address =>
++      val box = testBox(1, address.script, 0, Seq.empty, Map(R4 -> IntConstant(42)))
++      val predicate = EqualsScanningPredicate(R4, ShortConstant(42.toShort))
++
++      predicate.filter(box) shouldBe false
++    }
++  }
++
++  property("equals - short rejects different or absent register") {
++    forAll(ergoAddressGen) { address =>
++      val registers: AdditionalRegisters = Map(R4 -> ShortConstant(43.toShort))
++      val different = testBox(1, address.script, 0, Seq.empty, registers)
++      val absent = testBox(1, address.script, 0)
++      val predicate = EqualsScanningPredicate(R4, ShortConstant(42.toShort))
++
++      predicate.filter(different) shouldBe false
++      predicate.filter(absent) shouldBe false
++    }
++  }
++
++  property("equals - short survives scan request and persistence") {
++    forAll(ergoAddressGen) { address =>
++      val registers: AdditionalRegisters = Map(R4 -> ShortConstant(42.toShort))
++      val box = testBox(1, address.script, 0, Seq.empty, registers)
++      val predicate = EqualsScanningPredicate(R4, ShortConstant(42.toShort))
++      val request = ScanRequest("short-r4", predicate, None, None)
++      val json = ScanJsonCodecs.scanReqEncoder(request)
++      val decoded = ScanJsonCodecs.scanReqDecoder.decodeJson(json).toOption.get
++      val persisted = ScanningPredicateSerializer.parseBytes(
++        ScanningPredicateSerializer.toBytes(decoded.trackingRule)
++      )
++      val wrongType = testBox(1, address.script, 0, Seq.empty,
++        Map(R4 -> IntConstant(42)))
++
++      persisted.filter(box) shouldBe true
++      persisted.filter(wrongType) shouldBe false
++    }
++  }
++
++  property("equals - long register matches") {
++    forAll(ergoAddressGen) { address =>
++      Seq(Long.MinValue, 0L, 42L, Int.MaxValue.toLong + 1L, Long.MaxValue)
++        .foreach { value =>
++          val registers: AdditionalRegisters = Map(R4 -> LongConstant(value))
++          val box = testBox(1, address.script, 0, Seq.empty, registers)
++
++          EqualsScanningPredicate(R4, LongConstant(value)).filter(box) shouldBe true
++        }
++    }
++  }
++
++  property("equals - long predicate rejects int register") {
++    forAll(ergoAddressGen) { address =>
++      val box = testBox(1, address.script, 0, Seq.empty, Map(R4 -> IntConstant(42)))
++
++      EqualsScanningPredicate(R4, LongConstant(42L)).filter(box) shouldBe false
++    }
++  }
++
++  property("equals - long rejects different or absent register") {
++    forAll(ergoAddressGen) { address =>
++      val registers: AdditionalRegisters = Map(R4 -> LongConstant(43L))
++      val different = testBox(1, address.script, 0, Seq.empty, registers)
++      val absent = testBox(1, address.script, 0)
++      val predicate = EqualsScanningPredicate(R4, LongConstant(42L))
++
++      predicate.filter(different) shouldBe false
++      predicate.filter(absent) shouldBe false
++    }
++  }
++
++  property("equals - mandatory value register") {
++    forAll(ergoAddressGen) { address =>
++      val box = testBox(42, address.script, 0)
++
++      EqualsScanningPredicate(R0, LongConstant(42L)).filter(box) shouldBe true
++      EqualsScanningPredicate(R0, LongConstant(43L)).filter(box) shouldBe false
++      EqualsScanningPredicate(R0, IntConstant(42)).filter(box) shouldBe false
++    }
++  }
++
+   property("contains - p2pk") {
+     forAll(ergoAddressGen) { p2pkAddress =>
+       //look for exact p2pk script bytes

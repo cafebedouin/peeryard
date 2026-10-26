@@ -1,0 +1,13 @@
+diff --git a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+index 8e7a6dd29..ef4bebecd 100644
+--- a/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
++++ b/src/main/scala/org/ergoplatform/mining/CandidateGenerator.scala
+@@ -274,7 +274,7 @@ class CandidateGenerator(
+           .filter(block => ergoSettings.chainSettings.powScheme.validate(block.header).isSuccess)
+           .getOrElse {
+             log.info(s"Using previous candidate as a solution: " + state.cachedPreviousCandidate)
+-            complete(state.cachedPreviousCandidate.get)
++            completeBlock(state.cachedPreviousCandidate.get.candidateBlock, solutionFor(state.cachedCandidate.get))
+           }
+         log.info(s"New block mined, header: ${newBlock.header}")
+         ergoSettings.chainSettings.powScheme.validate(newBlock.header) match {

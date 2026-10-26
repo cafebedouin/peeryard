@@ -1,0 +1,15 @@
+{
+  "name": "wallet-unlock-2828",
+  "description": "What /wallet/unlock does when the wallet's secret file cannot be read (ergoplatform/ergo#2828): one node, wallet initialized from /wallet/init and locked, its secret file moved out of the keystore directory, the unlock timed, the file moved back and the wallet unlocked again without a node restart, then the node restarted and unlocked once more. pass = an error answer within 10 s, the wallet still initialized and locked, unlocked once the file is back, and initialized and unlocked after the restart.",
+  "script": "wallet-unlock-2828.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "unreadable_code": "number", "unreadable_s": "number", "initialized_after": "boolean", "unlocked_after": "boolean", "recovered": "boolean", "restart_initialized": "boolean", "restart_unlocked": "boolean", "pass": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 600,
+  "expect": {
+    "base":      { "all": { "key": "pass", "op": "==", "value": false } },
+    "candidate": { "all": { "key": "pass", "op": "==", "value": true } }
+  }
+}

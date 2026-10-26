@@ -1,0 +1,13 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicate.scala b/src/main/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicate.scala
+index 27d841d9b..f0256932f 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicate.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/wallet/scanning/ScanningPredicate.scala
+@@ -100,7 +100,7 @@ case class EqualsScanningPredicate(regId: ErgoBox.RegisterId, value: EvaluatedVa
+       case LongConstant(long) =>
+         box.get(regId).exists {
+           _ match {
+-            case LongConstant(l) => long == l
++            case IntConstant(l) => long == l
+             case _ => false
+           }
+         }

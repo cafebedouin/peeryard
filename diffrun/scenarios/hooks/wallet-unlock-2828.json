@@ -1,0 +1,7 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "A", "mining": false, "knownPeers": [], "conf": { "ergo.wallet.testMnemonic": null } }
+  ],
+  "links": []
+}

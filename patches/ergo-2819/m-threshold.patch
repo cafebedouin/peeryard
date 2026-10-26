@@ -1,0 +1,45 @@
+diff --git a/src/main/scala/scorex/core/ModifiersCache.scala b/src/main/scala/scorex/core/ModifiersCache.scala
+index 3793345f6..378e47683 100644
+--- a/src/main/scala/scorex/core/ModifiersCache.scala
++++ b/src/main/scala/scorex/core/ModifiersCache.scala
+@@ -95,7 +95,7 @@ trait LRUCache extends ModifiersCache {
+ 
+   override protected def onPut(key: K): Unit = {
+     // The key is not in cache until ModifiersCache.put returns from onPut.
+-    if (evictionQueue.size >= maxSize + cleaningThreshold) {
++    if (evictionQueue.size > maxSize + cleaningThreshold) {
+       evictionQueue.dequeueAll(k => !cache.contains(k))
+     }
+     evictionQueue.enqueue(key)
+diff --git a/src/test/scala/org/ergoplatform/nodeView/ErgoModifiersCacheSpec.scala b/src/test/scala/org/ergoplatform/nodeView/ErgoModifiersCacheSpec.scala
+index 5188ca5ea..7cb259958 100644
+--- a/src/test/scala/org/ergoplatform/nodeView/ErgoModifiersCacheSpec.scala
++++ b/src/test/scala/org/ergoplatform/nodeView/ErgoModifiersCacheSpec.scala
+@@ -175,4 +175,27 @@ class ErgoModifiersCacheSpec extends ErgoCorePropertyTest with OptionValues {
+     warnings shouldBe empty
+   }
+ 
++  property("the oldest live key is evicted first, whatever the number of stale queue entries") {
++    // The eviction queue is cleaned during some puts; a put must not lose its own queue entry to that cleanup.
++    def newestSurvives(stale: Int): Boolean = {
++      val modifiersCache = new ErgoModifiersCache(1)
++      (1 to stale).foreach { i =>
++        val (key, header) = genCachePair(i)
++        modifiersCache.put(key, header)
++        modifiersCache.remove(key)
++      }
++      val (aKey, aHeader) = genCachePair(stale + 1)
++      val (bKey, bHeader) = genCachePair(stale + 2)
++      modifiersCache.put(aKey, aHeader)
++      modifiersCache.put(bKey, bHeader)
++      modifiersCache.cleanOverfull()
++      val aEvicted = modifiersCache.size == 1 && modifiersCache.modifierById(aKey).isEmpty && modifiersCache.modifierById(bKey).isDefined
++      // B must still be in the queue: one more put and clean evicts it
++      val (cKey, cHeader) = genCachePair(stale + 3)
++      modifiersCache.put(cKey, cHeader)
++      modifiersCache.cleanOverfull()
++      aEvicted && modifiersCache.size == 1 && modifiersCache.modifierById(bKey).isEmpty && modifiersCache.modifierById(cKey).isDefined
++    }
++    (0 to 60).filterNot(newestSurvives) shouldBe empty
++  }
+ }

@@ -37,6 +37,7 @@
 #   settle_follow <leader> <follower> <min_h> [window_s]   with the leader mining slowly, wait for same_state
 #                                   SAME@h>=min_h (or DIFF), then pause the leader (sets SETTLE_STATE, SETTLE_TRICKLE, ...)
 #   peers_of <node>; check_topology  connected peer names; every unpartitioned link connected both ways, no extra peer
+#   relink <s> <node>...           after a relaunch, re-dial the nodes' links still missing after a grace (RELINK_DIALS)
 #   orphans_between <node> <h0> <h1>  header ids beyond the first per height (siblings later abandoned)
 #   rss_mb <node> / data_mb <node>   resident memory and data-directory size in MB
 #   link_netem <a> <b> <spec>       replace netem on the a->b direction, e.g. link_netem A B "delay 40ms loss 5%"
@@ -522,6 +523,29 @@ peers_of(){ local name addr ip n
 # check_topology_wait [timeout s, default 60]: check_topology, retried quietly until it holds or the time runs out
 # (a node restarted by stop_mining/start_mining needs a few seconds to reconnect), then printed once
 check_topology_wait(){ local end=$((SECONDS + ${1:-60})); while [[ $SECONDS -lt $end ]]; do check_topology >/dev/null && break; sleep 3; done; check_topology; }
+# relink <timeout s> <node>...: after a relaunch, wait until every link touching one of the nodes is connected both
+# ways again. A node that dials a peer while the peer is down may drop it from its peer database and not dial it again,
+# so a link still missing after PEERYARD_RELINK_GRACE_S (default 10) s of the nodes' own dialling is re-dialled from a
+# JVM end (POST /peers/connect, as bring-up does), every 10 s. Each re-dial is printed and counted in RELINK_DIALS (not
+# judged here). Returns 1 when a link is still missing at the deadline.
+RELINK_DIALS=0
+relink(){ local end=$((SECONDS + $1)) next=$((SECONDS + ${PEERYARD_RELINK_GRACE_S:-10})) i a b x hit from to missing; shift
+  while :; do missing=0
+    for i in "${!LINK_A[@]}"; do a="${LINK_A[$i]}"; b="${LINK_B[$i]}"
+      [[ -n "${PARTITIONED["$a,$b"]:-}" ]] && continue
+      hit=0; for x in "$@"; do [[ "$x" == "$a" || "$x" == "$b" ]] && hit=1; done; [[ $hit == 1 ]] || continue
+      [[ " $(peers_of "$a")" == *" $b "* && " $(peers_of "$b")" == *" $a "* ]] && continue
+      missing=1; [[ $SECONDS -ge $next ]] || continue
+      from="$a"; to="$b"; [[ "${KIND[$from]}" == jvm ]] || { from="$b"; to="$a"; }
+      if [[ "${KIND[$from]}" == jvm ]]; then
+        wallet "$from" /peers/connect "\"${IP[$to]}:${P2P[$to]}\"" >/dev/null; RELINK_DIALS=$((RELINK_DIALS + 1))
+        echo "[rig] relink: link $a<->$b not connected; re-dialled $to from $from"
+      fi
+    done
+    [[ $missing == 0 ]] && return 0
+    [[ $SECONDS -ge $end ]] && { echo "[rig] relink: a link of $* is still not connected after the re-dials"; return 1; }
+    [[ $SECONDS -ge $next ]] && next=$((SECONDS + 10))
+    sleep 2; done; }
 check_topology(){ local i a b pa pb ok=0 n p
   for i in "${!LINK_A[@]}"; do a="${LINK_A[$i]}"; b="${LINK_B[$i]}"
     if [[ -n "${PARTITIONED["$a,$b"]:-}" ]]; then echo "  link $a<->$b: partitioned (not expected connected)"; continue; fi

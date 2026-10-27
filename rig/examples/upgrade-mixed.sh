@@ -12,6 +12,9 @@
 # chain, within UPG_LAG blocks of its height, no fork reading); both payments confirmed into the receiving wallet;
 # at the end all four on one state root at one height, with blocks of both miners in phase 3 on that chain; and no
 # ban or blacklist line in any node log. Penalty lines are counted and printed, not judged.
+# After each relaunch (stop_mining/start_mining) the relaunched nodes' links are restored with relink (rig.sh): a node
+# whose dial hit a peer while it was down can drop it and not dial again, and B1-C1 is the only link between the
+# halves. The re-dials are printed and counted, not judged.
 #   UPG_BLOCKS (25 per single-miner phase), UPG_BOTH_S (120), UPG_LAG (4), UPG_NANOERG (100000000)
 NB=${UPG_BLOCKS:-25}; BOTH=${UPG_BOTH_S:-120}; LAG=${UPG_LAG:-4}; AMT=${UPG_NANOERG:-100000000}
 ALL=(B1 C1 C2 B2)
@@ -56,6 +59,7 @@ upgrade_mixed(){
 
   # 2. the candidate mines: the baseline follows it, and relays it to the other candidate node
   stop_mining B1 > /dev/null; start_mining C1 2s > /dev/null
+  relink 90 B1 C1 || note "relink after the phase-2 relaunches: a link is still missing"
   mine_to C1 $((h1 + NB)) || { upg_end INCONCLUSIVE "C1 did not reach height $((h1 + NB))"; return; }
   converge C1 "phase 2 (candidate C1 mines)" B1 B2 C2 || fails+=" phase2"
   if wait_balance C1 $((AMT * 8)) 300 > /dev/null; then
@@ -68,9 +72,11 @@ upgrade_mixed(){
 
   # 3. both mine at once; then C1 stops and B1 settles with C2 (two hops from C1) and pauses
   start_mining B1 2s > /dev/null
+  relink 90 B1 || note "relink after B1's phase-3 relaunch: a link is still missing"
   note "phase 3: B1 and C1 mine together for ${BOTH}s from height $h2"
   sleep "$BOTH"
   stop_mining C1 > /dev/null
+  relink 90 C1 || note "relink after C1's relaunch: a link is still missing"
   settle_follow B1 C2 $((h2 + 5)) 180 || note "settle B1-C2: ${SETTLE_STATE:0:40}"
   end=$((SECONDS + 120)); ok=no
   while [[ $SECONDS -lt $end ]]; do ok=yes; for n in C1 C2 B2; do case "$(same_state B1 "$n")" in SAME@*) ;; *) ok=no ;; esac; done
@@ -85,6 +91,7 @@ upgrade_mixed(){
   bans=$(cat "$RIG_LOG_DIR"/node_*.log 2>/dev/null | grep -c -iE 'blacklist|banned|banning')
   pens=$(cat "$RIG_LOG_DIR"/node_*.log 2>/dev/null | grep -c -iE 'penaliz|penalty|misbehav')
   note "log lines: ban/blacklist $bans, penalty $pens"
+  note "re-dials after relaunches: $RELINK_DIALS"
   [[ "$bans" -gt 0 ]] && { grep -h -iE 'blacklist|banned|banning' "$RIG_LOG_DIR"/node_*.log | head -5 | cut -c1-240 | sed 's/^/  /'; fails+=" bans($bans)"; }
   [[ "$pens" -gt 0 ]] && grep -H -iE 'penaliz|penalty|misbehav' "$RIG_LOG_DIR"/node_*.log | head -5 | sed "s#^$RIG_LOG_DIR/##" | cut -c1-240 | sed 's/^/  /'
   if [[ -z "$fails" ]]; then upg_end PASS "baseline $vB and candidate $vC followed each other both ways; final height $h3"

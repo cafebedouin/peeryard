@@ -90,6 +90,13 @@ Used in: `bringup.sh`, `churn.sh`, `soak.sh`.
 `check_topology_wait 60`
 Used in: `matrix-pair.sh`, `matrix-fork.sh`, `matrix-mixed.sh`.
 
+## relink
+
+`relink <seconds> <node>...` waits until every unpartitioned link with one of the nodes at an end is connected both ways, polling every 2 seconds. A link still missing after `PEERYARD_RELINK_GRACE_S` seconds (default 10) of the nodes' own dialling is re-dialled from a JVM end with `POST /peers/connect`, then every 10 seconds; each re-dial prints `[rig] relink: link <a><-><b> not connected; re-dialled <to> from <from>` and adds one to `RELINK_DIALS`. Returns 0 once the links are connected, and 1 at the deadline, after printing `[rig] relink: a link of <nodes> is still not connected after the re-dials`.
+
+`relink 90 B1 C1`
+Used in: `upgrade-mixed.sh`.
+
 ## data_mb
 
 `data_mb <node>` prints the data-directory size in megabytes, or nothing when `du` cannot read it.

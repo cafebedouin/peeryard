@@ -52,6 +52,27 @@ expect_eq "cmp_input_chain: B holds the newest, not the oldest -> DIFF" "DIFF@oo
 expect_eq "cmp_input_chain: B empty -> PREFIX" "PREFIX@oo:A=2:B=0" "$(_cmp_input_chain "$(ic oo '["b","a"]')" "$(ic oo '[]')")"
 expect_eq "cmp_input_chain: different ordering block -> DIFF-ORD" "DIFF-ORD@o1/o2" "$(_cmp_input_chain "$(ic o1 '["a"]')" "$(ic o2 '["a"]')")"
 
+# rig/rig.sh relink: after the grace, a missing link touching the named nodes is re-dialled from a JVM end, counted in
+# RELINK_DIALS; a link of other nodes and a partitioned link are left alone; a link that never comes back returns 1
+rl(){ ( eval "$(awk '/^relink\(\)/{f=1} f{print} f && /sleep 2; done; }$/{exit}' rig/rig.sh)"
+  LINK_A=(A B A); LINK_B=(B C C); declare -A KIND=([A]=jvm [B]=jvm [C]=jvm) IP=([A]=10.0.0.1 [B]=10.0.0.2 [C]=10.0.0.3)
+  declare -A P2P=([A]=1 [B]=2 [C]=3) PARTITIONED=([A,C]=1) NAME_OF=([10.0.0.1]=A [10.0.0.2]=B [10.0.0.3]=C)
+  peers_of(){ awk -v n="$1" '$1 == n { print $2 } $2 == n { print $1 }' "$T/rl-conn" | sort -u | tr '\n' ' '; }
+  wallet(){ local ip="${3//\"/}"; ip="${ip%%:*}"; echo "$1 -> ${NAME_OF[$ip]}" >> "$T/rl-dials"
+    [[ "${RL_HEAL:-1}" == 1 ]] && echo "$1 ${NAME_OF[$ip]}" >> "$T/rl-conn"; }
+  RELINK_DIALS=0; PEERYARD_RELINK_GRACE_S=0 relink "$@"; echo "rc=$? dials=$RELINK_DIALS" ) > "$T/rl.out" 2>&1; }
+: > "$T/rl-dials"; printf 'B C\n' > "$T/rl-conn"; rl 20 A
+expect_in "relink: A-B missing -> re-dialled from A, returns 0" "rc=0 dials=1" "$T/rl.out"
+expect_in "relink: ... dialled B" "A -> B" "$T/rl-dials"; expect_in "relink: ... printed" "re-dialled B from A" "$T/rl.out"
+: > "$T/rl-dials"; printf 'A B\n' > "$T/rl-conn"; rl 20 C
+expect_in "relink: B-C missing, A-C partitioned, relink C -> B-C only" "rc=0 dials=1" "$T/rl.out"
+expect_in "relink: ... dialled C from B" "B -> C" "$T/rl-dials"
+: > "$T/rl-dials"; printf 'A B\n' > "$T/rl-conn"; rl 20 A
+expect_in "relink: A's links up (B-C missing elsewhere) -> no dial" "rc=0 dials=0" "$T/rl.out"
+: > "$T/rl-dials"; printf 'B C\n' > "$T/rl-conn"; RL_HEAL=0 rl 3 A
+expect_in "relink: a link that never returns -> exit 1" "still not connected after the re-dials" "$T/rl.out"
+grep -q "rc=1" "$T/rl.out" && ok "relink: ... rc=1" || bad "relink: never returns" "$(tail -1 "$T/rl.out")"
+
 # diag/diagnose.py: the ConvergenceDiagnosis spec, case for case (tests/diagnose_test.py)
 if python3 tests/diagnose_test.py > "$T/diagnose.txt" 2>&1; then ok "diagnose.py: $(grep -oE 'Ran [0-9]+ tests' "$T/diagnose.txt")"
 else bad "diagnose.py: the ported spec" "see $T/diagnose.txt"; fi

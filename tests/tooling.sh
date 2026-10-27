@@ -73,6 +73,17 @@ expect_in "relink: A's links up (B-C missing elsewhere) -> no dial" "rc=0 dials=
 expect_in "relink: a link that never returns -> exit 1" "still not connected after the re-dials" "$T/rl.out"
 grep -q "rc=1" "$T/rl.out" && ok "relink: ... rc=1" || bad "relink: never returns" "$(tail -1 "$T/rl.out")"
 
+# rig/lib/hook_api.sh settle_follow: with SETTLE_RELINK_S, relink follows each of the leader's two relaunches; unset, none
+sf(){ ( eval "$(awk '/^settle_follow\(\)/{f=1} f{print} /^settle_relink\(\)/{g=1} g{print} g && /; }$/{exit}' rig/lib/hook_api.sh)"
+  full_height(){ echo 10; }; start_mining(){ :; }; stop_mining(){ :; }; settle_height_back(){ :; }; sleep(){ :; }
+  same_state(){ echo "SAME@20:x"; }; relink(){ echo "relink $*" >> "$T/sf-calls"; }
+  settle_follow L F 15 5; echo "rc=$?" ) > "$T/sf.out" 2>&1; }
+: > "$T/sf-calls"; SETTLE_RELINK_S=90 sf
+expect_eq "settle_follow: SETTLE_RELINK_S=90 -> relink after both relaunches" "relink 90 L|relink 90 L" "$(paste -sd'|' "$T/sf-calls")"
+expect_in "settle_follow: ... still settles" "rc=0" "$T/sf.out"
+: > "$T/sf-calls"; sf
+expect_eq "settle_follow: SETTLE_RELINK_S unset -> no relink" "" "$(cat "$T/sf-calls")"
+
 # diag/diagnose.py: the ConvergenceDiagnosis spec, case for case (tests/diagnose_test.py)
 if python3 tests/diagnose_test.py > "$T/diagnose.txt" 2>&1; then ok "diagnose.py: $(grep -oE 'Ran [0-9]+ tests' "$T/diagnose.txt")"
 else bad "diagnose.py: the ported spec" "see $T/diagnose.txt"; fi

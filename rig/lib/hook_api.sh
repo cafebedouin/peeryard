@@ -65,11 +65,14 @@ same_state(){
 # SETTLE_WAIT_S (seconds to decide) and SETTLE_AFTER (same_state right after the pause: a block mined in the last
 # seconds may leave the follower one behind, reported rather than failed). Returns 0 on SAME@>=min_h, 1 otherwise.
 # Call it directly, not in $(...), so the relaunch bookkeeping (PID, mining overrides) stays in the caller's shell.
+# With SETTLE_RELINK_S set, each of the leader's two relaunches is followed by relink (rig.sh) for up to that many
+# seconds, so a link the leader lost while it was down is restored before the settle is judged (unset: no re-dial).
 settle_follow(){
   local m="$1" f="$2" t="$3" win="${4:-150}" end st h h0 rc=1 t0
   SETTLE_STATE=""; SETTLE_TRICKLE=0; SETTLE_AFTER=""
   # a relaunched node answers REST before its history is read (/info fullHeight 0 for a few seconds): wait for it
-  h0=$(full_height "$m"); start_mining "$m" "${SETTLE_POLL:-20s}" >/dev/null; settle_height_back "$m"; t0=$SECONDS; end=$((SECONDS + win))
+  h0=$(full_height "$m"); start_mining "$m" "${SETTLE_POLL:-20s}" >/dev/null; settle_height_back "$m"; settle_relink "$m"
+  t0=$SECONDS; end=$((SECONDS + win))
   while [[ $SECONDS -lt $end ]]; do
     st=$(same_state "$m" "$f"); SETTLE_STATE="$st"
     case "$st" in
@@ -79,8 +82,10 @@ settle_follow(){
     sleep 3
   done
   SETTLE_WAIT_S=$((SECONDS - t0)); SETTLE_TRICKLE=$(( $(full_height "$m") - h0 ))
-  stop_mining "$m" >/dev/null; settle_height_back "$m"; SETTLE_AFTER=$(same_state "$m" "$f")
+  stop_mining "$m" >/dev/null; settle_height_back "$m"; settle_relink "$m"; SETTLE_AFTER=$(same_state "$m" "$f")
   return $rc; }
+settle_relink(){ [[ -n "${SETTLE_RELINK_S:-}" ]] && declare -F relink >/dev/null || return 0
+  relink "$SETTLE_RELINK_S" "$1" || echo "[rig] settle_follow: a link of $1 is still missing after its relaunch"; }
 settle_height_back(){ local end=$((SECONDS + ${2:-60})); while [[ $SECONDS -lt $end && "$(full_height "$1")" -lt 1 ]]; do sleep 1; done; }
 
 # ── companion processes ──────────────────────────────────────────────────────────────────────────────────────────

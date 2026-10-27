@@ -12,9 +12,9 @@
 # chain, within UPG_LAG blocks of its height, no fork reading); both payments confirmed into the receiving wallet;
 # at the end all four on one state root at one height, with blocks of both miners in phase 3 on that chain; and no
 # ban or blacklist line in any node log. Penalty lines are counted and printed, not judged.
-# After each relaunch (stop_mining/start_mining) the relaunched nodes' links are restored with relink (rig.sh): a node
-# whose dial hit a peer while it was down can drop it and not dial again, and B1-C1 is the only link between the
-# halves. The re-dials are printed and counted, not judged.
+# After each relaunch (stop_mining/start_mining, and settle_follow's two, via SETTLE_RELINK_S) the relaunched nodes'
+# links are restored with relink (rig.sh): a node whose dial hit a peer while it was down can drop it and not dial
+# again, and B1-C1 is the only link between the halves. The re-dials are printed and counted, not judged.
 #   UPG_BLOCKS (25 per single-miner phase), UPG_BOTH_S (120), UPG_LAG (4), UPG_NANOERG (100000000)
 NB=${UPG_BLOCKS:-25}; BOTH=${UPG_BOTH_S:-120}; LAG=${UPG_LAG:-4}; AMT=${UPG_NANOERG:-100000000}
 ALL=(B1 C1 C2 B2)
@@ -77,7 +77,7 @@ upgrade_mixed(){
   sleep "$BOTH"
   stop_mining C1 > /dev/null
   relink 90 C1 || note "relink after C1's relaunch: a link is still missing"
-  settle_follow B1 C2 $((h2 + 5)) 180 || note "settle B1-C2: ${SETTLE_STATE:0:40}"
+  SETTLE_RELINK_S=90 settle_follow B1 C2 $((h2 + 5)) 180 || note "settle B1-C2: ${SETTLE_STATE:0:40}"
   end=$((SECONDS + 120)); ok=no
   while [[ $SECONDS -lt $end ]]; do ok=yes; for n in C1 C2 B2; do case "$(same_state B1 "$n")" in SAME@*) ;; *) ok=no ;; esac; done
     [[ $ok == yes ]] && break; sleep 3; done

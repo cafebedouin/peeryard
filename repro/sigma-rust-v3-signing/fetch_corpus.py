@@ -141,7 +141,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--explorer", default="https://api.ergoplatform.com")
-    ap.add_argument("--node", default="http://76.119.196.68:9053")
+    ap.add_argument("--node", required=True, help="any public mainnet node, e.g. one from the ergoplatform peer list")
     a = ap.parse_args()
     f = Fetch(a.explorer, a.node)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

@@ -1,13 +1,11 @@
 {
- "schema": "l019-corpus/1",
+ "schema": "sigma-rust-v3-signing-corpus/1",
  "fetched_utc_start": "2026-10-28T13:49:40Z",
  "fetched_utc_end": "2026-10-28T13:53:33Z",
  "endpoints": {
   "explorer": "https://api.ergoplatform.com",
-  "node": "http://76.119.196.68:9053",
+  "node": "a public mainnet node (headers are hash-linked; any node returns the same bytes)",
   "node_info": {
-   "name": "BALNC Pool Ergo Node",
-   "appVersion": "6.1.2-0-7086c6c7-20260123-1004-SNAPSHOT",
    "network": "mainnet",
    "fullHeight": 1904445,
    "bestFullHeaderId": "4a7ad641f3506658b5da786bc68106dbd482dafa96930259f79c17a766cdad4d",

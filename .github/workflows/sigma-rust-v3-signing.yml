@@ -15,7 +15,7 @@ permissions:
   contents: read
 env:
   D: repro/sigma-rust-v3-signing
-  CORPUS_SHA256: c4cf0d71865ac0327de337d76b1d0d27fd4b8303bc21fb32a730f2fe49557900
+  CORPUS_SHA256: 17064042ef93dea429b36c8c865b1bfb565ca605299ce48736bd085fee1c4c5c
   NODE_VERSION: '25.1.0'
 jobs:
   run:

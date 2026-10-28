@@ -18,7 +18,7 @@ Rust toolchain: they are the library under test.
 
 ## The corpus
 
-`corpus.json`, frozen, sha256 `c4cf0d71865ac0327de337d76b1d0d27fd4b8303bc21fb32a730f2fe49557900`. Fetched once
+`corpus.json`, frozen, sha256 `17064042ef93dea429b36c8c865b1bfb565ca605299ce48736bd085fee1c4c5c`. Fetched once
 (2026-10-28T13:49:40Z to 13:53:33Z) by `fetch_corpus.py` from third-party endpoints (the explorer API and a public
 node; both named in the file's `endpoints`). It holds, newest first, up to 60 transactions spending the Lithos pool
 NFT box, 20 spending the fee-vault NFT box and 20 spending a provision-contract box (83 distinct), plus one control
@@ -57,7 +57,7 @@ target `wasm32-unknown-unknown`, and `wasm-pack` 0.15.0 (`cargo install wasm-pac
 From the peeryard root:
 ```
 D=repro/sigma-rust-v3-signing; W=$(mktemp -d)
-echo "c4cf0d71865ac0327de337d76b1d0d27fd4b8303bc21fb32a730f2fe49557900  $D/corpus.json" | sha256sum -c
+echo "17064042ef93dea429b36c8c865b1bfb565ca605299ce48736bd085fee1c4c5c  $D/corpus.json" | sha256sum -c
 bash $D/build.sh "$W" v0 v1 v2                     # or any subset; V0 and V1 take seconds, V2 compiles sigma-rust
 node $D/run.js --lib "$W/v0/node_modules/ergo-lib-wasm-nodejs" --label V0 --corpus $D/corpus.json --out results-V0.json
 node $D/run.js --lib "$W/v1/node_modules/ergo-lib-wasm-nodejs" --label V1 --corpus $D/corpus.json --out results-V1.json

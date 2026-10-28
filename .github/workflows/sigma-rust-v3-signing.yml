@@ -1,0 +1,100 @@
+# sigma-rust's wasm binding on Lithos ErgoTree-v3 transactions (repro/sigma-rust-v3-signing/README.md), on
+# GitHub-hosted runners so the result can be re-run by anyone: one job per build (V0 ergo-lib-wasm-nodejs 0.28.0,
+# V1 0.29.0-alpha-2f840d3, both from npm with their integrity checked; V2 sigma-rust develop at a fixed commit, built
+# with wasm-pack), each running run.js and negative_check.js on the frozen corpus (sha256 checked, never refetched),
+# and a summary job that runs summarize.py over the three results and prints it to the job summary. Expected size:
+# about 20 runner-minutes (V0, V1 a few minutes each; V2 compiles sigma-rust). Runs by hand, or on a push to
+# ci/sigma-rust-v3-signing (git push origin <branch>:ci/sigma-rust-v3-signing; a new workflow can be dispatched only
+# once it is on the default branch).
+name: sigma-rust v3 signing
+on:
+  workflow_dispatch:
+  push:
+    branches: [ 'ci/sigma-rust-v3-signing' ]
+permissions:
+  contents: read
+env:
+  D: repro/sigma-rust-v3-signing
+  CORPUS_SHA256: c4cf0d71865ac0327de337d76b1d0d27fd4b8303bc21fb32a730f2fe49557900
+  NODE_VERSION: '25.1.0'
+jobs:
+  run:
+    name: ${{ matrix.v.label }} ${{ matrix.v.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        v:
+          - { label: V0, name: 'ergo-lib-wasm-nodejs 0.28.0',              build: v0, lib: 'v0/node_modules/ergo-lib-wasm-nodejs' }
+          - { label: V1, name: 'ergo-lib-wasm-nodejs 0.29.0-alpha-2f840d3', build: v1, lib: 'v1/node_modules/ergo-lib-wasm-nodejs' }
+          - { label: V2, name: 'sigma-rust develop 8120eddd',              build: v2, lib: 'sigma-rust/bindings/ergo-lib-wasm/pkg' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - name: Corpus (sha256 checked)
+        run: echo "$CORPUS_SHA256  $D/corpus.json" | sha256sum -c
+      - name: Rust 1.91.1 with the wasm target, and wasm-pack 0.15.0 (V2 only)
+        if: matrix.v.build == 'v2'
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal --target wasm32-unknown-unknown
+          cargo install wasm-pack --version 0.15.0 --locked
+      - name: Build
+        run: |
+          set -o pipefail; mkdir -p out
+          bash "$D/build.sh" "$RUNNER_TEMP/libs" ${{ matrix.v.build }} 2>&1 | tee out/build-${{ matrix.v.label }}.txt
+      - name: V2 built with the toolchain sigma-rust names
+        if: matrix.v.build == 'v2'
+        run: |
+          want="$(cat "$RUNNER_TEMP"/libs/sigma-rust/rust-toolchain*)"
+          grep -q "^rustc $want " out/build-V2.txt || { echo "rustc is not $want"; grep '^rustc ' out/build-V2.txt; exit 1; }
+          echo "rustc $want"
+      - name: Run (one child node process per tx, default stack)
+        run: |
+          set -o pipefail
+          { echo "node $(node --version)"; uname -r; nproc; } | tee out/host-${{ matrix.v.label }}.txt
+          node "$D/run.js" --lib "$RUNNER_TEMP/libs/${{ matrix.v.lib }}" --label ${{ matrix.v.label }} \
+            --corpus "$D/corpus.json" --out out/results-${{ matrix.v.label }}.json 2>&1 | tee out/run-${{ matrix.v.label }}.txt
+      - name: Negative check (informational)
+        continue-on-error: true
+        run: |
+          node "$D/negative_check.js" --lib "$RUNNER_TEMP/libs/${{ matrix.v.lib }}" --corpus "$D/corpus.json" \
+            --tx 31d34067ed51143caf64be16b1b78f919ddae5a6792fbbfebe33d85ba3011547 \
+            --tx 568bdafe39312f32db46d3334dc8493d2d748a4249c812189779299cdda24cf8 \
+            --tx 4c91124c7e8aab2f24838493c85ee3fcfcedf7aa5e5ab1272af0efa68fede2ce \
+            --tx de0c557d86f6346ddbbec61009bbbc8d0499d4983f4894f39fc76c1a5f3675a6 \
+            > out/negative-${{ matrix.v.label }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sigma-rust-v3-signing-${{ matrix.v.label }}
+          path: out/
+          retention-days: 30
+  summary:
+    needs: run
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'sigma-rust-v3-signing-V*', path: rows, merge-multiple: true }
+      - name: Summarize
+        run: |
+          mkdir -p out
+          for l in V0 V1 V2; do [[ -f rows/results-$l.json ]] || { echo "no results for $l" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
+          python3 -I "$D/summarize.py" "$D/corpus.json" rows/results-V0.json rows/results-V1.json rows/results-V2.json > out/summary.txt
+          cat out/summary.txt
+          {
+            echo "## sigma-rust v3 signing"; echo
+            echo '```'; sed '/^== per-tx table/,$d' out/summary.txt; echo '```'; echo
+            grep '^== per-tx table' out/summary.txt; echo; grep '^|' out/summary.txt; echo
+            echo '```'; sed -n '/^== distinct failure/,$p' out/summary.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sigma-rust-v3-signing-summary
+          path: out/
+          retention-days: 30

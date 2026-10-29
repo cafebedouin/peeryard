@@ -2,10 +2,15 @@
 # GitHub-hosted runners so the result can be re-run by anyone: one job per build (V0 ergo-lib-wasm-nodejs 0.28.0,
 # V1 0.29.0-alpha-2f840d3, both from npm with their integrity checked; V2 sigma-rust develop at a fixed commit, built
 # with wasm-pack), each running run.js and negative_check.js on the frozen corpus (sha256 checked, never refetched),
-# and a summary job that runs summarize.py over the three results and prints it to the job summary. Expected size:
-# about 20 runner-minutes (V0, V1 a few minutes each; V2 compiles sigma-rust). Runs by hand, or on a push to
-# ci/sigma-rust-v3-signing (git push origin <branch>:ci/sigma-rust-v3-signing; a new workflow can be dispatched only
-# once it is on the default branch).
+# and a summary job that runs summarize.py over the three results and prints it to the job summary.
+# Browser half (README, "In a browser" and "In Nautilus's unit tests"): browser-build builds sigma-rust develop with
+# the repo's build-browser script once and shares it as an artifact; browser runs the same steps in Chromium
+# (Playwright, headless) on the three browser builds and compares every verdict with the Node jobs' results;
+# nautilus runs Nautilus's own unit test framework on Node 26, stock (expected red) and on the develop build
+# (expected green). Expected size: about 20 runner-minutes for the Node half (V0, V1 a few minutes each; V2 compiles
+# sigma-rust), about 20 more for the browser half. Runs by hand, or on a push to ci/sigma-rust-v3-signing
+# (git push origin <branch>:ci/sigma-rust-v3-signing; a new workflow can be dispatched only once it is on the
+# default branch).
 name: sigma-rust v3 signing
 on:
   workflow_dispatch:
@@ -17,6 +22,8 @@ env:
   D: repro/sigma-rust-v3-signing
   CORPUS_SHA256: 17064042ef93dea429b36c8c865b1bfb565ca605299ce48736bd085fee1c4c5c
   NODE_VERSION: '25.1.0'
+  NAUTILUS_NODE_VERSION: '26.13.0'
+  PNPM_VERSION: '12.16.1'
 jobs:
   run:
     name: ${{ matrix.v.label }} ${{ matrix.v.name }}
@@ -96,5 +103,136 @@ jobs:
         if: always()
         with:
           name: sigma-rust-v3-signing-summary
+          path: out/
+          retention-days: 30
+  browser-build:
+    name: BV2 sigma-rust develop 8120eddd, browser build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - name: Rust 1.91.1 with the wasm target, and wasm-pack 0.15.0
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal --target wasm32-unknown-unknown
+          cargo install wasm-pack --version 0.15.0 --locked
+      - name: Build (the repo's build-browser script, then npm pack)
+        run: |
+          set -o pipefail; mkdir -p out
+          bash "$D/browser/build.sh" "$RUNNER_TEMP/libs" bv2 2>&1 | tee out/build-BV2.txt
+      - name: Built with the toolchain sigma-rust names
+        run: |
+          want="$(cat "$RUNNER_TEMP"/libs/sigma-rust/rust-toolchain*)"
+          grep -q "^rustc $want " out/build-BV2.txt || { echo "rustc is not $want"; grep '^rustc ' out/build-BV2.txt; exit 1; }
+          echo "rustc $want"
+      - name: Stage
+        run: |
+          cp -r "$RUNNER_TEMP/libs/sigma-rust/bindings/ergo-lib-wasm/pkg-browser" out/pkg-browser
+          cp "$RUNNER_TEMP/libs/pack/ergo-lib-wasm-browser-0.29.0.tgz" out/
+          sha256sum out/pkg-browser/ergo_lib_wasm_bg.wasm out/ergo-lib-wasm-browser-0.29.0.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sigma-rust-v3-signing-browser-build
+          path: out/
+          retention-days: 30
+  browser:
+    name: Browser (Chromium) BV0 BV1 BV2, compared with V0 V1 V2
+    needs: [run, browser-build]
+    if: always() && needs.browser-build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - name: Corpus (sha256 checked)
+        run: echo "$CORPUS_SHA256  $D/corpus.json" | sha256sum -c
+      - uses: actions/download-artifact@v4
+        with: { name: sigma-rust-v3-signing-browser-build, path: bv2 }
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'sigma-rust-v3-signing-V*', path: noderows, merge-multiple: true }
+      - name: BV0, BV1 from npm, and Playwright with Chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
+          PW_WITH_DEPS: '1'
+        run: |
+          set -o pipefail; mkdir -p out
+          bash "$D/browser/build.sh" "$RUNNER_TEMP/libs" bv0 bv1 pw 2>&1 | tee out/build-browser.txt
+          echo "== BV2 (from browser-build)" | tee -a out/build-browser.txt
+          sha256sum bv2/pkg-browser/ergo_lib_wasm_bg.wasm | tee -a out/build-browser.txt
+      - name: Port check (page steps vs run.js; informational)
+        run: |
+          diff <(sed -n '/^const errStr/,/^function main/p' "$D/run.js") \
+               <(sed -n '/^const errStr/,/^\/\/ Stack-depth probe/p' "$D/browser/page/run_page.js") | tee out/port-diff.txt || true
+      - name: Run (one fresh page per tx, page main thread, Chromium defaults)
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
+        run: |
+          set -o pipefail
+          { echo "node $(node --version)"; uname -r; nproc; } | tee out/host-browser.txt
+          for x in V0:"$RUNNER_TEMP/libs/bv0/node_modules/ergo-lib-wasm-browser" \
+                   V1:"$RUNNER_TEMP/libs/bv1/node_modules/ergo-lib-wasm-browser" V2:"$PWD/bv2/pkg-browser"; do
+            l="${x%%:*}"
+            node "$D/browser/run_browser.js" --pw "$RUNNER_TEMP/libs/pw" --lib "${x#*:}" --label "$l" \
+              --corpus "$D/corpus.json" --out "out/results-browser-$l.json" 2>&1 | tee "out/run-browser-$l.txt"
+          done
+      - name: Compare with the Node results
+        run: |
+          for l in V0 V1 V2; do [[ -f noderows/results-$l.json ]] || { echo "no Node results for $l" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
+          set +e; python3 -I "$D/browser/compare.py" noderows out --json out/compare.json > out/compare.txt; rc=$?; set -e
+          cat out/compare.txt
+          {
+            echo "## sigma-rust v3 signing, browser"; echo
+            echo '```'; grep -v '^   ' out/compare.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: Compare self-test (the comparison finds planted differences)
+        if: always()
+        run: |
+          set -o pipefail
+          [[ -f out/results-browser-V2.json ]] || { echo "no browser results"; exit 1; }
+          bash "$D/browser/compare_selftest.sh" noderows out "$RUNNER_TEMP/selftest" 2>&1 | tee out/compare-selftest.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sigma-rust-v3-signing-browser
+          path: out/
+          retention-days: 30
+  nautilus:
+    name: Nautilus unit test, ${{ matrix.arm }} (Node 26)
+    needs: browser-build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [ stock, develop ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NAUTILUS_NODE_VERSION }}' }
+      - name: pnpm ${{ env.PNPM_VERSION }}
+        run: npm install -g --no-audit --no-fund "pnpm@$PNPM_VERSION" && pnpm --version
+      - uses: actions/download-artifact@v4
+        if: matrix.arm == 'develop'
+        with: { name: sigma-rust-v3-signing-browser-build, path: bv2 }
+      - name: Run (${{ matrix.arm }})
+        run: |
+          set -o pipefail; mkdir -p out
+          bash "$D/nautilus/run.sh" ${{ matrix.arm }} "$RUNNER_TEMP/n" out "$PWD/bv2/ergo-lib-wasm-browser-0.29.0.tgz" 2>&1 | tee out/run-${{ matrix.arm }}.txt
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Nautilus unit test, ${{ matrix.arm }}"; echo; echo '```'
+            grep -E '^(node|pnpm) |^installed:|Test Files|Tests |^ *[×✓] |^exit=|^RESULT|^stock:|^develop:' out/run-${{ matrix.arm }}.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sigma-rust-v3-signing-nautilus-${{ matrix.arm }}
           path: out/
           retention-days: 30

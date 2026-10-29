@@ -56,6 +56,7 @@ echo "== witness: pnpm exec vitest run tests/unit/prover.spec.ts"
 set +e
 pnpm exec vitest run tests/unit/prover.spec.ts > "$OUT/witness-$ARM.txt" 2>&1; rc=$?
 set -e
+sed -i -E 's/\x1b\[[0-9;]*m//g' "$OUT/witness-$ARM.txt"   # vitest colours its output on CI runners; match plain text
 cat "$OUT/witness-$ARM.txt"; echo "exit=$rc"
 ok=1
 if [[ "$ARM" == stock ]]; then
@@ -69,6 +70,7 @@ else
   set +e
   pnpm run test:unit > "$OUT/test-unit-$ARM.txt" 2>&1; urc=$?
   set -e
+  sed -i -E 's/\x1b\[[0-9;]*m//g' "$OUT/test-unit-$ARM.txt"
   grep -E 'Test Files|Tests |FAIL|×' "$OUT/test-unit-$ARM.txt" || true; echo "exit=$urc"
   [[ $urc -eq 0 ]] || ok=0
 fi

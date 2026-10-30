@@ -70,7 +70,8 @@ peer_retain(){
   case "$CTL" in none|active-a) ;; *) retain_end INCONCLUSIVE "RETAIN_CONTROL '$CTL': none or active-a"; return ;; esac
   [[ $W -lt $DL ]] || { retain_end INCONCLUSIVE "RETAIN_WINDOW_S $W is not below RETAIN_DEADLINE_S $DL"; return; }
   jarB="${NODE_JAR[B]}"
-  rule=immediate; unzip -p "$jarB" 'scorex/core/network/NetworkController*' 2>/dev/null | grep -a -q 'kept in peers database' && rule=deadline
+  # grep -c reads the whole stream: with pipefail, grep -q would end the pipe early and unzip's SIGPIPE would read as no match
+  rule=immediate; [[ "$(unzip -p "$jarB" 'scorex/core/network/NetworkController*' 2>/dev/null | grep -a -c 'kept in peers database')" -gt 0 ]] && rule=deadline
   for n in A B C; do v=$(rest "$n" /info | jq -r '.appVersion // "null"'); note "$n appVersion $v jar $(basename "${NODE_JAR[$n]}") sha256 $(sha256sum "${NODE_JAR[$n]}" | cut -d' ' -f1)"; done
   note "dial-failure rule in B's jar: $rule (deadline = the string 'kept in peers database' is in NetworkController; immediate = it is not)"
   note "A's identity address $A_ADDR; window ${W}s from B's first failed dial; deadline ${DL}s; control: $CTL"
@@ -141,7 +142,7 @@ peer_retain(){
   note "B's log after the stop: failed dials to A $fails; removal line at $(rel "$rm_ms") s${rm_l:+ ('$(sed 's/.* - //' <<< "$rm_l")')}; kept lines $kept_n${kept_last:+ (last: '$kept_last')}"
   note "after A's restart: B's outgoing connection to A at $(rel "$bout_ms") s; A's incoming connection from B at $(rel "$ain_ms") s; first sample with A Outgoing at B: $(rel "$redial_s") s"
   note "A's own dialling after the restart: 'Connecting to peer' $a_dials, outgoing connections $a_out; A's peer database at start: ${a_seed:-?}"
-  note "end of window (+$(rel "$t_end") s): A=$ah B=$bh C=$ch same_chain(A,C)=$sc, A at B: $bconn"
+  note "end of window ($(rel "$t_end") s): A=$ah B=$bh C=$ch same_chain(A,C)=$sc, A at B: $bconn"
 
   # checks that make the run unable to tell
   note "check failed-dial: OK ($fails failed dials by B to A after the stop; the first at T0, while A was down: restart at $(rel "$t_rev") s)"

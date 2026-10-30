@@ -1,0 +1,16 @@
+{
+  "name": "peer-retain",
+  "description": "A node whose dial to a restarting peer failed (ergoplatform/ergo#2862): A - B - C on this role's jar, peer exchange off, C mining so B always has a talking peer; A is stopped, B's failed dial to A is read from B's log, A is restarted with no stored or configured peers (passive toward B) and, with no harness re-dial, the run watches until 300 s after B's first failed dial (below the node's 600 s inactiveConnectionDeadline). Base role (a node that removes a peer on its first failed dial): A removed from B's peer database and never dialled again. Candidate role: A kept, dialled by B after its restart, and caught up. A run that cannot tell (no failed dial, inbound contact from A, rediscovery of A, the other peer going quiet, a late restart) prints no result. rig/examples/peer-retain.sh.",
+  "script": "peer-retain.sh",
+  "tier": "public",
+  "env": { "RETAIN_WINDOW_S": 300, "RETAIN_DOWN_EXTRA_S": 12, "RETAIN_CONTROL": "" },
+  "metrics": { "retained": "boolean", "redialled": "boolean", "converged": "boolean", "removed": "boolean",
+               "failed_dials": "number", "deadline_rule": "boolean", "pass": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1200,
+  "expect": {
+    "base":      { "all": { "key": "removed", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "pass", "op": "==", "value": true } }
+  }
+}

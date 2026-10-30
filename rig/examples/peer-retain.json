@@ -1,0 +1,12 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "A", "mining": false, "knownPeers": ["B"], "conf": { "scorex.network.peerDiscovery": false } },
+    { "name": "B", "mining": false, "knownPeers": ["C"], "conf": { "scorex.network.peerDiscovery": false } },
+    { "name": "C", "mining": true, "mine_poll": "2s", "knownPeers": [], "conf": { "scorex.network.peerDiscovery": false } }
+  ],
+  "links": [
+    { "a": "A", "b": "B" },
+    { "a": "B", "b": "C" }
+  ]
+}

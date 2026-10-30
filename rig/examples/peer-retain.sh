@@ -33,8 +33,11 @@
 # scorex/core/network/NetworkController*.class): `deadline` or `immediate`. A pair of runs whose jars do not differ in
 # it is not a comparison of that rule.
 #   PEERYARD_JAR=<jar> bash rig/rig.sh rig/examples/peer-retain.json rig/examples/peer-retain.sh
+# Detector: before the stop, the inbound-contact patterns must match A's own bring-up dial to B (A's `Connecting to
+# peer`, B's `New incoming connection from /<A's ip>`), or the run is INCONCLUSIVE (detector-self-test).
 # Control: RETAIN_CONTROL=active-a restarts A with its peer database and knownPeers kept, so A dials B itself: the
-# inbound-contact check must fire (INCONCLUSIVE).
+# inbound-contact check must fire (INCONCLUSIVE). Run it on a jar that removes the peer: on a jar that keeps it, B's own
+# dial can reach A before A's first dial tick (5 s after start), and A, already connected, then dials nothing.
 #   RETAIN_WINDOW_S (300), RETAIN_DEADLINE_S (600), RETAIN_DOWN_EXTRA_S (12), RETAIN_DIAL_WAIT_S (60), RETAIN_FLOOR (10),
 #   RETAIN_LAG (4), RETAIN_CONTROL (none | active-a)
 W=${RETAIN_WINDOW_S:-300}; DL=${RETAIN_DEADLINE_S:-600}; DOWNX=${RETAIN_DOWN_EXTRA_S:-12}; DIALW=${RETAIN_DIAL_WAIT_S:-60}
@@ -91,6 +94,14 @@ peer_retain(){
   note "before the stop: A in B's database=$ball, A connected to B=$bconn, A in C's database=$call, B's last incoming message ${age:-?} ms ago"
   if [[ "$ball" != 1 ]]; then touch "$STOPF"; note "check known-peer: MISSING (A not in B's /peers/all before the stop)"; retain_end INCONCLUSIVE "A was not a known peer of B"; return; fi
   note "check known-peer: OK"
+
+  # detector self-test: the inbound-contact patterns must match A's own bring-up dial to B in the same logs (A's
+  # knownPeers name B, and the bring-up re-dial, when needed, also goes from A), or a NONE below would mean nothing
+  local a_pre b_pre
+  a_pre=$(grep -c -F "Connecting to peer" "$RIG_LOG_DIR/node_A.log"); b_pre=$(grep -c -E "New incoming connection from /${A_IPRE}:" "$RIG_LOG_DIR/node_B.log")
+  if [[ $a_pre -lt 1 || $b_pre -lt 1 ]]; then touch "$STOPF"; note "check detector-self-test: BLIND (before the stop: A dial lines $a_pre, B incoming-from-A lines $b_pre)"
+    retain_end INCONCLUSIVE "the inbound-contact patterns match nothing in A's bring-up"; return; fi
+  note "check detector-self-test: OK (before the stop: A dial lines $a_pre, B incoming-from-A lines $b_pre)"
 
   # 2. stop A; wait for B's failed dial
   boff=$(wc -l < "$RIG_LOG_DIR/node_B.log"); t_stop=$(date +%s%3N); mark "peer-retain: stop A"; crash A

@@ -3,24 +3,26 @@
 # name:sha[:patch]: a commit of the `repo` input (any ergo repository or fork; the sha must be reachable from one of its
 # refs) and, optionally, a unified diff under patches/ in this repository, applied with `git apply --index`. Each job
 # records the patch's sha256 and the resulting git tree id, so a local tree can be checked for identity with
-# `git write-tree`. Unit classes run as `sbt "testOnly <classes>"` (JDK 8); the optional integration spec as upstream
-# CI's test_it job runs it, `sbt -Denv=test docker "it:testOnly <spec>"` with TMPDIR in the checkout, under a time
-# limit. Each job prints its `Tests:` line(s) to the step summary and uploads a filtered log, the gzipped full log, the
+# `git write-tree`. Unit classes run as `sbt "testOnly <classes>"` (JDK 8), or as `sbt "<project>/testOnly <classes>"`
+# for classes in a subproject the root does not aggregate (ergoCore, ergoWallet, avldb); the optional integration spec
+# as upstream CI's test_it job runs it, `sbt -Denv=test docker "it:testOnly <spec>"` with TMPDIR in the checkout, under
+# a time limit. Each job prints its `Tests:` line(s) to the step summary and uploads a filtered log, the gzipped full log, the
 # test reports and (integration) the node logs; a last job tabulates the arms. A red test is a result, not a job
 # failure: a job fails only when sbt printed no Tests line (a build or infrastructure failure). Runs by hand.
 #
 #   gh workflow run ref-specs.yml -f repo=https://github.com/<owner>/ergo -f label=pr-review \
 #     -f arms='base:<40-hex>:patches/<dir>/base.patch head:<40-hex>' \
-#     -f specs='org.ergoplatform.nodeView.history.SomeSpec org.ergoplatform.OtherSpec' \
+#     -f specs='org.ergoplatform.nodeView.history.SomeSpec org.ergoplatform.OtherSpec' [-f project=ergoCore] \
 #     [-f it_spec=org.ergoplatform.it.SomeItSpec -f it_minutes=25] -f repeats=1
 name: ref specs
-run-name: "ref specs ${{ inputs.label }}: ${{ inputs.specs }}${{ inputs.it_spec && format(' it:{0}', inputs.it_spec) || '' }} x${{ inputs.repeats }}"
+run-name: "ref specs ${{ inputs.label }}: ${{ inputs.project && format('{0}/', inputs.project) || '' }}${{ inputs.specs }}${{ inputs.it_spec && format(' it:{0}', inputs.it_spec) || '' }} x${{ inputs.repeats }}"
 on:
   workflow_dispatch:
     inputs:
       repo: { description: 'ergo repository URL, https://github.com/<owner>/<name> (every arm sha must be reachable from one of its refs)', default: 'https://github.com/ergoplatform/ergo' }
       arms: { description: 'space-separated arms, name:sha[:patch] (40-hex sha; patch = a .patch/.diff file under patches/)', required: true }
       specs: { description: 'space-separated unit test classes for testOnly (empty = none)', default: '' }
+      project: { description: 'sbt subproject holding the unit classes: empty = the root project, or ergoCore / ergoWallet / avldb (the root does not aggregate them, so its testOnly finds none of their classes)', default: '' }
       it_spec: { description: 'optional integration spec class for it:testOnly (empty = none)', default: '' }
       it_minutes: { description: 'limit for the integration step in minutes, image build included (5-40)', default: '25' }
       repeats: { description: 'jobs per arm (1-3); arms x repeats is at most 12', default: '1' }
@@ -42,6 +44,7 @@ jobs:
           REPO: ${{ inputs.repo }}
           ARMS: ${{ inputs.arms }}
           SPECS: ${{ inputs.specs }}
+          PROJECT: ${{ inputs.project }}
           IT_SPEC: ${{ inputs.it_spec }}
           IT_MIN: ${{ inputs.it_minutes }}
           REPEATS: ${{ inputs.repeats }}
@@ -57,6 +60,7 @@ jobs:
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || fail "label: [A-Za-z0-9._-]{1,40}"
           if [[ "$LABEL" =~ $idlike ]]; then fail "label '$LABEL' looks like a tracking id; use a descriptive one"; fi
           [[ -n "$SPECS$IT_SPEC" ]] || fail "specs, it_spec: give at least one"
+          [[ -z "$PROJECT" || "$PROJECT" =~ ^(ergoCore|ergoWallet|avldb)$ ]] || fail "project: empty, ergoCore, ergoWallet or avldb"
           for s in $SPECS; do [[ "$s" =~ ^(org\.ergoplatform|scorex)\.[A-Za-z0-9_.]+$ ]] || fail "spec: $s"; done
           [[ -z "$IT_SPEC" || "$IT_SPEC" =~ ^(org\.ergoplatform|scorex)\.[A-Za-z0-9_.]+$ ]] || fail "it_spec: one class name"
           json='[]'; n=0
@@ -95,6 +99,7 @@ jobs:
       SHA: ${{ matrix.arm.sha }}
       PATCH: ${{ matrix.arm.patch }}
       SPECS: ${{ inputs.specs }}
+      PROJECT: ${{ inputs.project }}
       IT_SPEC: ${{ inputs.it_spec }}
       IT_MIN: ${{ inputs.it_minutes }}
       REP: ${{ matrix.repeat }}
@@ -140,15 +145,16 @@ jobs:
         run: |
           set -uo pipefail
           o="$GITHUB_WORKSPACE/out"; log="$o/unit.log"
-          echo "command: sbt -batch \"testOnly $SPECS\"" | tee "$o/unit-command.txt"
+          task="${PROJECT:+$PROJECT/}testOnly $SPECS"
+          echo "command: sbt -batch \"$task\"" | tee "$o/unit-command.txt"
           rc=0; t0=$(date +%s)
-          ( cd ergo && timeout -k 30 60m sbt -batch "testOnly $SPECS" ) > "$log" 2>&1 || rc=$?
+          ( cd ergo && timeout -k 30 60m sbt -batch "$task" ) > "$log" 2>&1 || rc=$?
           secs=$(( $(date +%s) - t0 )); echo "exit $rc after $secs s" > "$o/unit-rc.txt"
           sed -i 's/\x1b\[[0-9;]*m//g' "$log"
           grep -E '^\[info\] [A-Za-z0-9]+:$|^\[info\] - |^\[info\]   |\*\*\* FAILED|Tests: |Total number of tests run|TESTS? FAILED|^\[error\]|Total time|Compilation failed' "$log" | cut -c1-2000 > "$o/unit-filtered.txt" || true
           tests="$(grep -oE 'Tests: succeeded [0-9]+, failed [0-9]+, canceled [0-9]+, ignored [0-9]+, pending [0-9]+' "$log" | tail -1 || true)"
           echo "${tests:-none}" > "$o/unit-tests.txt"
-          mkdir -p "$o/unit-reports"; cp ergo/target/test-reports/*.xml "$o/unit-reports/" 2>/dev/null || true
+          mkdir -p "$o/unit-reports"; cp ergo/target/test-reports/*.xml ergo/*/target/test-reports/*.xml "$o/unit-reports/" 2>/dev/null || true
           { echo "### $NAME (job $REP): unit"; echo '```'; cat "$o/tree.txt"; cat "$o/unit-command.txt"; echo "sbt exit $rc after $secs s"
             echo "${tests:-no Tests line}"; grep -E '\*\*\* FAILED' "$log" | sed 's/^\[info\] //' || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           [ -n "$tests" ] || { echo "::error::no Tests line: a build or sbt failure, not a test result (see unit-filtered.txt)"; tail -40 "$log"; exit 1; }

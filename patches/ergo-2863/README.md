@@ -10,3 +10,8 @@
 
 It reads whether a follower whose own fork is more than 16 headers long, with its tip at height 128 or lower,
 switches to the heavier chain (#2785).
+
+`forkres-pre2809-fork26.patch` is the same file with `forkLength = 26`. On GitHub runners the unchanged spec mines
+forks of 4-9 headers (run 41281541545: both arms pass 3 of 3, the shape never forms), so it cannot reach the case;
+26 makes every follower's own fork longer than 16 headers with its tip below 129 on any host. Same command with
+`forkres-pre2809-fork26.patch` in both arms.

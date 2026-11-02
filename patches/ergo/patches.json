@@ -13,7 +13,7 @@
       "title": "MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors",
       "origin": "ours",
       "upstream_pr": 2573,
-      "upstream_head": "7ff544825f",
+      "upstream_head": "09f4a6b845",
       "status": "proposed",
       "added": "2026-09-24",
       "fixes": "a transaction announced before its unconfirmed parent is declined by the receiving peer; after a rollback, a chain of wallet payments returns to the pool and the rebroadcast checks each announced window of 3 only against the state and itself, so a chained set reaches the next miner as a random walk. Since v6.0.8 (#2641 clears the declined table every block) it gets there in about 130-190 s, often after a test deadline; with the ancestors announced together it takes one round (26-112 s)",
@@ -26,7 +26,8 @@
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
         "2026-10-15: v6.0.8 carries #2641, which clears the receiving side's declined table on every applied block (was a 20-minute TTL): the window after a declined child shrinks to one block; reorg-mempool on plain v6.0.8 to be re-measured to see whether the scenario still needs this patch",
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
-        "2026-10-17: PR head moved (round 5: ancestors only, data inputs followed; head 7ff544825); patch re-exported, equals its production diff from the merge base with v6.0.9"
+        "2026-10-17: PR head moved (round 5: ancestors only, data inputs followed; head 7ff544825); patch re-exported, equals its production diff from the merge base with v6.0.9",
+        "2026-11-02: PR rebased onto v6.0.11 (head 09f4a6b845); its MempoolAuditor.scala changed lines equal this patch, so no re-export"
       ]
     },
     {
@@ -36,7 +37,7 @@
       "origin": "ours",
       "upstream_pr": 2596,
       "fixes": "a pruned digest node bootstrapped from a NiPoPoW proof latches its full-block floor inside the proof's sparse prefix and never applies a full block (issue #2595)",
-      "status": "proposed",
+      "status": "merged-unreleased",
       "needed_by": [
         "rig nipopow-bootstrap (pruned digest variant, to be added)"
       ],
@@ -46,7 +47,8 @@
         "2026-09-27: issue #2595 and PR #2596 opened against v6.0.7",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
-        "2026-10-17: PR head moved (round 5: reworded commit, INFO lines; head 8e408e4f7); patch re-exported (production diff and PopowProcessorSpecification, as before)"
+        "2026-10-17: PR head moved (round 5: reworded commit, INFO lines; head 8e408e4f7); patch re-exported (production diff and PopowProcessorSpecification, as before)",
+        "2026-11-02: #2596 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ],
       "upstream_head": "8e408e4f7f"
     },
@@ -57,7 +59,7 @@
       "origin": "ours",
       "upstream_pr": 2581,
       "upstream_head": "5bfba5afe8",
-      "status": "proposed",
+      "status": "merged-unreleased",
       "added": "2026-09-24",
       "fixes": "a NiPoPoW + UTXO-snapshot node stops downloading blocks when more headers arrive before the snapshot than one scan covers: the near-tip scan starts 100 below the best full block, inside the proof's sparse prefix",
       "needed_by": [
@@ -67,7 +69,8 @@
       "route": "also offered as a commit on ergoplatform/ergo#2424 (a-shannon), which covers the far-from-tip branch",
       "responses": [
         "2026-09-26: filed as issue #2579 + PR #2581 (v6.0.7)",
-        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8"
+        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
+        "2026-11-02: #2581 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ]
     },
     {
@@ -77,7 +80,7 @@
       "origin": "ours",
       "upstream_pr": 2580,
       "upstream_head": "d0b1d4761f",
-      "status": "proposed",
+      "status": "merged-unreleased",
       "added": "2026-09-26",
       "fixes": "a valid header validated while its parent's indexes are unwritten (HistoryStorage.insert writes objects first) is rejected as invalid, its sender penalized, and it is not requested again (seen at 2 CPUs: a follower stuck at height 2)",
       "needed_by": [
@@ -88,7 +91,8 @@
         "2026-09-26: filed as issue #2578 + PR #2580 (v6.0.7)",
         "2026-09-26: third commit (guard test for the age check) pushed",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
-        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff"
+        "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
+        "2026-11-02: #2580 merged into `v6.0.10` on 2026-10-23; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ]
     },
     {
@@ -98,7 +102,7 @@
       "origin": "ours",
       "upstream_pr": 2585,
       "upstream_head": "a3f1e564c8",
-      "status": "proposed",
+      "status": "merged-unreleased",
       "added": "2026-09-26",
       "fixes": "a UTXO node downloads, through announcements, the ADProofs it regenerates itself (93% of ADProofs + transaction bytes on mainnet over 30 blocks)",
       "needed_by": [],
@@ -107,7 +111,8 @@
         "2026-09-26: filed as issue #2584 + PR #2585 (v6.0.7)",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
-        "2026-10-17: PR rebased onto v6.0.9 at the reviewer's request (head a3f1e564c, tree equal to the merge variant); patch re-exported, equals its production diff"
+        "2026-10-17: PR rebased onto v6.0.9 at the reviewer's request (head a3f1e564c, tree equal to the merge variant); patch re-exported, equals its production diff",
+        "2026-11-02: #2585 merged into `v6.0.9` on 2026-10-18; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ]
     },
     {
@@ -117,7 +122,7 @@
       "origin": "ours",
       "upstream_pr": 2592,
       "upstream_head": "5aa2824495",
-      "status": "proposed",
+      "status": "merged-unreleased",
       "added": "2026-09-26",
       "fixes": "a reply for a modifier the node already applied is judged invalid and the answering peer penalized (seen on weak-blocks: 5 of 12 Matrix devnet runs)",
       "needed_by": [],
@@ -127,7 +132,8 @@
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
         "2026-10-15: on v6.0.8 the old export collided with #2711 (a new version-mismatch branch in validateAndSetStatus); the duplicate case is matched first, as on the rebased PR head. jozanek review 2026-10-15 asks for a comment sentence and an info log: re-export if the PR changes",
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
-        "2026-10-17: PR head moved (round 5: header cite, wording; head 5aa282449); patch re-exported, equals its production diff"
+        "2026-10-17: PR head moved (round 5: header cite, wording; head 5aa282449); patch re-exported, equals its production diff",
+        "2026-11-02: #2592 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ]
     },
     {
@@ -137,14 +143,15 @@
       "origin": "ours",
       "upstream_pr": 2593,
       "upstream_head": "850f71ca5b",
-      "status": "proposed",
+      "status": "merged-unreleased",
       "added": "2026-09-26",
       "fixes": "the modifiers cache logs a second copy of a stored modifier as permanently invalid (WARN + stack trace); removal unchanged",
       "needed_by": [],
       "witness": "unit ErgoModifiersCacheSpec (stored header + stored proofs copies) fails on v6.0.7 with both warnings, passes with the fix; with VerifyADHistorySpecification 21/21 x3",
       "responses": [
         "2026-09-26: filed as issue #2590 + PR #2593 (v6.0.7)",
-        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8"
+        "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
+        "2026-11-02: #2593 merged into `v6.0.10` on 2026-10-24; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ]
     },
     {

@@ -137,6 +137,26 @@ class SameChange(unittest.TestCase):
         p = pr(7, "x", "", "", title="Fix #12", body="Closes https://github.com/o/r/issues/34, not o/r#56 or &#78; self #7")
         self.assertEqual(build.issue_refs(REPO, p), {12, 34})
 
+    def test_issue_refs_counts_lead_references_only(self):
+        def refs(body, title=""):
+            return build.issue_refs(REPO, pr(7, "x", "", "", title=title, body=body))
+        # a body that cites neighbouring issues for context: only the one it says it fixes counts
+        self.assertEqual(refs("Fixes #20 on v1. Not covered: first assignment (#21, #22)."), {20})
+        self.assertEqual(refs("Refs #30 (the thread half only). A candidate regenerated at the same timestamp (#31)."), {30})
+        self.assertEqual(refs("The relay change.\nUnlike #41, this keeps the order; see #40."), set())
+        # lists after one lead word; each lead-word form
+        self.assertEqual(refs("Addresses #50, #51 and #52."), {50, 51, 52})
+        self.assertEqual(refs("Part of #60. Resolved: #61. references https://github.com/o/r/issues/62"), {60, 61, 62})
+        self.assertEqual(refs("closed #70, fix #71, RESOLVES #72"), {70, 71, 72})
+        # the title counts as a lead: "Unite the two routes (#80)"
+        self.assertEqual(refs("Supersedes #81.", title="Unite the two routes (#80)"), {80})
+        # forms seen on real descriptions: an opening reference, "issue" after the lead word, "#" before a link
+        self.assertEqual(refs("See https://github.com/o/r/issues/90\nI tested it; see #91 too"), {90})
+        self.assertEqual(refs("ref: issue #92 \nThe additions were tested"), {92})
+        self.assertEqual(refs("Closes #https://github.com/o/r/issues/93"), {93})
+        self.assertEqual(refs("#94\n\nThe change"), {94})
+        self.assertEqual(refs("This is a follow-up of https://github.com/o/r/pull/95 where"), set())
+
 
 if __name__ == "__main__":
     unittest.main()

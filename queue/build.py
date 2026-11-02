@@ -223,11 +223,31 @@ def production_patch_id(gdir, mb, head, *opts):
     return (git(gdir, "patch-id", "--stable", stdin=patch).split() or [None])[0], changed
 
 
+LEAD_WORDS = r"(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?|address(?:es|ed)?|refs?|references?|part\s+of)"
+
+
 def issue_refs(repo, p):
-    """Numbers a pull request's title or body points at (#N, or a link to an issue or pull request of this repo)."""
-    text = (p.get("title") or "") + "\n" + (p.get("body") or "")
-    nums = {int(m) for m in re.findall(r"(?<![\w/&])#(\d+)\b", text)}
-    nums |= {int(m) for m in re.findall(rf"github\.com/{re.escape(repo)}/(?:issues|pull)/(\d+)", text)}
+    """Numbers a pull request says it addresses: #N or a link to an issue or pull request of this repo in the title, or
+    in the body right after a lead word (fix, close, resolve and their forms; addresses, refs, references, part of;
+    "issue" may follow it, as in "ref: issue #12"), with further numbers joined by commas or "and", or opening the body
+    ("See <link>", "Issue: #12", or the reference alone on its first line). A number the body only cites later ("see
+    #12" mid-text, "first assignment (#13)") is not counted: descriptions name neighbouring issues for context, and
+    counting those grouped unrelated pull requests."""
+    one = rf"(?:(?<![\w/&])#(\d+)\b|github\.com/{re.escape(repo)}/(?:issues|pull)/(\d+))"
+    one_nc = one.replace("(\\d+)", "\\d+")
+
+    def nums_in(s):
+        return {int(a or b) for a, b in re.findall(one, s)}
+    nums = nums_in(p.get("title") or "")
+    item = rf"#?(?:https?://)?{one_nc}"
+    refs = rf"((?:issues?\s+)?{item}(?:\s*(?:,|\band\b|&)\s*{item})*)"
+    body = p.get("body") or ""
+    for m in re.finditer(rf"\b{LEAD_WORDS}\b:?\s*{refs}", body, re.IGNORECASE):
+        nums |= nums_in(m.group(1))
+    first = next((line for line in body.splitlines() if line.strip()), "")
+    m = re.match(rf"\s*(?:(?:see|issue|for)\b:?\s*)?{refs}", first, re.IGNORECASE)
+    if m:
+        nums |= nums_in(m.group(1))
     nums.discard(p["number"])
     return nums
 
@@ -392,8 +412,9 @@ def same_change_sections(exact, related, meta, error, uncompared):
          "<a href='https://cafebedouin.github.io/peeryard/queue.json'>queue.json</a> (<a href='https://github.com/cafebedouin/peeryard/blob/main/docs/queue-data.md'>fields</a>; "
          "daily snapshots in <a href='https://cafebedouin.github.io/peeryard/history/index.json'>history/</a>): a hint for maintainers, not a verdict." + intro_tail,
          ex_rows, ["pull requests", "what they share"]),
-        ("Open pull requests on the same issue", "Open pull requests by different authors that reference the same issue and "
-         "change at least one of the same production files: alternatives a maintainer may want to read together. A pair "
+        ("Open pull requests on the same issue", "Open pull requests by different authors that say they address the "
+         "same issue (in the title, or after fixes, closes, addresses or refs in the description; an issue only cited "
+         "for context does not count) and change at least one of the same production files: alternatives a maintainer may want to read together. A pair "
          "already listed as the same change, and a release candidate (a pull request from a release branch), are left out."
          + intro_tail, rel_rows, ["issue", "pull requests", "overlap"]),
     ]

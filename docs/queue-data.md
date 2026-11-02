@@ -43,8 +43,10 @@ id. Tests, docs and the base branch may differ inside a group. `files` (list of 
 the first pull request; `changed_lines` (int) counts its added plus removed production lines.
 
 **`same_issue[]`**: `{issue, title, state, url, prs, pairs}`. `issue` (int) is an issue (GitHub says it is not a pull
-request) referenced as `#N` or by link in the title or body of two or more open pull requests by different authors that
-change at least one of the same production files. `pairs` is a list of `{prs: [int, int], shared_files: int}`; `prs`
+request) that two or more open pull requests by different authors say they address (`#N` or a link in the title, after a
+lead word such as fixes, closes, addresses or refs in the description, or opening the description; a number only cited
+for context does not count), and that change at least one of the same production files. `pairs` is a list of
+`{prs: [int, int], shared_files: int}`; `prs`
 is every member, earliest opened first. A pair already in one `same_change` group is not repeated, and a pull request
 from a release branch is left out (it references every pull request in the release).
 

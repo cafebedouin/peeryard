@@ -163,24 +163,31 @@ def git(gdir, *args, stdin=None):
     return r.stdout
 
 
-def production_diffs(repo, prs, gdir):
-    """For each open pull request (drafts included): the production files its diff changes and the stable patch-id of
-    that diff, merge-base(base, head)..head restricted to src/main and */src/main. One blobless bare clone; the heads
-    are fetched in one call, then the blobs the diffs read in one more (a lazy fetch per diff costs minutes)."""
+def fetch_pr_heads(repo, numbers, gdir, blobless=True):
+    """A bare clone of repo at gdir (kept between runs; blobless unless asked otherwise), updated with every branch and
+    refs/pull/<n>/head for each n, in batches of 200 refs. A ref gone since the listing fails its batch, which is then
+    fetched one ref at a time; the missing ref is left for the caller to report."""
     if not os.path.isdir(gdir):
         os.makedirs(os.path.dirname(gdir), exist_ok=True)
-        subprocess.run(["git", "clone", "-q", "--bare", "--filter=blob:none", "--no-tags",
+        subprocess.run(["git", "clone", "-q", "--bare", *(["--filter=blob:none"] if blobless else []), "--no-tags",
                         f"https://github.com/{repo}.git", gdir], check=True, capture_output=True)
-    refspecs = ["+refs/heads/*:refs/heads/*"] + [f"+refs/pull/{p['number']}/head:refs/pull/{p['number']}/head" for p in prs]
+    refspecs = ["+refs/heads/*:refs/heads/*"] + [f"+refs/pull/{n}/head:refs/pull/{n}/head" for n in numbers]
     for i in range(0, len(refspecs), 200):
         try:
             git(gdir, "fetch", "-q", "--no-tags", "origin", *refspecs[i:i + 200])
-        except RuntimeError:                   # one ref gone since the listing fails the call: fetch the batch one by one
+        except RuntimeError:
             for spec in refspecs[i:i + 200]:
                 try:
                     git(gdir, "fetch", "-q", "--no-tags", "origin", spec)
                 except RuntimeError:
-                    pass                       # that pull request is reported with its error below
+                    pass
+
+
+def production_diffs(repo, prs, gdir):
+    """For each open pull request (drafts included): the production files its diff changes and the stable patch-id of
+    that diff, merge-base(base, head)..head restricted to src/main and */src/main. One blobless bare clone; the heads
+    are fetched in one call, then the blobs the diffs read in one more (a lazy fetch per diff costs minutes)."""
+    fetch_pr_heads(repo, [p["number"] for p in prs], gdir)   # a pull request whose head is missing is reported below
     ranges, out, blobs = {}, {}, set()
     for p in prs:
         n = p["number"]

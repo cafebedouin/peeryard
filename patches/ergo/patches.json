@@ -28,7 +28,8 @@
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
         "2026-10-17: PR head moved (round 5: ancestors only, data inputs followed; head 7ff544825); patch re-exported, equals its production diff from the merge base with v6.0.9",
         "2026-11-02: PR rebased onto v6.0.11 (head 09f4a6b845); its MempoolAuditor.scala changed lines equal this patch, so no re-export"
-      ]
+      ],
+      "remove_when": "the first release that carries #2573 (open on v6.0.11); earlier if reorg-mempool passes on the plain release without it (v6.0.8 carries #2641, which shrank the window this patch closes)"
     },
     {
       "id": "004",
@@ -50,7 +51,8 @@
         "2026-10-17: PR head moved (round 5: reworded commit, INFO lines; head 8e408e4f7); patch re-exported (production diff and PopowProcessorSpecification, as before)",
         "2026-11-02: #2596 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack"
       ],
-      "upstream_head": "8e408e4f7f"
+      "upstream_head": "8e408e4f7f",
+      "remove_when": "the v6.0.9 release (#2596 is merged into the v6.0.9 branch)"
     },
     {
       "id": "005",
@@ -70,8 +72,11 @@
       "responses": [
         "2026-09-26: filed as issue #2579 + PR #2581 (v6.0.7)",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
-        "2026-11-02: #2581 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack"
-      ]
+        "2026-11-02: #2581 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack",
+        "2026-11-02: re-exported from the merged #2581 (its comment also names the bsTooOld penalty; the code line is unchanged)",
+        "2026-11-02: re-exported stack (v6.0.8 + 002..011, jar appVersion 6.0.8-1-2004fa30): nipopow-bootstrap PASS (state SAME@271, proof processed), bootstrap-modes PASS"
+      ],
+      "remove_when": "the v6.0.9 release (#2581 is merged into the v6.0.9 branch)"
     },
     {
       "id": "006",
@@ -93,7 +98,8 @@
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
         "2026-11-02: #2580 merged into `v6.0.10` on 2026-10-23; no release carries it yet (newest release v6.0.8), so it stays in the stack"
-      ]
+      ],
+      "remove_when": "the v6.0.10 release (#2580 is merged into the v6.0.10 branch)"
     },
     {
       "id": "007",
@@ -113,7 +119,8 @@
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
         "2026-10-17: PR rebased onto v6.0.9 at the reviewer's request (head a3f1e564c, tree equal to the merge variant); patch re-exported, equals its production diff",
         "2026-11-02: #2585 merged into `v6.0.9` on 2026-10-18; no release carries it yet (newest release v6.0.8), so it stays in the stack"
-      ]
+      ],
+      "remove_when": "the v6.0.9 release (#2585 is merged into the v6.0.9 branch)"
     },
     {
       "id": "008",
@@ -134,7 +141,8 @@
         "2026-10-16: PR head moved (review round; see the PR thread); patch equals its production diff",
         "2026-10-17: PR head moved (round 5: header cite, wording; head 5aa282449); patch re-exported, equals its production diff",
         "2026-11-02: #2592 merged into `v6.0.9` on 2026-10-17; no release carries it yet (newest release v6.0.8), so it stays in the stack"
-      ]
+      ],
+      "remove_when": "the v6.0.9 release (#2592 is merged into the v6.0.9 branch)"
     },
     {
       "id": "009",
@@ -151,8 +159,10 @@
       "responses": [
         "2026-09-26: filed as issue #2590 + PR #2593 (v6.0.7)",
         "2026-10-14: the v6.0.7-closed PR was reopened by jozanek and retargeted to v6.0.9; head rebased onto v6.0.9 (production lines unchanged); patch re-exported 2026-10-15 for base v6.0.8",
-        "2026-11-02: #2593 merged into `v6.0.10` on 2026-10-24; no release carries it yet (newest release v6.0.8), so it stays in the stack"
-      ]
+        "2026-11-02: #2593 merged into `v6.0.10` on 2026-10-24; no release carries it yet (newest release v6.0.8), so it stays in the stack",
+        "2026-11-02: re-exported from the merged #2593: a typed MalformedModifierError pattern and an INFO line with the error message (was DEBUG); same decision"
+      ],
+      "remove_when": "the v6.0.10 release (#2593 is merged into the v6.0.10 branch)"
     },
     {
       "id": "010",
@@ -171,7 +181,8 @@
       "witness": "pr-scenario on GitHub-hosted runners, #2721 (b565f5bed) on its merge base d95c4fd2a (= v6.0.8 + the 6.0.9 version string), 2026-10-15: sibling-fork 5x2 (run 38834283280): base diverged in 10 of 10 runs (E_total 6-16), candidate 0 of 10 (D_total 0), agreement in all 20; fork-convergence-smoke 5x2 (run 38834289703): both roles switched 10 of 10, unresponsive_after 0 in all (no stall, unlike #2313 on the combined stack). Not needed by fork-convergence any more: the v6.0.8 release alone switched 38 of 38 valid runs in its A/A (run 38833185418; v6.0.6: 23 of 40)",
       "responses": [
         "2026-10-13: #2313 closed by jozanek: Replaced by #2721 on v6.0.9 (thanks us for the reproduction and the stall report)"
-      ]
+      ],
+      "remove_when": "the first release that carries #2721 (open on v6.0.9)"
     },
     {
       "id": "011",
@@ -189,7 +200,8 @@
       "witness": "ref-specs on GitHub-hosted runners, run 40256526836 (patches/ergo-2794/): a VerifyADHistorySpecification property (a block stored ahead of its parent) fails on v6.0.8 c1a69f65d and v6.0.9 9f77ea638 with Vector(5) and passes on 9f77ea638 + #2802 and on v6.0.10 f2f932bd6; the v6.0.9 release check (40225118118) had bootstrap-modes red with block 5 kept on the pruned node",
       "responses": [
         "2026-10-24: merged into v6.0.10 (a31943552); issue #2794 still open"
-      ]
+      ],
+      "remove_when": "the v6.0.10 release (#2802 is merged into the v6.0.10 branch)"
     }
   ],
   "clone_env": "DIFFRUN_ERGO_CLONE",

@@ -24,7 +24,8 @@
         "rig ergo-node-rust-follow-magic"
       ],
       "witness": "rig examples ergo-node-rust-follow (PASS in the sweep)",
-      "responses": []
+      "responses": [],
+      "remove_when": "mwaddip/ergo-node-rust merges #28 and a release carries it"
     },
     {
       "id": "002",
@@ -40,7 +41,8 @@
         "rig ergo-node-rust-follow-magic"
       ],
       "witness": "rig example ergo-node-rust-follow-magic (PASS in the sweep)",
-      "responses": []
+      "responses": [],
+      "remove_when": "mwaddip/ergo-node-rust merges #29 and a release carries it"
     }
   ]
 }

@@ -1,30 +1,23 @@
 # peeryard patch ergo/009: Log a cached copy of a stored modifier as a duplicate, not as permanently invalid
-# upstream: ergoplatform/ergo#2593 (proposed); origin, witness and responses in patches.json
-commit c6fe3c330710f3d3ab352d75f17cc8ba058779d9
-Author: cafebedouin <cafebedouin@gmail.com>
-Date:   Sat Sep 26 12:55:52 2026 -0500
-
-    Drop a cached copy of a modifier already in history as a duplicate
-    
-    findCandidateKey logged every cached modifier that failed a fatal rule as permanently invalid, with a stack trace, so a
-    second copy of one already applied (alreadyApplied) was reported as invalid. It was removed either way; it is now
-    removed as a duplicate, at debug level.
-    
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+# upstream: ergoplatform/ergo#2593 (merged-unreleased); origin, witness and responses in patches.json
+# production diff of the merged PR (merge commit 29a5c976f936bdf7851d2d8c829ada63784567f8 into v6.0.10), exported onto v6.0.8 + the stack before it
 
 diff --git a/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala b/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala
-index 70ed8d8f3..66403c837 100644
+index 70ed8d8f3..6b6c430c6 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/ErgoModifiersCache.scala
-@@ -14,6 +14,11 @@ class ErgoModifiersCache(override val maxSize: Int) extends ModifiersCache with
+@@ -14,7 +14,13 @@ class ErgoModifiersCache(override val maxSize: Int) extends ModifiersCache with
    override def findCandidateKey(history: ErgoHistory): Option[K] = {
      def tryToApply(k: K, v: BlockSection): Boolean = {
        history.applicableTry(v) match {
-+        case Failure(e) if e.isInstanceOf[MalformedModifierError] && history.contains(v.id) =>
-+          // a second copy of a modifier already applied (e.g. delivered twice): a duplicate, not an invalid modifier
-+          log.debug(s"Modifier ${v.encodedId} is already in history, removing its copy from cache")
+-        case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
++        case Failure(e: MalformedModifierError) if history.contains(v.id) =>
++          // already in history (e.g. stored from another source after the synchronizer passed this copy): a duplicate,
++          // not an invalid modifier. Any fatal rule is matched on purpose, as in `validateAndSetStatus`
++          log.info(s"Modifier ${v.encodedId} is already in history, removing its copy from cache: ${e.getMessage}")
 +          remove(k)
 +          false
-         case Failure(e) if e.isInstanceOf[MalformedModifierError] =>
++        case Failure(e: MalformedModifierError) =>
            log.warn(s"Modifier ${v.encodedId} is permanently invalid and will be removed from cache", e)
            remove(k)
+           false

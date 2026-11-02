@@ -1,22 +1,19 @@
 # peeryard patch ergo-matrix/004: Full V2 sync summaries also carry the genesis header, so a peer always finds a common point
-# upstream: ergoplatform/ergo#2529 (under-review); origin, witness and responses in patches.json
+# upstream: ergoplatform/ergo#2691 (open); origin, witness and responses in patches.json
+# the syncInfoV2 locator lines of the PR at head 809165bef86ae3e32d7a1d2f0f6df1631dc10ce2 only (not its commonPoint, storage-rent or other changes), exported onto weak-blocks + 001..003
+
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
-index 9f7a45f0f..82798e354 100644
+index ecc23d2f9..425d858c8 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
-@@ -403,8 +403,14 @@ trait ErgoHistoryReader
+@@ -417,7 +417,9 @@ trait ErgoHistoryReader
+         ErgoHistoryReader.ReducedV2SyncOffsets
        }
  
-       val headers = offsets.flatMap(offset => bestHeaderAtHeight(h - offset))
-+      // Keep a shared starting point in full summaries when it is available locally.
-+      val genesisAnchor = if (full) {
-+        bestHeaderAtHeight(GenesisHeight).filterNot(genesis => headers.exists(_.id == genesis.id)).toSeq
-+      } else {
-+        Seq.empty
-+      }
+-      val headers = offsets.flatMap(offset => bestHeaderAtHeight(h - offset))
++      val heights = offsets.map(h - _)
++      val locatorHeights = if (full) (heights :+ GenesisHeight).distinct else heights
++      val headers = locatorHeights.flatMap(bestHeaderAtHeight)
  
--      ErgoSyncInfoV2(headers)
-+      ErgoSyncInfoV2(headers.toSeq ++ genesisAnchor)
+       ErgoSyncInfoV2(headers)
      }
-   }
- 

@@ -119,28 +119,37 @@ nodes, apply the combined diff to a checkout of the base and `cargo build --rele
 Run `patches/check.sh` for the live view; this table is `patches.json` as of the last edit (titles, PRs and statuses come from there):
 Three of the entries are one package, the sync ladder: the cache keying (`ergo/010` and `ergo-matrix/003`, #2721;
 until 2026-10-15 `ergo/001`, #2511, keyed by tip and mode, whose mode half #2649 made moot in v6.0.8),
-`ergo-matrix/004` (the genesis anchor and scan-back, #2529) and `ergo/005` (the near-tip floor, #2581, issue #2575),
+`ergo-matrix/004` (the genesis anchor; was #2529, now the locator lines of #2691) and `ergo/005` (the near-tip floor, #2581, issue #2575),
 assembled with a fixture fix for `DeepRollBackSpec` on ergoplatform/ergo#2535 (the comment of 2026-09-26 there gives
 the 28-run isolation table on v6.0.7: the spec passes only with a sync-point fix and the scan-back, 20 of 20 with the
-fixture fix). `ergo/004` (#2596) is the pruned-digest NiPoPoW stall; `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7. The stack is
+fixture fix). `ergo/004` (#2596) is the pruned-digest NiPoPoW stall; `ergo/006` to `009` are four independent one-line concerns found while running the suite on v6.0.7, and `ergo/011` (#2802) is the pruning floor on a better chain. The stack is
 based on v6.0.8 since 2026-10-15.
+
+**Toward the plain release.** The aim is to run the current release with no patches at all; every entry says when it
+leaves (`remove_when`). When v6.0.9 ships, the base moves to it and `ergo/004`, `005`, `007` and `008` leave (merged into
+its branch); when v6.0.10 ships, `006`, `009` and `011` leave. That leaves `002` (#2573) and `010` (#2721), both open.
+`check.sh` marks a patch CONTAINED once the release carries it. Three entries (`007`, `008`, `009`) are needed by no
+scenario, and `004` only by a variant not yet written: they can leave the stack before those releases, once a suite run
+without them matches one with them.
+
 The witness column of `patches.json` summarizes runs whose captures are not in this repository (`audits/` is local by
 design); a patch of ours is the upstream commit as exported, with its author and co-author trailers.
 
-| repo | id | patch | origin | upstream | status | needed by |
-|---|---|---|---|---|---|---|
-| ergo | 002 | MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors | ours | ergoplatform/ergo#2573 | proposed | `rig reorg-mempool` |
-| ergo | 004 | Do not start full block download inside a NiPoPoW headers gap | ours | ergoplatform/ergo#2596 | proposed | `rig nipopow-bootstrap (pruned digest variant, to be added)` |
-| ergo | 005 | Do not scan below minimal full block height for block sections near the tip | ours | ergoplatform/ergo#2581 | proposed | `rig nipopow-bootstrap` |
-| ergo | 006 | Check a header's age against its parent's own height, not the height index | ours | ergoplatform/ergo#2580 | proposed | `diffrun fork-convergence (loaded hosts)` |
-| ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | proposed | none (a fix the stack carries) |
-| ergo | 008 | Drop a requested copy of a modifier already in history instead of penalizing the sender | ours | ergoplatform/ergo#2592 | proposed | none (a fix the stack carries) |
-| ergo | 009 | Log a cached copy of a stored modifier as a duplicate, not as permanently invalid | ours | ergoplatform/ergo#2593 | proposed | none (a fix the stack carries) |
-| ergo | 010 | Move the best header to a tying chain with complete blocks; key the sync info caches by the best header | jozanek (production diff only) | ergoplatform/ergo#2721 | proposed | `diffrun sibling-fork` |
-| ergo-node-rust | 001 | feat(config): add a private devnet network ([proxy] network = "devnet") | ours | mwaddip/ergo-node-rust#28 | proposed | `rig ergo-node-rust-follow`, `rig ergo-node-rust-follow-magic` |
-| ergo-node-rust | 002 | feat(p2p): [proxy] magic overrides the devnet's wire magic | ours (on 001) | mwaddip/ergo-node-rust#29 | proposed | `rig ergo-node-rust-follow-magic` |
-| arkadianet | 001 | [chain] devnet_magic overrides the devnet's wire magic | ours | arkadianet/ergo#362 | merged-in-v0.9.0 | `rig arkadianet-mine-magic` |
-| ergo-matrix | 001 | Full-block route matches only /blocks/{id}, so the input-block transaction routes are reachable | A. Shannon (hunk only) | ergoplatform/ergo#2505 | under-review | `rig matrix-tx` |
-| ergo-matrix | 002 | Relay a received input block by id to eligible sub-block peers (receive-side guard + relay) | ours | ergoplatform/ergo#2566 | proposed | `rig matrix-latency` |
-| ergo-matrix | 003 | Key the sync info caches by the best header (#2721, its cache-key commit only) | jozanek (production diff only) | ergoplatform/ergo#2721 | proposed | `rig matrix-fork` |
-| ergo-matrix | 004 | Full V2 sync summaries also carry the genesis header, so a peer always finds a common point | A. Shannon (hunk only) | ergoplatform/ergo#2529 | under-review | `rig matrix-fork (deep-fork runs)` |
+| repo | id | patch | origin | upstream | status | needed by | remove when |
+|---|---|---|---|---|---|---|---|
+| ergo | 002 | MempoolAuditor: rebroadcast a pooled transaction together with its in-pool ancestors | ours | ergoplatform/ergo#2573 | proposed | `rig reorg-mempool` | the first release that carries #2573 (open on v6.0.11); earlier if reorg-mempool passes on the plain release without it (v6.0.8 carries #2641, which shrank the window this patch closes) |
+| ergo | 004 | Do not start full block download inside a NiPoPoW headers gap | ours | ergoplatform/ergo#2596 | merged-unreleased | `rig nipopow-bootstrap (pruned digest variant, to be added)` | the v6.0.9 release (#2596 is merged into the v6.0.9 branch) |
+| ergo | 005 | Do not scan below minimal full block height for block sections near the tip | ours | ergoplatform/ergo#2581 | merged-unreleased | `rig nipopow-bootstrap` | the v6.0.9 release (#2581 is merged into the v6.0.9 branch) |
+| ergo | 006 | Check a header's age against its parent's own height, not the height index | ours | ergoplatform/ergo#2580 | merged-unreleased | `diffrun fork-convergence (loaded hosts)` | the v6.0.10 release (#2580 is merged into the v6.0.10 branch) |
+| ergo | 007 | Do not request announced ADProofs on a node that stores the UTXO set | ours | ergoplatform/ergo#2585 | merged-unreleased | none (a fix the stack carries) | the v6.0.9 release (#2585 is merged into the v6.0.9 branch) |
+| ergo | 008 | Drop a requested copy of a modifier already in history instead of penalizing the sender | ours | ergoplatform/ergo#2592 | merged-unreleased | none (a fix the stack carries) | the v6.0.9 release (#2592 is merged into the v6.0.9 branch) |
+| ergo | 009 | Log a cached copy of a stored modifier as a duplicate, not as permanently invalid | ours | ergoplatform/ergo#2593 | merged-unreleased | none (a fix the stack carries) | the v6.0.10 release (#2593 is merged into the v6.0.10 branch) |
+| ergo | 010 | Move the best header to a tying chain with complete blocks; key the sync info caches by the best header | jozanek (not ours); production diff only | ergoplatform/ergo#2721 | proposed | `diffrun sibling-fork` | the first release that carries #2721 (open on v6.0.9) |
+| ergo | 011 | Prune full blocks from the previous minimal full block height on a better chain | ocakciomursel-pixel (not ours; co-authored by jozanek); production diff only | ergoplatform/ergo#2802 | merged-unreleased | `rig bootstrap-modes (pruning checked at every height)` | the v6.0.10 release (#2802 is merged into the v6.0.10 branch) |
+| ergo-node-rust | 001 | feat(config): add a private devnet network ([proxy] network = "devnet") | ours | mwaddip/ergo-node-rust#28 | proposed | `rig ergo-node-rust-follow`, `rig ergo-node-rust-follow-magic` | mwaddip/ergo-node-rust merges #28 and a release carries it |
+| ergo-node-rust | 002 | feat(p2p): [proxy] magic overrides the devnet's wire magic | ours | mwaddip/ergo-node-rust#29 | proposed | `rig ergo-node-rust-follow-magic` | mwaddip/ergo-node-rust merges #29 and a release carries it |
+| arkadianet | 001 | [chain] devnet_magic overrides the devnet's wire magic | ours | arkadianet/ergo#362 | merged-in-v0.9.0 | `rig arkadianet-mine-magic` | removed: shipped in arkadianet v0.9.0 |
+| ergo-matrix | 001 | Full-block route matches only /blocks/{id}, so the input-block transaction routes are reachable | A. Shannon (not ours) | ergoplatform/ergo#2505 | under-review | `rig matrix-tx` | weak-blocks carries #2505 (or the same route fix) |
+| ergo-matrix | 002 | Relay a received input block by id to eligible sub-block peers (receive-side guard + relay) | ours | ergoplatform/ergo#2566 | proposed | `rig matrix-latency` | weak-blocks carries #2566 |
+| ergo-matrix | 003 | Key the sync info caches by the best header (#2721, its cache-key commit only) | jozanek (not ours) | ergoplatform/ergo#2721 | proposed | `rig matrix-fork` | weak-blocks carries #2721 (it reaches weak-blocks when kushti merges the release that carries it) |
+| ergo-matrix | 004 | Full V2 sync summaries also carry the genesis header, so a peer always finds a common point | A. Shannon (not ours) | ergoplatform/ergo#2691 | under-review | `rig matrix-fork (deep-fork runs)` | weak-blocks carries #2691 or another genesis anchor in full V2 sync summaries |

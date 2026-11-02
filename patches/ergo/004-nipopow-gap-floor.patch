@@ -1,5 +1,5 @@
 # peeryard patch ergo/004: Do not start full block download inside a NiPoPoW headers gap
-# upstream: ergoplatform/ergo#2596 (proposed); origin, witness and responses in patches.json
+# upstream: ergoplatform/ergo#2596 (merged-unreleased); origin, witness and responses in patches.json
 commit 8e408e4f7feb5a2736751cbc8d63d78d97cc5a03
 Author: cafebedouin <cafebedouin@gmail.com>
 Date:   Fri Oct 16 14:34:30 2026 -0500

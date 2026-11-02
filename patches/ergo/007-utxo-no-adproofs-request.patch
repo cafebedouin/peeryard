@@ -1,5 +1,5 @@
 # peeryard patch ergo/007: Do not request announced ADProofs on a node that stores the UTXO set
-# upstream: ergoplatform/ergo#2585 (proposed); origin, witness and responses in patches.json
+# upstream: ergoplatform/ergo#2585 (merged-unreleased); origin, witness and responses in patches.json
 commit a3f1e564c8cddb329a35c1273e913633d2b769b6
 Author: cafebedouin <cafebedouin@gmail.com>
 Date:   Fri Oct 16 14:32:42 2026 -0500

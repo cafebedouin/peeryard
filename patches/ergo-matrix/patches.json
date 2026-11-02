@@ -28,7 +28,8 @@
         "#2505 open, 1 review, 1 comment (2026-09-25)",
         "2026-09-25: #2505 head moved to 4138875ba5; the route hunk is unchanged",
         "2026-11-02: #2505 head moved to 6716b164d8; the BlocksApiRoute.scala changed lines equal this patch"
-      ]
+      ],
+      "remove_when": "weak-blocks carries #2505 (or the same route fix)"
     },
     {
       "id": "002",
@@ -36,7 +37,7 @@
       "title": "Relay a received input block by id to eligible sub-block peers (receive-side guard + relay)",
       "origin": "ours",
       "upstream_pr": 2566,
-      "upstream_head": "516b30efd",
+      "upstream_head": "ba2bdeefe2",
       "status": "proposed",
       "added": "2026-09-25",
       "fixes": "input blocks reach only the miner's own peers (issue #2565)",
@@ -45,8 +46,10 @@
       ],
       "witness": "unit: ErgoNodeViewSynchronizerSpecification per commit (95, 96 pass; each commit reverted: its properties fail); network: matrix-latency 3/3 PASS on a1bd938ef + this diff (C 207, 202, 205 input blocks; none without), matrix-pair PASS",
       "responses": [
-        "2026-11-02: STALE: this patch is the first two commits (to 516b30efd); #2566 has 11 more (09-30..10-02: input-block delivery tracking, re-requests from another announcer, retries; head ba2bdeefe2). Re-export and re-run matrix-latency before the next Matrix sweep"
-      ]
+        "2026-11-02: re-exported from #2566 at ba2bdeefe2, all 13 commits (was the first two, to 516b30efd; the 11 later ones add input-block delivery tracking, re-requests from another announcer and retries)",
+        "2026-11-02: re-exported stack (weak-blocks 214d09cba + 001..004, jar appVersion 6.0.8-523-0b7b9533): matrix-latency 3 of 3 PASS (input blocks seen by C 129, 203, 126; by B 183, 61, 114: the per-sample count varies run to run), matrix-fork-deep PASS"
+      ],
+      "remove_when": "weak-blocks carries #2566"
     },
     {
       "id": "003",
@@ -64,7 +67,8 @@
       "witness": "release line: fork-convergence A/A 23 of 23 switched; Matrix line: matrix-fork 1 of 2 valid runs converged, a rate is not yet measured",
       "responses": [
         "2026-10-15: was #2511 (closed 2026-09-29 with the v6.0.7 branch, not re-filed), which collided after weak-blocks merged v6.0.8. weak-blocks now carries #2649 (full V2 sync info everywhere), so only the best-header key is still needed; taken from #2721"
-      ]
+      ],
+      "remove_when": "weak-blocks carries #2721 (it reaches weak-blocks when kushti merges the release that carries it)"
     },
     {
       "id": "004",
@@ -72,7 +76,7 @@
       "title": "Full V2 sync summaries also carry the genesis header, so a peer always finds a common point",
       "origin": "upstream work by A. Shannon (not ours): the ErgoHistoryReader.syncInfoV2 hunk of ergoplatform/ergo#2511 at its earlier head 8c00df3a98, dropped when #2511 was narrowed to the cache keying; the same hunk is in ergoplatform/ergo#2529 (a-shannon, open) at 561e5c3a40, verified 2026-09-26",
       "upstream_pr": 2691,
-      "upstream_head": "561e5c3a40",
+      "upstream_head": "809165bef8",
       "status": "under-review",
       "added": "2026-09-25",
       "fixes": "a node on a fork deeper than 16 blocks on a young chain (height <= 128) sends sync summaries (tip, tip-16) that are all on its own fork; the peer finds no common point, answers with an empty continuation ('Extension is empty while comparison is younger'), and the node never learns the heavier chain",
@@ -83,8 +87,10 @@
       "route": "upstream in #2529; no separate PR needed",
       "responses": [
         "2026-10-15: the same genesis-header addition to full V2 locators is also in ergoplatform/ergo#2691 (a-shannon, v6.0.9)",
-        "2026-11-02: #2529 was narrowed (now \"Serve retained headers without requiring their block bodies\") and no longer touches ErgoHistoryReader.scala. #2691 (a-shannon, open, v6.0.9) adds genesis to full V2 summaries another way (GenesisHeight appended to the locator heights), so it is now the upstream PR for this change; this patch is kept as it is, not re-derived from #2691"
-      ]
+        "2026-11-02: #2529 was narrowed (now \"Serve retained headers without requiring their block bodies\") and no longer touches ErgoHistoryReader.scala. The patch is now the syncInfoV2 locator lines of #2691 (a-shannon, open, v6.0.9): GenesisHeight appended to the full locator heights, deduplicated by height. The same result as the previous hunk (genesis appended to full summaries once), read not executed; #2691s commonPoint and other changes are not carried",
+        "2026-11-02: with #2691s lines: matrix-fork-deep PASS on the re-exported stack"
+      ],
+      "remove_when": "weak-blocks carries #2691 or another genesis anchor in full V2 sync summaries"
     }
   ]
 }

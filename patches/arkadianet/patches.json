@@ -26,7 +26,8 @@
       "responses": [
         "2026-09-24: merged by the maintainer (merge commit 8ce85d155); not in a release yet (latest v0.8.0)",
         "2026-09-25: released in v0.9.0; check.sh v0.9.0 -> CONTAINED"
-      ]
+      ],
+      "remove_when": "removed: shipped in arkadianet v0.9.0"
     }
   ]
 }

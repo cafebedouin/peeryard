@@ -1,5 +1,5 @@
 # peeryard patch ergo/008: Drop a requested copy of a modifier already in history instead of penalizing the sender
-# upstream: ergoplatform/ergo#2592 (proposed); origin, witness and responses in patches.json
+# upstream: ergoplatform/ergo#2592 (merged-unreleased); origin, witness and responses in patches.json
 commit 5aa282449551cab394bb70ea25db76e3dd1f1b77
 Author: cafebedouin <cafebedouin@gmail.com>
 Date:   Fri Oct 16 14:33:52 2026 -0500

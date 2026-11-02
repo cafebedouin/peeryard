@@ -92,6 +92,10 @@ split and rejoined, inspected, repaired and sent back out.
   upstream pull requests.
 - `stack/` — a companion for the review queue: which open PRs share text and which one to land first. Git
   only; triage, not authority (see its README's Known issue).
+- `hygiene/` — the open ergoplatform/ergo pull requests against the maintainers' own asks, one row each: base branch
+  role, tied issue, other open pull requests on the same issue, commits already in a branch, new conflicts with the
+  sub-blocks and 6.1 lines, CI and review state; with a merge-ready list for the current release branch. Git and public
+  GitHub data only; branch roles in `hygiene/branches.json`.
 - `patches/` — node fixes peeryard carries until they land upstream (ours and adopted PRs; nine open-PR patches on
   6.0.6 today, eight in the default stack), the reference node built from the release plus those patches, and a check that flags a patch a new
   release has made redundant. A pull-request review builds both jars on the PR's own merge base, never on this stack.

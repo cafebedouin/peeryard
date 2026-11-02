@@ -1,0 +1,22 @@
+{
+ "about": "Branch roles for the pull-request hygiene report (hygiene/build.py). Edit this file, not the code, when a release branch opens or fills. A base branch not named here is an 'other feature branch'.",
+ "repo": "ergoplatform/ergo",
+ "as_of": "2026-11-02",
+ "roles": {
+  "current": ["v6.0.11"],
+  "full": ["v6.0.9", "v6.0.10"],
+  "dead": ["v6.0.3-RC1"],
+  "line": ["weak-blocks", "v5.1.0"],
+  "master": ["master"]
+ },
+ "role_notes": {
+  "current": "the release branch under development: new pull requests go here",
+  "full": "release branches that accept no new pull requests",
+  "dead": "an old release-candidate branch that will not be released again",
+  "line": "long-running development lines: weak-blocks (sub-blocks), v5.1.0 (6.1.x RocksDB pre-releases)",
+  "master": "the default branch"
+ },
+ "landed_targets": ["v6.0.11", "v6.0.10", "v6.0.9", "master", "weak-blocks", "v5.1.0"],
+ "conflict_lines": ["weak-blocks", "v5.1.0"],
+ "release_head": "^v[0-9]"
+}

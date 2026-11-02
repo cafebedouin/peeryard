@@ -1,0 +1,33 @@
+# The pull-request hygiene report for ergoplatform/ergo (hygiene/report.py under hygiene/branches.json): one table of the
+# open pull requests with base role, issue, same-issue clusters, already-landed commits and new conflicts with the
+# development lines. Public GitHub data and git only: no node runs, no secrets beyond the workflow token. Output is a
+# workflow artifact (hygiene.md, hygiene.json), kept 30 days. Hand-maintained.
+#
+# Off until the repository variable HYGIENE_ENABLED is set to true: the scheduled job is skipped (and costs no runner
+# minutes) without it. A manual dispatch runs regardless. A full run took 71 s on a desktop from an empty cache; it has not yet
+# run on a hosted runner (hygiene/README.md, Runtime).
+name: pr hygiene
+on:
+  schedule:
+    - cron: '47 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report:
+    if: github.event_name == 'workflow_dispatch' || vars.HYGIENE_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 hygiene/report.py --out out --git-cache "$RUNNER_TEMP/hygiene"
+      - name: Summary on the run page
+        run: sed -n '1,/^## All open pull requests/p' out/hygiene.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hygiene-${{ github.run_id }}
+          path: out/
+          retention-days: 30

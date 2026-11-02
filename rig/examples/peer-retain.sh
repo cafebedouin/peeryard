@@ -38,8 +38,13 @@
 # Control: RETAIN_CONTROL=active-a restarts A with its peer database and knownPeers kept, so A dials B itself: the
 # inbound-contact check must fire (INCONCLUSIVE). Run it on a jar that removes the peer: on a jar that keeps it, B's own
 # dial can reach A before A's first dial tick (5 s after start), and A, already connected, then dials nothing.
+# Control: RETAIN_CONTROL=b-dials restarts A passive (as with none), then the harness makes B dial A
+# (POST /peers/connect on B, up to 3 tries 10 s apart): the connection the node's own dial would have made, for
+# separating "not re-dialled" from "re-dialled but not caught up".
+# Topology variants (same hook): peer-retain-dt2.json (B's deliveryTimeout 2s), peer-retain-pruned.json (A pruned,
+# blocksToKeep 2000). PEER_RETAIN_MECH=1 turns on peer-retain-mech.sh's 2 s sampler of B's sync state (off by default).
 #   RETAIN_WINDOW_S (300), RETAIN_DEADLINE_S (600), RETAIN_DOWN_EXTRA_S (12), RETAIN_DIAL_WAIT_S (60), RETAIN_FLOOR (10),
-#   RETAIN_LAG (4), RETAIN_CONTROL (none | active-a)
+#   RETAIN_LAG (4), RETAIN_CONTROL (none | active-a | b-dials), PEER_RETAIN_MECH (0)
 W=${RETAIN_WINDOW_S:-300}; DL=${RETAIN_DEADLINE_S:-600}; DOWNX=${RETAIN_DOWN_EXTRA_S:-12}; DIALW=${RETAIN_DIAL_WAIT_S:-60}
 FLOOR=${RETAIN_FLOOR:-10}; LAG=${RETAIN_LAG:-4}; CTL=${RETAIN_CONTROL:-none}
 note(){ echo "[peer-retain] $*"; }
@@ -66,11 +71,13 @@ retain_row(){ local t ball bconn call aconn aup=0 ah=0 bh ch bc sc="-" pa pc
   [[ $aup == 1 ]] && sc=$(same_chain A C | cut -d@ -f1)
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$t" "${ball:-?}" "${bconn:-?}" "${call:-?}" "${aconn:-?}" "$aup" "$ah" "${bh:-?}" "${ch:-?}" "${bc:-?}" "$sc"; }
 
+# shellcheck source=rig/examples/peer-retain-mech.sh
+source "$(dirname "${BASH_SOURCE[0]}")/peer-retain-mech.sh"
 peer_retain(){
   local jarB rule h ah bh ch sc ball bconn call ok i boff aoff boff2 t_stop t_rev t_up t_end T0="" blog blog2 alog clog fails
   local rm_l rm_ms kept_n kept_last bout_ms ain_ms b_in a_dials a_out b_disc c_disc a_seed bstat age chk incs="" outcome
   local retained=false removed=false redial=false converged=false relisted=0 c_max bc_lost c0 c1 last v n aup ball_bad ball_n
-  case "$CTL" in none|active-a) ;; *) retain_end INCONCLUSIVE "RETAIN_CONTROL '$CTL': none or active-a"; return ;; esac
+  case "$CTL" in none|active-a|b-dials) ;; *) retain_end INCONCLUSIVE "RETAIN_CONTROL '$CTL': none, active-a or b-dials"; return ;; esac
   [[ $W -lt $DL ]] || { retain_end INCONCLUSIVE "RETAIN_WINDOW_S $W is not below RETAIN_DEADLINE_S $DL"; return; }
   jarB="${NODE_JAR[B]}"
   # grep -c reads the whole stream: with pipefail, grep -q would end the pipe early and unzip's SIGPIPE would read as no match
@@ -88,6 +95,7 @@ peer_retain(){
   [[ $ok == yes ]] || { retain_end INCONCLUSIVE "A did not reach C's chain at height $FLOOR or more"; return; }
   : > "$TSV"; rm -f "$STOPF"
   ( while [[ ! -f "$STOPF" ]]; do retain_row >> "$TSV"; sleep 2; done ) & local SAMPLER=$!; BG_PIDS+=("$SAMPLER")
+  mech_start
   sleep 4
   read -r _ ball bconn call _ < <(tail -1 "$TSV")
   bstat=$(rest B /peers/status); age=$(jq -r '(.currentSystemTime // 0) - (.lastIncomingMessage // 0)' <<< "$bstat" 2>/dev/null)
@@ -119,11 +127,18 @@ peer_retain(){
   else rm -rf "$SCRATCH/data_A/peers"; CONF_OVR[A]="scorex.network.knownPeers=[]"; fi
   aoff=$(wc -l < "$RIG_LOG_DIR/node_A.log"); boff2=$(wc -l < "$RIG_LOG_DIR/node_B.log"); t_rev=$(date +%s%3N)
   revive A; t_up=$(date +%s%3N)
-  note "A restarted at $(rel "$t_rev") s, REST up at $(rel "$t_up") s (from T0); observing to +${W}s; no /peers/connect from here"
+  note "A restarted at $(rel "$t_rev") s, REST up at $(rel "$t_up") s (from T0); observing to +${W}s; no /peers/connect from here$([[ "$CTL" == b-dials ]] && echo " except the b-dials control")"
+  # control b-dials: the harness makes B dial A (A restarted passive, as without a control); up to 3 tries 10 s apart
+  if [[ "$CTL" == b-dials ]]; then local k
+    for k in 1 2 3; do wallet B /peers/connect "\"$A_ADDR\"" >/dev/null
+      note "control b-dials: POST /peers/connect on B with $A_ADDR (try $k) at $(rel "$(date +%s%3N)") s"; sleep 10
+      [[ "$(rest B /peers/connected | jq -r '[.[]? | select(.name == "A")] | length' 2>/dev/null)" -ge 1 ]] && break; done
+    note "control b-dials: A at B after the dial: $(rest B /peers/connected | jq -r '[.[]? | select(.name == "A") | (.connectionType // "?")] | first // "-"' 2>/dev/null)"
+  fi
 
   # 4. the window
   while [[ $(date +%s%3N) -lt $(( T0 + W * 1000 )) ]]; do sleep 1; done
-  t_end=$(date +%s%3N); touch "$STOPF"; sleep 3; kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null
+  t_end=$(date +%s%3N); touch "$STOPF"; sleep 3; kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null; mech_stop
   blog=$(lines_after B "$boff"); blog2=$(lines_after B "$boff2"); alog=$(lines_after A "$aoff"); clog=$(cat "$RIG_LOG_DIR/node_C.log")
   fails=$(grep -c -F "Failed to connect to /$A_ADDR" <<< "$blog")
   rm_l=$(grep -m1 -F "/$A_ADDR removed from peers database" <<< "$blog"); rm_ms=""; [[ -n "$rm_l" ]] && rm_ms=$(log_ms "${rm_l:0:12}")

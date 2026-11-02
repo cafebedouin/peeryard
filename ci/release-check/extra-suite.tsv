@@ -4,3 +4,5 @@
 loss	LOSS: PASS	900	-	-
 upgrade-restart	UPGRADE-RESTART: PASS	1200	-	release
 upgrade-mixed	UPGRADE-MIXED: PASS	1500	-	release
+pruned-restart	PRUNED-RESTART: PASS	1500	-	-
+pruned-upgrade	PRUNED-RESTART: PASS	1500	-	release

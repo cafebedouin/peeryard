@@ -31,3 +31,5 @@ wallet-oracle-restart	suite	0	1	-	a wallet's view after a restart equals a refer
 soak	suite	0	1	-	five minutes of mining with crash-and-revive every two minutes
 corruption	suite	0	1	-	a damaged data dir on revive: refused, recovered or stuck, never a wrong state root (experimental)
 mining	suite	0	1	-	mine, quiescence, start and stop mining (experimental)
+pruned-restart	suite	0	1	-	a pruned node restarted across the floor's voting-epoch move prunes every height below the moved floor; a pruned node that stays up is the control
+pruned-upgrade	upgrade	0	0	-	a pruned baseline store upgraded in place across that move prunes every height below the moved floor

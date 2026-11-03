@@ -1,0 +1,110 @@
+diff --git a/src/test/scala/scorex/db/ConcurrentCloseProbeSpec.scala b/src/test/scala/scorex/db/ConcurrentCloseProbeSpec.scala
+new file mode 100644
+index 000000000..2588753e3
+--- /dev/null
++++ b/src/test/scala/scorex/db/ConcurrentCloseProbeSpec.scala
+@@ -0,0 +1,43 @@
++package scorex.db
++
++import java.io.File
++import java.nio.file.Files
++import java.util.concurrent.{CyclicBarrier, Executors, TimeUnit}
++
++import org.iq80.leveldb.Options
++import org.scalatest.matchers.should.Matchers
++import org.scalatest.propspec.AnyPropSpec
++
++import scala.util.Try
++
++// Throwaway probe (not for any PR): two threads close one registered native DB at the same moment.
++class ConcurrentCloseProbeSpec extends AnyPropSpec with Matchers {
++
++  property("RDBPROBE: two threads close one registered DB at once") {
++    val n = 2000
++    val pool = Executors.newFixedThreadPool(2)
++    val root = Files.createTempDirectory("rdbprobe").toFile
++    println(s"RDBPROBE factory=${LDBFactory.factory} n=$n")
++    var closeErrors = 0
++    var i = 0
++    while (i < n) {
++      val dir = new File(root, s"db$i")
++      dir.mkdirs()
++      val opts = new Options()
++      opts.createIfMissing(true)
++      val a = LDBFactory.factory.open(dir, opts)
++      val b = LDBFactory.factory.open(dir, opts)
++      (a eq b) shouldBe true // the registry hands both openers the same RegisteredDB
++      a.put(Array[Byte](1), Array[Byte](2))
++      val barrier = new CyclicBarrier(2)
++      val f1 = pool.submit(new Runnable { def run(): Unit = { barrier.await(); a.close() } })
++      val f2 = pool.submit(new Runnable { def run(): Unit = { barrier.await(); b.close() } })
++      if (Try(f1.get(30, TimeUnit.SECONDS)).isFailure) closeErrors += 1
++      if (Try(f2.get(30, TimeUnit.SECONDS)).isFailure) closeErrors += 1
++      if (i % 250 == 0) println(s"RDBPROBE iter=$i")
++      i += 1
++    }
++    println(s"RDBPROBE done n=$n closeErrors=$closeErrors")
++    pool.shutdown()
++  }
++}
+diff --git a/avldb/src/main/scala/scorex/db/LDBFactory.scala b/avldb/src/main/scala/scorex/db/LDBFactory.scala
+index 65fca5a39..6b79c3f8c 100644
+--- a/avldb/src/main/scala/scorex/db/LDBFactory.scala
++++ b/avldb/src/main/scala/scorex/db/LDBFactory.scala
+@@ -19,12 +19,15 @@ case class StoreRegistry(factory: DBFactory) extends DBFactory with ScorexLoggin
+   val map = new mutable.HashMap[File, RegisteredDB]
+ 
+   /**
+-    * Decorator of LevelDB DB class which overrides close() methods and unlinks database from registry on close.
+-    * So if database was not explicitly closed, then next attempt to open database with the same path will
+-    * return existed instance instead of creating new one.
++    * Decorator that forwards close at most once and unlinks only its own registry entry
++    * after that attempt. A failed close is rethrown and still unlinks the entry, as before.
++    * An open database is reused until its close attempt completes.
+     */
+   case class RegisteredDB(impl: DB, path: File) extends DB {
+ 
++    // Guarded by the registry lock, shared with open for this path.
++    private var closeAttempted = false
++
+     def get(key: Array[Byte]): Array[Byte] = impl.get(key)
+ 
+     def get(key: Array[Byte], options: ReadOptions): Array[Byte] = impl.get(key, options)
+@@ -60,8 +63,19 @@ case class StoreRegistry(factory: DBFactory) extends DBFactory with ScorexLoggin
+     def compactRange(begin: Array[Byte], end: Array[Byte]): Unit = impl.compactRange(begin, end)
+ 
+     override def close(): Unit = {
+-      remove(path)
+-      impl.close()
++      lock.writeLock().lock()
++      try {
++        if (!closeAttempted) {
++          closeAttempted = true
++          try {
++            impl.close()
++          } finally {
++            if (map.get(path).exists(_ eq this)) map.remove(path)
++          }
++        }
++      } finally {
++        lock.writeLock().unlock()
++      }
+     }
+   }
+ 
+@@ -74,15 +88,6 @@ case class StoreRegistry(factory: DBFactory) extends DBFactory with ScorexLoggin
+     }
+   }
+ 
+-  private def remove(path: File): Option[RegisteredDB] = {
+-    lock.writeLock().lock()
+-    try {
+-      map.remove(path)
+-    } finally {
+-      lock.writeLock().unlock()
+-    }
+-  }
+-
+   def open(path: File, options: Options): DB = {
+     lock.writeLock().lock()
+     try {

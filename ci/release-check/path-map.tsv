@@ -7,8 +7,8 @@
 # diffrun/scenarios/FIT.md, coarser: the release check picks scenarios to run, it does not judge a change.
 ^src/main/scala/org/ergoplatform/network/	netsplit flap loss churn reorder-dup-phases mixed fork-convergence sibling-fork txload	sync negotiation, download, peer handling, transaction relay
 ^src/main/scala/scorex/	netsplit flap loss churn reorder-dup-phases mixed	the network layer and utilities inherited from Scorex
-^src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/	fork-convergence sibling-fork netsplit reorg-mempool bootstrap-modes utxo-bootstrap nipopow-bootstrap	best-chain choice, section application, download scheduling, pruning, NiPoPoW
-^src/main/scala/org/ergoplatform/nodeView/history/[^/]+\.scala$	fork-convergence sibling-fork reorg-mempool corruption netsplit	history storage and reads
+^src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/	fork-convergence sibling-fork netsplit reorg-mempool bootstrap-modes utxo-bootstrap nipopow-bootstrap pruned-restart pruned-upgrade	best-chain choice, section application, download scheduling, pruning, NiPoPoW
+^src/main/scala/org/ergoplatform/nodeView/history/[^/]+\.scala$	fork-convergence sibling-fork reorg-mempool corruption netsplit pruned-restart pruned-upgrade	history storage and reads
 ^src/main/scala/org/ergoplatform/nodeView/history/extra/	-	the extra indexer: not run here (review/release-check.sh runs indexer-diff)
 ^src/main/scala/org/ergoplatform/nodeView/state/	utxo-bootstrap bootstrap-modes corruption mixed-roles-phases	UTXO and digest state, snapshots, recovery
 ^src/main/scala/org/ergoplatform/nodeView/mempool/	txload txchain mempool-evict reorg-mempool	mempool policy and ordering

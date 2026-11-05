@@ -60,14 +60,6 @@ Labels: use the thread's own convention if it has one; otherwise exactly one of
 11b. **No issue, no PR.** A pull request fixes an issue it names (`Fixes #N`); open the issue first when none
     exists. The issue carries the problem, how to reproduce it and the evidence (the peeryard run and its numbers);
     the PR carries the patch and its test. A list of related pull requests is not an issue.
-11c. **Related changes: small and independent, or native stacks; no hand-built stacks.** Keep PRs small and
-    independent, one issue each. When one change needs another: if both are small, one PR with a separate commit per
-    logical step (the description says "review commit by commit"); otherwise file the second after the first merges,
-    and say in each description what it builds on. With push access to the upstream repository, GitHub's native
-    stacked pull requests are fine (`gh stack`; all branches must live in that repository, cross-fork stacks are not
-    supported). From a fork, do not emulate stacks by hand (PRs carrying the layers below them, drafts held until the
-    lower one merges, rebases down the chain). Before opening any PR, look at the open PRs touching the same files,
-    anyone's: when one overlaps, build on it (a PR into its branch) rather than beside it.
 11c. **A/B the logs, not only the predicate.** A before/after shows the fault without the change and its absence with it;
     it does not show what else the change did. Every executed A/B therefore states its log profile difference in one
     clause after `Executed:` (`Logs:`): the per-run features that separate the candidate's node logs from the base's
@@ -81,6 +73,14 @@ Labels: use the thread's own convention if it has one; otherwise exactly one of
 11d. **Disclose your stake.** When the pull request is the reviewer's own, fixes an issue the reviewer filed, or adapts
     the reviewer's test, the verdict paragraph says so in one clause. `review/pick.sh` prints each PR's author and marks
     the reviewer's own (`own`); it never picks one of those at random.
+11e. **Related changes: small and independent, or native stacks; no hand-built stacks.** Keep PRs small and
+    independent, one issue each. When one change needs another: if both are small, one PR with a separate commit per
+    logical step (the description says "review commit by commit"); otherwise file the second after the first merges,
+    and say in each description what it builds on. With push access to the upstream repository, GitHub's native
+    stacked pull requests are fine (`gh stack`; all branches must live in that repository, cross-fork stacks are not
+    supported). From a fork, do not emulate stacks by hand (PRs carrying the layers below them, drafts held until the
+    lower one merges, rebases down the chain). Before opening any PR, look at the open PRs touching the same files,
+    anyone's: when one overlaps, build on it (a PR into its branch) rather than beside it.
 
 12. **Credit in the first line, always.** Every text opens with a credit line that names the tool and the model
     that prepared it, the peeryard version and the node builds that were run: "Prepared with <tool> (<vendor>,

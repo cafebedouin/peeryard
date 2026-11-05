@@ -148,11 +148,17 @@ under another precedence, plus every run's role, index, class, versions and metr
 known: a code only (`^[A-Z_]{3,40}$`), never free text: a hook's own (`[rig] CAUSE (hook) X`), a scenario's die code
 (`CAUSE X`, e.g. `SETUP_PREFIX_RACE`, `SETUP_NODE_API`, `SETUP_SYNC`, `SETUP_FORK_STAGING`), or the rig classifier's
 (`diag/diagnose.py`); the evidence text stays in the run's `metadata.json` (`cause_evidence`). The table prints it. It also carries
-`provenance` (the scenario script's and the precheck's sha256, the manifest `env`, the runner's git revision, and
-`host`: kernel, cpu count and memory, no hostname, because an A/A rate is a per-host number),
+`provenance` (the scenario script's and the precheck's sha256, the manifest `env`, the runner's git revision,
+`code`, and `host`: kernel, cpu count and memory, no hostname, because an A/A rate is a per-host number),
 `same_jar` (true when both roles ran the same jar: an **A/A control**, whose verdict says nothing about a
 change and is labelled so in the table) and `n_overridden` (a `SUPPORTS` reached under a `-n` override is
 labelled "not citable" in the table, because the false-SUPPORTS rates below assume the manifest's `n`).
+The script's sha256 alone does not name what decided a run: a rig-backed scenario's script is a short wrapper, and
+its predicate lives in the hook, `lib/rig-scenario.sh` and `rig/rig.sh`. `provenance.code` names those bytes. It holds
+the full revision (`rev`), the git tree id of `rig/`, `diag/` and `diffrun/` as they were on disk at launch (`trees`:
+tracked and untracked files, ignored ones aside), and `matches_rev` (true when every tree equals that revision's; on a
+clean checkout `git rev-parse <rev>:rig` prints the same id). It is null outside a git checkout. Verdicts written
+before it existed carry only the script's sha256.
 `table.txt` is the same for humans. `examples/` holds one finished run of each kind.
 
 **Log comparison (after the verdict).** Every VALID run keeps its node logs, gzipped, under `runs/<role>-<i>/logs/`

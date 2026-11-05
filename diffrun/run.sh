@@ -88,6 +88,32 @@ for role in base candidate; do
   SHA[$role]="$actual"; EXPV[$role]="$(jq -r .expected_app_version "$sc")"
 done
 
+# ---------------- the measurement code, as it is on disk at launch ----------------
+# The entry script's sha256 alone does not name what decided a run: a rig-backed scenario's script is a wrapper, and the
+# predicate lives in its hook, lib/rig-scenario.sh and rig/rig.sh. So verdict.json also records the git tree id of
+# rig/, diag/ and diffrun/ as they are on disk at launch (tracked or untracked files, ignored ones aside), the full
+# revision, and whether every tree equals that revision's (`git rev-parse <rev>:rig` gives the same id on a clean
+# checkout). Hashed into a scratch object store, so nothing is written to the repository. Null outside a git checkout.
+code_provenance(){ local root="$1" tmp rev pre alt out
+  rev="$(git -C "$root" rev-parse -q --verify HEAD 2>/dev/null)" || { echo null; return; }
+  pre="$(git -C "$root" rev-parse --show-prefix 2>/dev/null)" || { echo null; return; }
+  alt="$(git -C "$root" rev-parse --path-format=absolute --git-path objects 2>/dev/null)" || { echo null; return; }
+  tmp="$(mktemp -d)" || { echo null; return; }; mkdir -p "$tmp/objects"
+  out="$( export GIT_INDEX_FILE="$tmp/index" GIT_OBJECT_DIRECTORY="$tmp/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$alt"
+          cd "$root" || exit 1
+          git add -A -- rig diag diffrun >/dev/null 2>&1 || exit 1
+          tree="$(git write-tree)" || exit 1
+          for d in rig diag diffrun; do
+            printf '%s %s %s\n' "$d" "$(git rev-parse -q --verify "$tree:$pre$d" 2>/dev/null)" \
+                                     "$(git rev-parse -q --verify "$rev:$pre$d" 2>/dev/null)"
+          done )" || out=""
+  rm -rf "$tmp"
+  [[ -n "$out" ]] || { echo null; return; }
+  jq -Rn --arg rev "$rev" '[inputs | split(" ") | {key: .[0], value: {t: (if .[1] == "" then null else .[1] end), r: .[2]}}] | from_entries
+    | {rev: $rev, trees: map_values(.t), matches_rev: ([.[] | .t != null and .t == .r] | length == 3 and all)}' <<< "$out"
+}
+CODEJ="$(code_provenance "$(realpath -e "$HERE/..")")"; [[ -n "$CODEJ" ]] || CODEJ=null
+
 # ---------------- output directory ----------------
 if [[ -z "$OUT" ]]; then OUT="$(mktemp -d "${TMPDIR:-/tmp}/diffrun.$NAME.XXXXXX")" || err "cannot create an output dir"
 else
@@ -258,7 +284,7 @@ PEND="$OUT/.pending"; mkdir -p "$PEND" || err "cannot create $PEND"
 jql -n --slurpfile m "$MAN" --slurpfile runs "$OUT/runs.jsonl" --argjson minv "$MINV" --argjson n "$N_RUN" --argjson nmin "$N" --argjson maxn "$MAXN" --arg stopped "$STOPPED_BY" \
     --arg bsha "${SHA[base]}" --arg csha "${SHA[candidate]}" --arg bv "${EXPV[base]}" --arg cv "${EXPV[candidate]}" \
     --arg ssha "$(sha256sum "$SCRIPT" | cut -d' ' -f1)" --arg psha "$([[ -n "$PRECHECK" ]] && sha256sum "$PRECHECK" | cut -d' ' -f1)" \
-    --arg rev "$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)" --argjson host "$HOSTJ" \
+    --arg rev "$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)" --argjson host "$HOSTJ" --argjson code "$CODEJ" \
     --arg pyv "$(tr -d '[:space:]' < "$HERE/../VERSION" 2>/dev/null || echo unknown)" '
   include "diffrun";
   $m[0] as $m
@@ -267,7 +293,7 @@ jql -n --slurpfile m "$MAN" --slurpfile runs "$OUT/runs.jsonl" --argjson minv "$
       precedence: ["DEGENERATE", "AGAINST", "NULL", "SUPPORTS"],
       same_jar: ($bsha == $csha),
       provenance: { scenario_script_sha256: $ssha, precheck_sha256: (if $psha == "" then null else $psha end),
-                    env: ($m.env // {}), peeryard_version: $pyv, runner_rev: $rev, host: $host },
+                    env: ($m.env // {}), peeryard_version: $pyv, runner_rev: $rev, code: $code, host: $host },
       precheck: (if $m | has("precheck") then { script: $m.precheck, failed: ([$runs[] | select(.precheck == "fail")] | length) } else null end),
       n_manifest: $m.n, n_min: $nmin, n_run: $n, n_overridden: ($nmin != $m.n), min_valid_runs: $minv,
       sequential: (if $m | has("stop_when") then { max_n: $m.max_n, max_n_effective: $maxn, stop_when: $m.stop_when, stopped_by: $stopped } else null end),

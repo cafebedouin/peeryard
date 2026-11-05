@@ -169,6 +169,29 @@ expect_rc "rig-example run: brokenx (rig exit 3) -> verdict written" 0 "$(rx bro
 expect_eq "rig-example run: ... INCONCLUSIVE (setup), the hook's cause, DEGENERATE" "INCONCLUSIVE:setup:SETUP_FLOOR DEGENERATE" "$(v brokenx '"\(.runs[0].class):\(.runs[0].reason):\(.runs[0].cause) \(.verdict)"')"
 expect_rc "rig-example run: okx, nodes report another appVersion" 0 "$(rx okx '' okx-void STUB_APP_VERSION=9.9.9)"
 expect_eq "rig-example run: ... VOID (version-mismatch)" "VOID:version-mismatch" "$(v okx-void '"\(.runs[0].class):\(.runs[0].reason)"')"
+# provenance.code: the git trees of rig/, diag/ and diffrun/ as they were on disk, against the revision. The entry
+# script (rig-example.sh) is a wrapper: a byte changed in the hook leaves its sha256 alone and must change the trees.
+mkdir -p "$Y/diag"; echo stub > "$Y/diag/stub.py"; echo readme > "$Y/README.md"
+gy(){ git -C "$Y" -c init.defaultBranch=main -c user.name=t -c user.email=t@t "$@"; }
+gy init -q && gy add -A && gy commit -qm c0
+pc(){ jq -cn --slurpfile a "$T/o-$1/verdict.json" --slurpfile b "$T/o-$2/verdict.json" '$a[0].provenance as $x | $b[0].provenance as $y
+  | [(["rig", "diag", "diffrun"][] | if $x.code.trees[.] == $y.code.trees[.] then "same" else "changed" end),
+     $y.code.matches_rev, (if $x.scenario_script_sha256 == $y.scenario_script_sha256 then "script-same" else "script-changed" end)]'; }
+expect_rc "provenance.code: okx on a committed tree -> verdict written" 0 "$(rx okx '' prov-clean)"
+expect_eq "provenance.code: ... clean: rev and every tree are HEAD's, matches_rev true" \
+  "$(gy rev-parse HEAD) $(gy rev-parse HEAD:rig) $(gy rev-parse HEAD:diag) $(gy rev-parse HEAD:diffrun) true" \
+  "$(v prov-clean '.provenance.code | "\(.rev) \(.trees.rig) \(.trees.diag) \(.trees.diffrun) \(.matches_rev)"')"
+echo more >> "$Y/README.md"; rx okx '' prov-readme > /dev/null
+expect_eq "provenance.code: ... a file outside rig/ diag/ diffrun/ changed -> trees unchanged, matches_rev true" \
+  '["same","same","same",true,"script-same"]' "$(pc prov-clean prov-readme)"
+printf ' ' >> "$Y/rig/examples/okx.sh"; rx okx '' prov-hook > /dev/null
+expect_eq "provenance.code: ... one byte in the hook -> rig tree changed, matches_rev false, script sha unchanged" \
+  '["changed","same","same",false,"script-same"]' "$(pc prov-clean prov-hook)"
+truncate -s -1 "$Y/rig/examples/okx.sh"; echo extra > "$Y/diag/untracked.py"; rx okx '' prov-untracked > /dev/null
+expect_eq "provenance.code: ... an untracked file in diag/ -> diag tree changed" \
+  '["same","changed","same",false,"script-same"]' "$(pc prov-clean prov-untracked)"
+rm -rf "$Y/.git" "$Y/diag/untracked.py"
+expect_eq "provenance.code: ... outside a git checkout -> null" "null" "$( (rx okx '' prov-nogit > /dev/null); v prov-nogit '.provenance.code')"
 # run_rig_scenario (the library's first entry point, shared with rig_scenario_launch): a stub scenario whose hook prints
 # its own RESULT_JSON, as interop's does; and one whose hook prints none (INCONCLUSIVE)
 echo '{"nodes": [{"name": "A"}]}' > "$Y/diffrun/scenarios/hooks/stubrs.json"

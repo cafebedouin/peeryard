@@ -84,9 +84,11 @@ split and rejoined, inspected, repaired and sent back out.
   passive wire observer (`wire.py`: per-link pcaps, each Ergo message framed and six kinds parsed, `PEERYARD_WIRE=1`).
 - `diffrun/` — the scenario runner: build a candidate jar from a git ref, a patch, or part of a pull request
   (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`.
-  Six node scenarios ship (`fork-convergence`, `sibling-fork`, `interop`, `txload`, `bootstrap-modes`,
-  `matrix-paychain`); `fork-convergence`, `sibling-fork` and `matrix-paychain` reproduce behavior that is public in
-  upstream issues or PRs (`matrix-paychain` on the Matrix line), the other three check agreement.
+  The scenarios are the manifests under `diffrun/scenarios/`; `diffrun/README.md` (*Scenarios*) is the catalog, and
+  `diffrun/scenarios/FIT.md` maps production paths to the scenario that answers for them. Among them,
+  `fork-convergence`, `sibling-fork` and `matrix-paychain` reproduce behavior that is public in upstream issues or
+  PRs (`matrix-paychain` on the Matrix line), and `interop`, `txload` and `bootstrap-modes` check agreement; the
+  rest include the indexer, the wallet, crash consistency, storage rent and the relay floor.
 - `regression/` — the same link shaping inside ergo's own Docker integration suite (a sidecar with `NET_ADMIN`,
   node image untouched), with three example specs and a failure classifier, as a patch on v6.0.6 meant to become
   upstream pull requests.
@@ -263,19 +265,20 @@ are public devnet test values, not secrets: they unlock only the private devnets
 | `txload` | 2 | are real wallet payments accepted, confirmed and counted in blocks? | agreement check |
 | `bootstrap-modes` | 3 | do a digest-mode follower and a pruning follower settle on the miner's chain and state root? | agreement check |
 
-`fork-convergence` and `sibling-fork` run empty-block devnets, so they observe header and block-section behavior
-only; `txload` covers the payment path. The details, the expectations and the known limits of each are in
-`diffrun/README.md`.
+These five are the lead and agreement scenarios; the full catalog is in `diffrun/README.md`. `fork-convergence` and
+`sibling-fork` run empty-block devnets, so they observe header and block-section behavior only; `txload` covers the
+payment path. The details, the expectations and the known limits of each are in `diffrun/README.md`.
 
 ## Where this is going
-In the tree: a scenario template on the rig (`diffrun/scenarios/lib/rig-scenario.sh`, used by `interop`,
-`txload` and `bootstrap-modes`), a calibration run (`diffrun/examples/fork-convergence-aa-6.0.6/`: the release's
+In the tree: a scenario template on the rig (`diffrun/scenarios/lib/rig-scenario.sh`, used by every scenario except
+`fork-convergence`, `sibling-fork` and `wallet-oracle`), a release-candidate check on hosted runners
+(`docs/release-check.md`), a calibration run (`diffrun/examples/fork-convergence-aa-6.0.6/`: the release's
 own base rate on one host, read before any `SUPPORTS` is cited), `rig/preflight.sh`, and the review frame
 (`review/`, including a revert check for a PR's new tests, `review/revert-check.sh`, and a picker that builds on
 each PR's own merge base, `review/pick.sh`; the frame was used for the pilot reviews posted before the rename, the
 merge-base picker is newer and unexercised on a live pull request). Still planned: the two
 lead scenarios (`fork-convergence`, `sibling-fork`) moved onto the rig so its oracles apply to them; scenarios
-built from open field reports; a release-candidate run before each tag; and, once the maintainers have been
+built from open field reports; and, once the maintainers have been
 asked, a driver that turns review requests into these runs.
 
 The docs: `rig/README.md`, `diffrun/README.md`, `regression/README.md`, `stack/README.md`.

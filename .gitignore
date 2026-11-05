@@ -10,3 +10,9 @@ issues.json
 
 # rendered review-queue pages (queue/build.py output; deployed by the workflow, never committed)
 site/
+
+# stray outputs at the root: ci/release-check/scope.py writes scope.{json,md} to the working directory by default
+# (the workflow passes --out), and an empty ergo.log was once committed by accident
+/scope.json
+/scope.md
+/ergo.log

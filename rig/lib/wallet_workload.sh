@@ -18,9 +18,10 @@ WW_CLEAR_S="${WW_CLEAR_S:-60}"                    # how long, after confirmation
 WW_SYNC_S="${WW_SYNC_S:-240}"                     # how long a follower may take to reach the miner's tip before a step
 WW_AGREE_S="${WW_AGREE_S:-90}"                    # how long to look for all nodes at one height with one state root
 WW_FUND_BOXES="${WW_FUND_BOXES:-12}"; WW_FUND_NANOERG="${WW_FUND_NANOERG:-5000000000}"
-WW_CONTROL="${WW_CONTROL:-none}"                  # none | positive (the burn step also asserts the burned amount is still held: must FAIL)
+WW_CONTROL="${WW_CONTROL:-none}"                  # none | positive (the burn step also asserts the burned amount is still held,
+                                                  # the ahead step that an output sits below an input: each must FAIL)
 WW_CHECK_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WW_DIR=""; WW_STEP=0; WW_TOKEN=""; WW_SCAN_BOXES="[]"; WW_MINER_ADDR=""; WW_ADDR=""
+WW_DIR=""; WW_STEP=0; WW_TOKEN=""; WW_SCAN_BOXES="[]"; WW_MINER_ADDR=""; WW_ADDR=""; WW_CUT=()
 
 # the step lists the presets name (rig/WALLET-WORKLOAD.md, "Steps"); WW_STEPS or the topology's workload.steps override
 ww_preset_steps(){ case "${1:-full}" in
@@ -28,6 +29,7 @@ ww_preset_steps(){ case "${1:-full}" in
   aa)     echo "send:3 mint:1000 transfer:100 burn:50 fee:6" ;;
   posctl) echo "mint:1000 burn:50" ;;
   conflict) echo "resubmit:0*3 conflict*3" ;;
+  ahead)  echo "ahead:auto ahead:raw" ;;
   *) return 1 ;; esac; }
 # ww_expand "<a b*3 c:2>": one step per line, the repeat expanded
 ww_expand(){ local t k n i; for t in ${1//,/ }; do k="${t%%\**}"; n=1; [[ "$t" == *\** ]] && n="${t##*\*}"
@@ -281,6 +283,72 @@ ww_step_conflict(){ local st h0 box raw t1 t2 i1 i2 p1 p2 r1 r2 ids pc
     '{kind: "conflict", ids: $ids, box: $b, start_heights: $st,
       submits: [[$w, $r1], [$t, $r2]] | map({node: .[0], reply_id: (if .[1] | startswith("ID ") then .[1][3:] else null end), reason: (if .[1] | startswith("NO ") then .[1][3:] else null end)})} + $pc')" "$ids" "$h0"; }
 
+# ahead [auto|raw]: the wallet's node one block behind a payer. The wallet's node is cut from every node it links to;
+# the miner, which keeps mining, signs a payment to the wallet whose outputs carry the next height (h + 1, the height a
+# wallet one block ahead writes) from a box both nodes hold, and its bytes go to the wallet node's /transactions
+# directly. With that payment unconfirmed in the wallet node's pool, the wallet builds a transaction spending its box:
+# auto (default) = a payment to its own address larger than its confirmed balance, so its own box selection must take
+# the unconfirmed box; raw = the unconfirmed box given as inputsRaw. Then the cut heals and every node must end on one
+# chain. The payer's heights are set in the unsigned transaction (/wallet/transaction/generateUnsigned, then /sign)
+# because the miner's own height moves every few seconds while the wallet's node stands still.
+ww_ahead_heal(){ local c; for c in "${WW_CUT[@]}"; do heal "$WW_WALLET" "$c"; done; WW_CUT=(); }
+ww_ahead_setup(){ ww_ahead_heal; ww_record "$(jq -nc --arg a "$1" --arg s "$2" '{kind: "ahead", arg: $a, setup: $s}')"; ww_sync "${NODES[@]}" || true; }
+ww_step_ahead(){ local mode="${1:-auto}" pay=3000000000 n ha hm hm_sign mt mbox mraw u su pid pr body="" seen=false bc i bu req tx ubox ubytes ins outs sub ha2 txid ids conf resub=() pc b
+  case "$mode" in auto|raw) ;; *) ww_record "$(jq -nc --arg a "$mode" '{kind: "ahead", arg: $a, setup: "unknown mode \($a) (auto | raw)"}')"; return ;; esac
+  ww_quiet; ww_sync "${NODES[@]}" || ww_say "WARN not every node at the miner's tip before the step"
+  WW_CUT=(); for n in "${NODES[@]}"; do [[ "$n" != "$WW_WALLET" ]] && have_link "$WW_WALLET" "$n" && { partition "$WW_WALLET" "$n"; WW_CUT+=("$n"); }; done
+  ha=$(full_height "$WW_WALLET"); ww_wallet_at "$WW_WALLET" "$ha" || ww_say "WARN $WW_WALLET's wallet not at its own height $ha"
+  local end=$((SECONDS + 60)); while hm=$(full_height "$WW_MINER"); [[ "$hm" -le "$ha" && $SECONDS -lt $end ]]; do sleep 1; done
+  [[ "$hm" -gt "$ha" ]] || { ww_ahead_setup "$mode" "the miner did not get ahead of the cut wallet node ($WW_MINER $hm, $WW_WALLET $ha)"; return; }
+  # a plain box of the miner's, included at or below the wallet node's height, which that node also holds
+  mt=$(ww_tree "$WW_MINER_ADDR")
+  mbox=$(wallet "$WW_MINER" "/wallet/boxes/unspent?minConfirmations=1&limit=2500" | jq -r --arg t "$mt" --argjson h "$ha" --argjson v $((pay + 2 * WW_FEE + 1000000000)) \
+    '[.[]? | select(.inclusionHeight <= $h and .box.ergoTree == $t and (.box.assets | length) == 0 and .box.value >= $v) | .box.boxId] | .[0] // empty')
+  [[ -n "$mbox" && -n "$(rest "$WW_WALLET" "/utxo/byId/$mbox" | jq -r '.boxId // empty')" ]] || { ww_ahead_setup "$mode" "no plain miner box included by height $ha that $WW_WALLET holds"; return; }
+  mraw=$(rest "$WW_MINER" "/utxo/byIdBinary/$mbox" | jq -r '.bytes // empty')
+  u=$(wallet "$WW_MINER" /wallet/transaction/generateUnsigned "{\"requests\":[{\"address\":\"$WW_ADDR\",\"value\":$pay}],\"inputsRaw\":[\"$mraw\"],\"fee\":$WW_FEE}")
+  su=$(jq -c --argjson h $((ha + 1)) --arg r "$mraw" '{tx: (.outputs |= map(.creationHeight = $h)), inputsRaw: [$r]}' <<< "$u" 2>/dev/null)
+  hm_sign=$(full_height "$WW_MINER")
+  pid=""; [[ -n "$su" ]] && { body=$(wallet "$WW_MINER" /wallet/transaction/sign "$su"); pid=$(jq -r '.id // empty' <<< "$body" 2>/dev/null); }
+  [[ -n "$pid" ]] || { ww_ahead_setup "$mode" "the miner did not sign the payment: $(ww_reply "${body:-$u}" | cut -c1-200)"; return; }
+  pr=$(ww_reply "$(ww_submit "$WW_WALLET" "$body")")
+  [[ "$pr" == ID* ]] || { ww_ahead_setup "$mode" "$WW_WALLET refused the payer's transaction: ${pr#NO }"; return; }
+  ubox=$(jq -r --arg t "$(ww_tree "$WW_ADDR")" '[.outputs[] | select(.ergoTree == $t) | .boxId] | .[0] // empty' <<< "$body")
+  bc=$(ww_balance "$WW_WALLET" | jq -r .erg)
+  for ((i = 0; i < 20; i++)); do bu=$(wallet "$WW_WALLET" /wallet/balances/withUnconfirmed | jq -r '.balance // 0'); [[ "$bu" -ge $((bc + pay)) ]] && { seen=true; break; }; sleep 1; done
+  [[ $seen == true ]] || { ww_ahead_setup "$mode" "the wallet does not count the unconfirmed box (confirmed $bc, with unconfirmed $bu)"; return; }
+  ww_say "ahead $mode: $WW_WALLET at $ha (cut), $WW_MINER at $hm_sign; payer's ${pid:0:16} pooled at $WW_WALLET, outputs at $((ha + 1)), box ${ubox:0:16}"
+  if [[ "$mode" == auto ]]; then req="{\"requests\":[{\"address\":\"$WW_ADDR\",\"value\":$((bc - WW_FEE + pay / 2))}],\"fee\":$WW_FEE}"
+  else ubytes=$(rest "$WW_WALLET" "/utxo/withPool/byIdBinary/$ubox" | jq -r '.bytes // empty')
+    req="{\"requests\":[{\"address\":\"$WW_ADDR\",\"value\":$((pay / 2))}],\"inputsRaw\":[\"$ubytes\"],\"fee\":$WW_FEE}"; fi
+  tx=$(ww_generate "$WW_WALLET" "$req"); txid=$(jq -r '.id // empty' <<< "$tx" 2>/dev/null)
+  ins='[]'; outs='[]'; sub=""
+  if [[ -n "$txid" ]]; then
+    ins=$(ww_boxes "$WW_WALLET" "$(jq -c '[.inputs[].boxId]' <<< "$tx")" | jq -c '[.[]? | {boxId, creationHeight}]')
+    outs=$(jq -c '[.outputs[] | .creationHeight]' <<< "$tx")
+    sub=$(ww_reply "$(ww_submit "$WW_WALLET" "$tx")")
+  else sub="NO not built: $(ww_reply "$tx" | cut -c4-)"; fi
+  ha2=$(full_height "$WW_WALLET")
+  ww_say "ahead $mode: wallet transaction ${txid:0:16} inputs at $(jq -c 'map(.creationHeight)' <<< "$ins"), outputs at $outs -> ${sub:0:200}"
+  ww_ahead_heal; ww_sync "${NODES[@]}" || ww_say "WARN not every node at the miner's tip after the heal"
+  ids=$(jq -nc --arg p "$pid" --arg t "$([[ "$sub" == ID* ]] && echo "$txid")" '[$p, $t] | map(select(. != ""))')
+  # relay across a healed cut is not this step's question: an id in neither the miner's pool nor its chain after 20 s
+  # is submitted to the miner as the bytes the wallet node holds (recorded)
+  sleep 20
+  for i in $(jq -r '.[]' <<< "$ids"); do
+    if [[ -z "$(ww_pool_body "$WW_MINER" "$i")" ]] && [[ "$(ww_where "$WW_MINER" "$ha" "[\"$i\"]" | jq -r --arg i "$i" '.[$i] | length')" == 0 ]]; then
+      b=$(ww_pool_body "$WW_WALLET" "$i"); [[ -n "$b" ]] && { ww_submit "$WW_MINER" "$b" >/dev/null; resub+=("$i"); }; fi; done
+  conf=$(ww_wait_confirm "$ha" "$ids"); ww_sync "${NODES[@]}" || true
+  pc=$(ww_pools_clear "$ids" "$WW_CLEAR_S")
+  ww_record "$(jq -nc --arg a "$mode" --argjson ha "$ha" --argjson ha2 "${ha2:-0}" --argjson hm "$hm_sign" --arg pid "$pid" --arg ub "$ubox" --arg txid "$txid" \
+      --argjson ins "$ins" --argjson outs "$outs" --arg sub "$sub" --argjson conf "$conf" --arg ag "$(ww_agree)" --argjson pc "$pc" \
+      --argjson rs "$(printf '%s\n' "${resub[@]}" | jq -R 'select(. != "")' | jq -sc .)" --argjson s "$WW_SCAN_BOXES" \
+    '{kind: "ahead", arg: $a, wallet_height: $ha, wallet_height_at_submit: $ha2, miner_height_at_sign: $hm, payer_tx: $pid, payer_out_height: ($ha + 1),
+      unconfirmed_box: $ub, tx: (if $txid == "" then null else {id: $txid, inputs: $ins, out_heights: $outs} end),
+      submitted: (if $sub | startswith("ID ") then $sub[3:] else null end), reason: (if $sub | startswith("NO ") then $sub[3:] else null end),
+      txs: (if $txid == "" then {} else {($txid): {inputs: ($ins | map(.boxId))}} end), scan_boxes: $s,
+      confirmed: $conf, resubmitted_to_miner: $rs, agree: $ag} + $pc')"; }
+
 # the end of a multi-node step: every node's chain read for the ids, end heights, the state-root agreement
 ww_finish_multi(){ local obs="$1" ids="$2" h0="$3" n chain='{}' ag et
   ag=$(ww_agree); et=$(ww_heights "${NODES[@]}")
@@ -322,6 +390,7 @@ ww_run(){ local steps="$1" s k a r sum v line vers n unresp=0
       fee) ww_step_fee "${a:-6}" ;;
       resubmit) ww_step_resubmit "${a:-0}" ;;
       conflict) ww_step_conflict ;;
+      ahead) ww_step_ahead "${a:-auto}" ;;
       *) ww_record "$(jq -nc --arg k "$k" '{kind: $k}')" ;;
     esac
   done < <(ww_expand "$steps")

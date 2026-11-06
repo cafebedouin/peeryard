@@ -67,12 +67,31 @@ case_ conflict-loser-lingers         1 FAIL gone_from_pools
 case_ conflict-node-stalls           1 FAIL no_stall
 case_ conflict-state-roots-differ    1 FAIL one_state_root
 case_ conflict-same-tx               3 INCONCLUSIVE
+case_ ahead-pass                     0 PASS
+case_ ahead-output-below-input       1 FAIL outputs_not_below_inputs
+case_ ahead-output-below-input       1 FAIL own_tx_accepted
+case_ ahead-accepted-below           1 FAIL outputs_not_below_inputs
+case_ ahead-refused                  1 FAIL own_tx_accepted
+case_ ahead-not-built                1 FAIL own_tx_accepted
+case_ ahead-split-chains             1 FAIL one_state_root
+case_ ahead-misses-box               3 INCONCLUSIVE
+case_ ahead-cut-broke                3 INCONCLUSIVE
 
 # the positive control: the burn data that passes, judged with the control on, must FAIL on the control invariant only
 out="$(bash rig/wallet-check.sh "$F/burn-positive-control.json")"; rc=$?
 if [[ $rc == 0 ]] && grep -q '^WALLET-CHECK: CONTROL-TRIPPED' <<< "$out" && grep -q 'FAIL control_burned_amount_still_there' <<< "$out" \
    && [[ "$(grep -c '^\[ww\]     FAIL ' <<< "$out")" == 1 ]]; then ok "positive control -> CONTROL-TRIPPED, only the control fails"
 else mis "positive control" "exit $rc: $(grep '^WALLET-CHECK' <<< "$out")"; fi
+# the ahead step's control: the passing data, judged with the control on, fails on its control invariant only; the
+# base-shaped data (an output below its input, refused) with the control on is not a tripped control
+out="$(bash rig/wallet-check.sh "$F/ahead-positive-control.json")"; rc=$?
+if [[ $rc == 0 ]] && grep -q '^WALLET-CHECK: CONTROL-TRIPPED' <<< "$out" && grep -q 'FAIL control_output_below_input' <<< "$out" \
+   && [[ "$(grep -c '^\[ww\]     FAIL ' <<< "$out")" == 1 ]]; then ok "ahead positive control -> CONTROL-TRIPPED, only the control fails"
+else mis "ahead positive control" "exit $rc: $(grep '^WALLET-CHECK' <<< "$out")"; fi
+jq '.control = "positive"' "$F/ahead-output-below-input.json" > "$T/ahead-below-ctl.json"
+out="$(bash rig/wallet-check.sh "$T/ahead-below-ctl.json")"; rc=$?
+[[ $rc == 1 ]] && grep -q '^WALLET-CHECK: CONTROL-NOT-TRIPPED' <<< "$out" && grep -q 'ok   control_output_below_input' <<< "$out" \
+  && ok "ahead control on base-shaped data -> CONTROL-NOT-TRIPPED" || mis "ahead control on base-shaped data" "exit $rc: $(grep '^WALLET-CHECK' <<< "$out")"
 # a control run whose real invariants also fail is not a tripped control
 out="$(bash rig/wallet-check.sh "$F/burn-positive-control.json" "$F/send-par-shared-input.json")"; rc=$?
 [[ $rc == 1 ]] && grep -q '^WALLET-CHECK: CONTROL-NOT-TRIPPED' <<< "$out" && ok "control plus a real FAIL -> CONTROL-NOT-TRIPPED" || mis "control plus a real FAIL" "exit $rc"
@@ -80,7 +99,7 @@ out="$(bash rig/wallet-check.sh "$F/burn-positive-control.json" "$F/send-par-sha
 # a whole run: every PASS fixture together is PASS; one FAIL among them makes the run FAIL; one INCONCLUSIVE, INCONCLUSIVE
 passes=("$F"/*-pass.json "$F/resubmit-lag-same-chain.json")
 out="$(bash rig/wallet-check.sh "${passes[@]}")"; rc=$?
-[[ $rc == 0 ]] && grep -qE '^WALLET-CHECK: PASS .*"steps":9.*"conflict_two_in_flight":1' <<< "$out" && ok "run of ${#passes[@]} passing steps -> PASS, counts" || mis "run of passing steps" "exit $rc: $(grep '^WALLET-CHECK' <<< "$out")"
+[[ $rc == 0 ]] && grep -qE '^WALLET-CHECK: PASS .*"steps":10.*"conflict_two_in_flight":1' <<< "$out" && ok "run of ${#passes[@]} passing steps -> PASS, counts" || mis "run of passing steps" "exit $rc: $(grep '^WALLET-CHECK' <<< "$out")"
 out="$(bash rig/wallet-check.sh "${passes[@]}" "$F/conflict-loser-lingers.json")"; rc=$?
 [[ $rc == 1 ]] && grep -q '^WALLET-CHECK: FAIL' <<< "$out" && ok "... plus one FAIL -> FAIL" || mis "... plus one FAIL" "exit $rc"
 out="$(bash rig/wallet-check.sh "${passes[@]}" "$F/scan-not-off.json")"; rc=$?
@@ -95,9 +114,9 @@ source rig/lib/wallet_workload.sh
 got="$(ww_expand "send:3, conflict*3 mint" | paste -sd ' ')"
 [[ "$got" == "send:3 conflict conflict conflict mint" ]] && ok "step list: separators and repeats" || mis "step list" "got '$got'"
 ww_expand "send*x" | grep -q '^BAD:send\*x$' && ok "step list: a bad repeat is reported" || mis "step list: bad repeat" "not reported"
-for p in full aa posctl conflict; do ww_preset_steps "$p" > /dev/null || mis "preset $p" "unknown"; done
-! ww_preset_steps nosuch > /dev/null && ok "presets: full aa posctl conflict known, others refused" || mis "presets" "an unknown preset was accepted"
-ww_preset_steps aa | grep -qE 'send-par|conflict|resubmit' && mis "preset aa" "has a concurrent step" || ok "preset aa has no concurrent step"
+for p in full aa posctl conflict ahead; do ww_preset_steps "$p" > /dev/null || mis "preset $p" "unknown"; done
+! ww_preset_steps nosuch > /dev/null && ok "presets: full aa posctl conflict ahead known, others refused" || mis "presets" "an unknown preset was accepted"
+ww_preset_steps aa | grep -qE 'send-par|conflict|resubmit|ahead' && mis "preset aa" "has a concurrent or partitioning step" || ok "preset aa has no concurrent or partitioning step"
 
 # pr-scenario.yml's scenario_env can reach the scenario's knobs: diffrun/scenario-env.sh sets only keys the manifest
 # declares, so each knob must be declared (empty = the hook's own default)

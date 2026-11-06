@@ -130,6 +130,24 @@ def check_conflict:
      info: {in_flight: ([.submits[]? | select(.reply_id != null)] | length), winner: ($w[0] // null), clear_s: (.clear_s // null),
             replies: [.submits[]? | {node, ok: (.reply_id != null), reason: (.reason // null | if . then .[0:120] else null end)}]}};
 
+# ahead: the wallet's node one block behind the payer of an unconfirmed box the wallet spends (txMonotonicHeight:
+# every output's creation height >= the highest creation height among the inputs; ergoplatform/ergo#1921)
+def check_ahead:
+  (.tx // null) as $tx | (.unconfirmed_box // "") as $ub
+  | ([$tx.inputs[]?.creationHeight] | max) as $in_max | ($tx.out_heights // []) as $outs
+  | ($tx != null and ($outs | length) > 0 and $in_max != null and ($outs | min) >= $in_max) as $not_below
+  | {setup: (if (.wallet_height_at_submit // .wallet_height) != .wallet_height then "the cut did not hold: \(.wallet_height) -> \(.wallet_height_at_submit) at the wallet node before its transaction was submitted"
+             elif $tx != null and ([$tx.inputs[]?.boxId] | index($ub) | not) then "the wallet's transaction does not spend the unconfirmed box \($ub[0:16]) (inputs \([$tx.inputs[]?.boxId[0:8]] | join(",")))"
+             else null end),
+     invariants: ([
+       inv("own_tx_accepted"; .submitted != null; if .submitted != null then "accepted \(.submitted[0:16]), confirmed at \(.confirmed[.submitted] // "never")" else "refused: \(.reason // "" | .[0:300])" end),
+       inv("outputs_not_below_inputs"; $not_below; if $tx == null then "no transaction built" else "output heights \($outs | tojson), highest input height \($in_max) (wallet at \(.wallet_height), payer's outputs at \(.payer_out_height))" end),
+       one_state
+     ] + (if .control == "positive" then [inv("control_output_below_input"; $tx != null and ($outs | length) > 0 and ($outs | min) < $in_max; "positive control: must FAIL; output heights \($outs | tojson), highest input height \($in_max)")] else [] end)
+       + scan_inv),
+     info: {mode: .arg, wallet_height: .wallet_height, miner_height_at_sign: .miner_height_at_sign, payer_confirmed: (.confirmed[.payer_tx // ""] // null),
+            resubmitted_to_miner: ((.resubmitted_to_miner // []) | length)}};
+
 def judge:
   . as $o
   | (if .setup != null then {setup: .setup, invariants: [], info: {}}
@@ -141,6 +159,7 @@ def judge:
            elif .kind == "fee" then check_fee
            elif .kind == "resubmit" then check_resubmit
            elif .kind == "conflict" then check_conflict
+           elif .kind == "ahead" then check_ahead
            else {setup: "unknown step kind \(.kind)", invariants: [], info: {}} end) end) as $r
   | {step: $o.step, kind: $o.kind, arg: ($o.arg // null), control: ($o.control // "none"),
      verdict: (if $r.setup != null then "INCONCLUSIVE" elif all($r.invariants[]; .ok) then "PASS" else "FAIL" end),

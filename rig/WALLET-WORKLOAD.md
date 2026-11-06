@@ -9,7 +9,7 @@ transaction builder, scans, fee estimation or the mempool's conflict handling.
 Files: `rig/lib/wallet_workload.sh` (the driver: runs the steps, collects one observation per step),
 `rig/lib/wallet_check.jq` (the invariants: every verdict comes from here), `rig/wallet-check.sh` (re-judges saved
 observations without a node), `rig/examples/wallet-workload.{json,sh}` (the rig example),
-`diffrun/scenarios/wallet-workload{,-plain,-posctl}.json` with `wallet-workload.sh` and
+`diffrun/scenarios/wallet-workload{,-plain,-posctl,-ahead}.json` with `wallet-workload.sh` and
 `hooks/wallet-workload.json` (the scenario), `tests/wallet_workload.sh` with `tests/fixtures/wallet-workload/` (the
 no-node self-test).
 
@@ -40,6 +40,7 @@ the preset `WW_PRESET`:
 | `aa` | `send:3 mint:1000 transfer:100 burn:50 fee:6`: sequential, no concurrency, no second node involved |
 | `posctl` | `mint:1000 burn:50` with `WW_CONTROL=positive` |
 | `conflict` | `resubmit:0*3 conflict*3` |
+| `ahead` | `ahead:auto ahead:raw` (the wallet's node one block behind a payer; partitions `A`, so it needs netem) |
 
 Before the first step the miner matures, pays the funding boxes, and both wallet nodes must reach the miner's tip and
 show the payment (`WW_SYNC_S`, 240 s); a run that cannot get there is INCONCLUSIVE, not FAIL. Every step starts from
@@ -57,6 +58,7 @@ ones: earlier steps leave the wallet's value in token-carrying change, and a ste
 | `burn` (amount, 50) | a `BurnTokensRequest` for that token | `tx_burns_exactly`: inputs − outputs is exactly {token: amount}, every other token kept; `tx_erg_conserved` (the fee output counted); `confirmed`; `wallet_burned_exactly`: the wallet's tokens change by exactly that; `wallet_erg_only_fee`: its ERG by exactly the fee |
 | `fee` (n, 6) | n payments with fees 1..n × `WW_FEE` put a load in the pool; at once `/transactions/getFee` (waits 1, 2, 5, 10, 30 min, 200 bytes), `/transactions/waitTime` (fees 0.001 .. 0.1 ERG) and `/transactions/poolHistogram` are read | `present`; `non_negative`; `getFee_monotone` (a longer wait never costs more); `waitTime_monotone` (a higher fee never waits longer); the histogram is well formed |
 | `resubmit` (lag s, 0) | one signed transaction submitted to `A`, then the same bytes to `B` after the lag | `confirmed_once_everywhere` (once on every node's chain, at one height); `gone_from_pools` within `WW_CLEAR_S` (60 s); `no_stall` (every node's height advanced); `one_state_root` (every node's best full block is on `M`'s chain and its state root is the root in `M`'s header at that height, so a follower a few blocks behind the moving tip still agrees; re-read for up to `WW_AGREE_S`, 90 s, when a read races a block) |
+| `ahead` (`auto` \| `raw`, auto) | `A` is cut from every node it links to (100% loss) at its height h while `M` keeps mining; `M` builds a payment of 3 ERG to `A` from a plain box included by h (`/wallet/transaction/generateUnsigned` with `inputsRaw`), sets every output's creation height to h + 1 (what a wallet one block ahead writes; `M`'s own height moves every few seconds, so the height is set rather than raced) and signs it (`/wallet/transaction/sign`); the bytes go to `A`'s `/transactions` directly, and `A`'s wallet must count the box as unconfirmed. Then `A`'s wallet builds a transaction spending it (`/wallet/transaction/generate`, then `/transactions`): `auto` = a payment to its own address of its confirmed balance minus the fee plus 1.5 ERG, so its own box selection must take the unconfirmed box; `raw` = the box as `inputsRaw`. Healed; an id in neither `M`'s pool nor chain 20 s later is submitted to `M` (recorded: relay across a healed cut is not this step's question) | `own_tx_accepted`: `A` accepts its own wallet's transaction (the refusal text otherwise); `outputs_not_below_inputs`: every output's creation height >= the highest input creation height (the consensus rule `txMonotonicHeight`); `one_state_root` after the heal. INCONCLUSIVE when the cut did not hold (`A`'s height moved before the submission), `A` refused the payer's transaction, the wallet did not count the box, or its transaction does not spend it |
 | `conflict` | one confirmed box both nodes hold; `A`'s wallet builds a payment from it (`inputsRaw`), `B`'s wallet builds a different payment from the same box; the two are submitted to `A` and `B` at the same moment | `exactly_one_confirmed` (on every node, one of the two once, the other never, the same one everywhere); `gone_from_pools` (neither left in any pool); `no_stall`; `one_state_root` |
 
 A step that could not be exercised (nothing accepted, no token minted yet, a scan that did not register `off`, the two
@@ -94,7 +96,9 @@ re-judges them offline.
   honest node; a failure there is the mechanism's, or the node's, before any concurrency is involved. In diffrun the
   A/A over jars is the usual one: the same jar in both roles (`pr-scenario.yml` with `aa: true`).
 - **Positive control.** `WW_PRESET=posctl` or `WW_CONTROL=positive` (scenario `wallet-workload-posctl`): the burn step
-  also asserts that the burned amount is still held, which must FAIL. The run's verdict is then `CONTROL-TRIPPED`
+  also asserts that the burned amount is still held, which must FAIL; with `WW_CONTROL=positive` the `ahead` step also
+  asserts that an output sits below the highest input height (`control_output_below_input`), which must FAIL on a
+  wallet that builds correct heights. The run's verdict is then `CONTROL-TRIPPED`
   (exit PASS) when that invariant, and only that one, failed; `CONTROL-NOT-TRIPPED` otherwise. It shows that a wallet
   balance read after a confirmed burn is able to fail the check, so a PASS on the real invariant means something.
 - **No-node self-test.** `T=$(mktemp -d) bash tests/wallet_workload.sh`: every kind's PASS fixture and each way it must
@@ -126,10 +130,10 @@ Base against candidate (`diffrun/README.md`; the manifests are `mixed_jars`):
 bash review/with-lock.sh -- bash diffrun/run.sh diffrun/scenarios/wallet-workload.json --base <base.jar> --candidate <cand.jar> --out <dir>
 ```
 
-Hosted (`pr-scenario.yml`): `scenario=wallet-workload` (or `wallet-workload-plain`, `wallet-workload-posctl`), `pr`,
+Hosted (`pr-scenario.yml`): `scenario=wallet-workload` (or `wallet-workload-plain`, `wallet-workload-posctl`, `wallet-workload-ahead`), `pr`,
 `head`, `line`, or `aa: true` for the A/A. Measured here (12 cores, v6.0.7): the full list takes about 20 minutes per
-run, the `aa` list about 4, the positive control about 2; a pair is two runs. The manifests' timeouts are 2400, 1500 and
-1200 s. In the release check (`review/release-check.sh`) it is one line of `SETS`, the sequential list only (the full
+run, the `aa` list about 4, the positive control about 2, and (v6.0.11) the `ahead` list about 3; a pair is two runs.
+The manifests' timeouts are 2400, 1500, 1200 and 1200 s. In the release check (`review/release-check.sh`) it is one line of `SETS`, the sequential list only (the full
 list's verdict on a release is a finding about that release; `review/RELEASE-CHECK.md` says how to read it):
 
 ```
@@ -149,6 +153,7 @@ is about; the mechanism has nothing specific to any of them.
 | #2453, #2451 (wallet must not spend boxes tracked only by a scan) | `scan` | no scan-only box among a wallet send's inputs, confirmed or unconfirmed |
 | #2450 (fee estimation APIs) | `fee` | answers present, non-negative, monotone |
 | #2526 (mempool conflicts removed for every applied transaction) | `conflict` (and `resubmit`) | the losing transaction is gone from every pool within `WW_CLEAR_S` |
+| #2901 (wallet output creation heights; issue #1921) | `ahead` (scenario `wallet-workload-ahead`) | the wallet's own transaction spending an unconfirmed box one height above its node is accepted, and no output sits below an input |
 
 ## What it does not cover
 
@@ -161,4 +166,8 @@ is about; the mechanism has nothing specific to any of them.
   `A` and `B`; `in_flight` records it per step (1 means one node had already heard of the other's transaction). The
   invariants hold either way; link delay (`link_netem`) widens the window if a question needs both in flight.
 - Wallet state across restarts, rescans, and digest-mode or pruned wallet nodes.
+- The `ahead` step stages a wallet node exactly one block behind the payer, with the wallet's scan height equal to its
+  full height. A wallet whose scan lags its own node's full height (the other half of issue #1921: change at the scan
+  height, payments at the full height) is not staged, nor an input above the upcoming height (which the node's pool
+  refuses before the wallet sees it).
 - The fee checks are about shape and direction, not accuracy: a monotone answer can still be a poor estimate.

@@ -1,0 +1,4 @@
+{
+ "about": "Who is reviewing which pull request right now, so two reviewers do not pick the same one. Edited by queue/claim.py, committed and pushed like any file; the page (queue/build.py) tags a claimed row and queue/next.py skips it. A claim expires by itself (expires_at, default 24 h) and is removed when the review is posted (claim.py --release) or by the next claim.py run after expiry. Nothing is posted to GitHub.",
+ "claims": []
+}

@@ -149,15 +149,76 @@ def peeryard_posts(reviews, comments):
                 first = next((l for l in body.splitlines() if l.strip()), "")
                 if CREDIT_RE.match(first):
                     rec["source"] = "legacy"
+            if rec["source"] and not rec["kind"]:          # no marker: the report form says whether anything was executed
+                rec["kind"] = "executed" if re.search(r"^\**Executed\b|\(executed\)|^\**Reproduced\b", body, re.M) else "read"
             if rec["source"]:
+                m = re.search(r"Recommended:\s*\**\s*(.+)", body)
+                rec["recommended"] = re.sub(r"\s+", " ", m.group(1)).strip()[:200] if m else None
                 out.append(rec)
     out.sort(key=lambda r: r["at"])
     return out
 
 
 def peeryard_field(p):
-    return {"url": p["url"], "at": p["at"].isoformat(), "source": p["source"], "kind": p["kind"],
-            "head": (p["head"] or p["commit_id"] or None), "prod_patch_id": p["prod_patch_id"], "carried_from": None}
+    return {"url": p["url"], "at": p["at"].isoformat(), "source": p["source"], "kind": p["kind"], "by": p["login"],
+            "head": (p["head"] or p["commit_id"] or None), "prod_patch_id": p["prod_patch_id"], "carried_from": None,
+            "recommended": p.get("recommended")}
+
+
+# ---- claims: who is reviewing what right now, so two reviewers do not pick the same pull request -------------------------
+
+def load_claims():
+    """queue/claims.json (queue/claim.py edits it): {pr, kind, by, claimed_at, expires_at}; an expired claim is ignored."""
+    path = os.path.join(HERE, "claims.json")
+    if not os.path.isfile(path):
+        return {}
+    with open(path) as f:
+        j = json.load(f)
+    now = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {int(c["pr"]): c for c in j.get("claims", []) if c.get("expires_at", "") > now}
+
+
+# ---- outcomes: what became of the pull requests peeryard reviewed --------------------------------------------------------
+
+def outcomes(repo, token):
+    """Closed pull requests with a peeryard review (found by the phrase or marker in comments, and by the reviewers.json
+    logins as reviewer or commenter for the backfill): merged, closed as the last review recommended (its Recommended:
+    line begins with close, withdraw or drop), or closed otherwise. One row per pull request, latest closed first."""
+    legacy = load_reviewers()
+    queries = [f'repo:{repo} is:pr is:closed "using peeryard" in:comments', f'repo:{repo} is:pr is:closed "<!-- peeryard" in:comments']
+    for login in sorted(legacy["logins"]):
+        queries += [f"repo:{repo} is:pr is:closed reviewed-by:{login}", f"repo:{repo} is:pr is:closed commenter:{login}"]
+    nums = set()
+    for q in queries:
+        try:
+            res = api("/search/issues", {"q": q, "per_page": 100}, token)
+            nums.update(it["number"] for it in res.get("items", []))
+        except Exception:
+            pass
+    rows = []
+    for n in sorted(nums):
+        try:
+            full = api(f"/repos/{repo}/pulls/{n}", token=token)
+            reviews = api(f"/repos/{repo}/pulls/{n}/reviews", {"per_page": 100}, token, paginate=True)
+            comments = api(f"/repos/{repo}/issues/{n}/comments", {"per_page": 100}, token, paginate=True)
+        except Exception:
+            continue
+        posts = [c for c in peeryard_posts(reviews, comments) if c["login"] != full["user"]["login"] and c["kind"] not in NON_REVIEW_KINDS]
+        if not posts:
+            continue
+        last = posts[-1]
+        rec = (last.get("recommended") or "")
+        if full.get("merged_at"):
+            outcome = "merged"
+        elif re.match(r"(?i)\s*(close|withdraw|drop)", rec):
+            outcome = "closed as recommended"
+        else:
+            outcome = "closed"
+        rows.append({"number": n, "title": full["title"], "author": full["user"]["login"], "url": full["html_url"],
+                     "closed_at": (full.get("merged_at") or full.get("closed_at") or "")[:10], "outcome": outcome,
+                     "recommended": rec or None, "review": last["url"], "reviews": len(posts), "first_review": posts[0]["at"].isoformat()[:10]})
+    rows.sort(key=lambda r: r["closed_at"], reverse=True)
+    return rows
 
 
 def carry_reviews(repo, rows, diffs, gdir):
@@ -452,13 +513,15 @@ nav a{margin-right:1rem}.tag{display:inline-block;padding:0 .35rem;border:1px so
 
 def page(title, sections, generated, repo, path_prefix=""):
     h = [f"<!doctype html><meta charset=utf-8><title>{html.escape(title)}</title><style>{CSS}</style>",
-         f"<nav><a href='{path_prefix}./'>needs a review</a><a href='{path_prefix}maintainers/'>needs a maintainer</a>"
+         f"<nav><a href='{path_prefix}./'>needs a review</a><a href='{path_prefix}maintainers/'>needs a maintainer</a><a href='{path_prefix}outcomes/'>outcomes</a>"
          f"<a href='https://github.com/cafebedouin/peeryard'>peeryard</a><a href='https://github.com/cafebedouin/peeryard/blob/main/queue/rules.json'>the rules</a></nav>",
          f"<h1>{html.escape(title)}</h1><p><small>Open pull requests of <a href='https://github.com/{repo}/pulls'>{repo}</a>, "
          f"generated {generated} from public GitHub data by <a href='https://github.com/cafebedouin/peeryard/blob/main/queue/build.py'>queue/build.py</a>. "
          f"Every author is ranked by the same rules; a disagreement with a rank is a pull request against <code>queue/rules.json</code>.</small></p>"]
     for heading, intro, rows, cols in sections:
         h.append(f"<h2>{html.escape(heading)}</h2><p><small>{intro}</small></p>")
+        if not cols:
+            continue                                   # a text-only section (Coverage)
         if not rows:
             h.append("<p><small>nothing here today</small></p>"); continue
         h.append("<table><tr>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr>")
@@ -481,6 +544,9 @@ def same_note(r):
         notes.append("same production change also in " + ", ".join(f"#{n}" for n in r["same_change_later"]) + " (opened later)")
     for s in r.get("same_issue") or []:
         notes.append(f"same issue #{s['issue']} as " + ", ".join(f"#{n}" for n in s["with"]) + " (overlapping files)")
+    if r.get("claimed"):
+        c = r["claimed"]
+        notes.append(f"claimed by {c['by']}" + (f" for {c['kind']}" if c.get("kind") else "") + f" until {c['expires_at'][:16].replace('T', ' ')} UTC")
     return "".join(f"<br><small class=tag>{html.escape(n)}</small>" for n in notes)
 
 
@@ -604,10 +670,11 @@ def load_history(source):
     return out
 
 
-def snapshot(generated_at, repo, allprs, rows, exact, related, sc_error, uncompared):
-    """Today's duplicate data, small: the groups by number, not the rows."""
+def snapshot(generated_at, repo, allprs, rows, exact, related, sc_error, uncompared, cov=None, out_counts=None):
+    """Today's duplicate data, small: the groups by number, not the rows; since 2026-11-09 also the coverage counts and the
+    outcome counts, so a burn-down can be read from history/."""
     return {"schema_version": SCHEMA_VERSION, "date": generated_at[:10], "generated_at": generated_at, "repo": repo,
-            "open_prs": len(allprs), "open_ready_prs": len(rows),
+            "open_prs": len(allprs), "open_ready_prs": len(rows), "coverage": cov, "outcomes": out_counts,
             "same_change": [{"patch_id": g["patch_id"], "prs": g["prs"], "files": len(g["files"]),
                              "changed_lines": g.get("changed_lines")} for g in exact],
             "same_issue": [{"issue": g["issue"], "prs": g["prs"], "pairs": [p["prs"] for p in g["pairs"]]} for g in related],
@@ -629,6 +696,34 @@ def write_history(out, prior, snap):
         json.dump({"schema_version": SCHEMA_VERSION, "repo": snap["repo"], "dates": dates, "latest": dates[-1],
                    "path": "history/<date>.json"}, f, indent=1)
     return dates
+
+
+def coverage(rows, review, rebase, wip, stale_days):
+    """Where the review work stands, over the live pull requests (head within stale_days, not WIP)."""
+    live = [r for r in rows if r["days_at_head"] <= stale_days and not is_wip(r)]
+    any_rev = [r for r in live if r["reviews_at_head"] > 0 or r["peeryard_review"]]
+    pyd = [r for r in live if r["peeryard_review"]]
+    kinds = {}
+    for r in pyd:
+        k = (r.get("peeryard") or {}).get("kind") or "unknown"
+        kinds[k] = kinds.get(k, 0) + 1
+    t1 = [r for r in live if r["tier"][0] == 1]
+    t1_exec = [r for r in t1 if r["peeryard_review"] and (r.get("peeryard") or {}).get("kind") not in (None, "read", "read-review")]
+    return {"live": len(live), "reviewed_at_head": len(any_rev), "peeryard_at_head": len(pyd), "peeryard_carried": sum(1 for r in pyd if (r.get("peeryard") or {}).get("carried_from")),
+            "peeryard_kinds": kinds, "needs_review": len(review), "needs_rebase": len(rebase), "wip": len(wip),
+            "tier1_live": len(t1), "tier1_executed": len(t1_exec), "stale": sum(1 for r in rows if r["days_at_head"] > stale_days),
+            "claimed": sum(1 for r in rows if r.get("claimed"))}
+
+
+def coverage_text(c, out_counts):
+    kinds = ", ".join(f"{k} {v}" for k, v in sorted(c["peeryard_kinds"].items(), key=lambda kv: -kv[1])) or "none"
+    return (f"<b>{c['live']}</b> live pull requests (head within the stale window, not WIP): <b>{c['reviewed_at_head']}</b> have a review at "
+            f"their head by anyone, <b>{c['peeryard_at_head']}</b> a peeryard review ({c['peeryard_carried']} carried across a rebase; kinds: {kinds}); "
+            f"<b>{c['needs_review']}</b> need a review, {c['needs_rebase']} need a rebase first, {c['wip']} are WIP; {c['stale']} more are older than the window. "
+            f"Tier 1 (consensus, sync, state, mining): {c['tier1_live']} live, {c['tier1_executed']} with an executed peeryard review. "
+            f"Claimed right now: {c['claimed']} (<code>queue/claims.json</code>). Closed after a peeryard review: {out_counts['merged']} merged, "
+            f"{out_counts['closed as recommended']} closed as recommended, {out_counts['closed']} closed otherwise (<a href='outcomes/'>outcomes</a>). "
+            f"Counts per day accumulate in <a href='history/index.json'>history/</a>. Pick the next item with <code>python3 queue/next.py --minutes 120</code>.")
 
 
 def peeryard_note(r):
@@ -694,6 +789,10 @@ def main():
                 others = sorted({m for p in g["pairs"] if n in p["prs"] for m in p["prs"]} - {n})
                 by_number[n].setdefault("same_issue", []).append({"issue": g["issue"], "with": others})
     carried_reviews = carry_reviews(a.repo, rows, diffs, os.path.join(a.git_cache, a.repo.replace("/", "_") + ".git")) if diffs else 0
+    claims = load_claims()
+    for r in rows:
+        c = claims.get(r["number"])
+        r["claimed"] = {"by": c["by"], "kind": c.get("kind"), "expires_at": c["expires_at"]} if c else None
     sc_secs = round(time.time() - t0)
     uncompared = sorted(n for n, d in diffs.items() if d.get("error"))
     review = rank_review(rows)
@@ -708,11 +807,20 @@ def main():
     now = now_utc()
     generated, generated_at = now.strftime("%Y-%m-%d %H:%M UTC"), now.strftime("%Y-%m-%dT%H:%M:%SZ")
     os.makedirs(os.path.join(a.out, "maintainers"), exist_ok=True)
+    os.makedirs(os.path.join(a.out, "outcomes"), exist_ok=True)
     reviewed = [r for r in rows if r["peeryard_review"]]
+    cov = coverage(rows, review, rebase, wip, stale_days)
+    try:
+        outs = outcomes(a.repo, token)
+    except Exception as e:                       # an extra: the pages still render without it
+        outs = []
+        print(f"outcomes not computed: {str(e)[:200]}", file=sys.stderr)
+    out_counts = {k: sum(1 for o in outs if o["outcome"] == k) for k in ("merged", "closed as recommended", "closed")}
     same_secs = same_change_sections(exact, related, meta, sc_error, uncompared)
 
     cols = ["pull request", "why here"]
     index = page("Ergo node pull requests that need a review", [
+        ("Coverage", coverage_text(cov, out_counts), [], []),
         ("Needs a review", "No review at the current head, ranked by risk tier (consensus, sync and state first), then by how long "
          "the head has waited, then by size. An agent reviews one with peeryard's <code>AGENTS.md</code>; a person with "
          "the same steps. Pick from the top.", [(pr_cell(r), why_cell(r)) for r in review], cols),
@@ -751,6 +859,19 @@ def main():
          "for a maintainer to do. The reference node is a release that does not contain them yet, so the patches stay until "
          "a release does.", merged_rows, ["pull request", "why here"]),
     ], generated, a.repo, path_prefix="../")
+    outcomes_page = page("Outcomes of peeryard reviews", [
+        ("What became of the pull requests reviewed with peeryard", "Closed pull requests that had a peeryard review: merged; "
+         "closed as the last review's <code>Recommended:</code> line asked (close, withdraw, drop); or closed for another reason. "
+         f"Today: {out_counts['merged']} merged, {out_counts['closed as recommended']} closed as recommended, {out_counts['closed']} closed otherwise. "
+         "A review's effect is not a merge count: a duplicate closed on evidence is a review that worked. Latest closed first.",
+         [(f"<a href='{o['url']}'>#{o['number']}</a> {html.escape(o['title'])}<br><small>{html.escape(o['author'])}, "
+           f"{o['reviews']} peeryard review(s) from {o['first_review']}</small>",
+           f"{o['closed_at']}<br><b>{o['outcome']}</b>",
+           f"<span class=why>{html.escape(o['recommended'] or 'no Recommended: line')}</span><br><a href='{o['review']}'>review</a>") for o in outs],
+         ["pull request", "closed", "the last review said"]),
+    ], generated, a.repo, path_prefix="../")
+    with open(os.path.join(a.out, "outcomes", "index.html"), "w") as f:
+        f.write(outcomes_page)
     with open(os.path.join(a.out, "index.html"), "w") as f:
         f.write(index)
     with open(os.path.join(a.out, "maintainers", "index.html"), "w") as f:
@@ -758,12 +879,13 @@ def main():
     with open(os.path.join(a.out, "queue.json"), "w") as f:
         json.dump({"schema_version": SCHEMA_VERSION, "generated": generated, "generated_at": generated_at, "repo": a.repo, "needs_review": [r["number"] for r in review],
                    "needs_maintainer": [r["number"] for r in maint], "needs_rebase": [r["number"] for r in rebase], "carried": carried,
+                   "coverage": cov, "outcomes": outs, "claims": [dict(c, pr=int(c["pr"])) for c in claims.values()],
                    "same_change": exact, "same_issue": related, "same_change_error": sc_error,
                    "same_change_uncompared": uncompared, "min_changed_lines": RULES.get("same_change", {}).get("min_changed_lines", 1),
                    "open_prs": len(allprs), "rows": rows}, f, indent=1, default=str)
-    dates = write_history(a.out, prior, snapshot(generated_at, a.repo, allprs, rows, exact, related, sc_error, uncompared))
+    dates = write_history(a.out, prior, snapshot(generated_at, a.repo, allprs, rows, exact, related, sc_error, uncompared, cov, out_counts))
     print(f"{len(rows)} open PRs: {len(review)} need a review, {len(rebase)} need a rebase first, {len(maint)} need a maintainer, {len(reviewed)} reviewed with peeryard "
-          f"({carried_reviews} carried from an earlier head), "
+          f"({carried_reviews} carried from an earlier head; kinds {cov['peeryard_kinds']}), outcomes {out_counts}, {len(claims)} claim(s), "
           f"{len(carried)} carried; same change: {len(exact)} group(s), same issue: {len(related)} group(s) ({sc_secs} s"
           + (f", not computed: {sc_error}" if sc_error else "") + f"); history: {len(dates)} day(s); written to {a.out}")
 

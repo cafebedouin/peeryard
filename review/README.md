@@ -8,6 +8,7 @@ until the person posts it. Nothing here posts on its own.
 
 0. **Preflight and preregistration** — `bash rig/preflight.sh`; then `audits/<date>_pr-<N>/PREREGISTRATION.md` from
    `audits/README.md` before any run: which kinds, why, what would count against the PR.
+0. **Coordinate** — the page at cafebedouin.github.io/peeryard shows coverage, what needs a review, a rebase or a maintainer, and the outcomes of past reviews. `python3 queue/next.py --minutes <budget>` lists what to take next, by the rules, minus what others have claimed; `python3 queue/claim.py --pr N --kind <kinds>` (then commit and push `queue/claims.json`) tells them you took it; `--release` when posted.
 1. **Pick** — `review/pick.sh --repo ergoplatform/ergo [--pr N]`: the open, non-draft pull requests, each
    judged against its **own merge base** with its base branch (printed as `merges@<sha>`; that sha is the build
    base for both jars, never a release tag the PR was not written on), each with its production footprint and

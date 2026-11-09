@@ -32,6 +32,7 @@ raises `schema_version` and is announced in this file. Ignore fields you do not 
 | `same_change_uncompared` | list of int | pull requests whose diff could not be read on this run, so they are in no group |
 | `min_changed_lines` | int | the smallest change (added plus removed production lines) that can form a `same_change` group |
 | `needs_review`, `needs_maintainer` | list of int | the two ranked tracks of the pages, in rank order |
+| `needs_rebase` | list of int | live pull requests GitHub reports as conflicting with their base (mergeable `dirty`), no review at head: off the review track until the author rebases |
 | `carried` | list | upstream pull requests peeryard carries as patches |
 | `rows` | list | one object per open, non-draft pull request, below |
 
@@ -63,6 +64,9 @@ from a release branch is left out (it references every pull request in the relea
 | `same_change_as` | int | present on a later member of a `same_change` group: the first one |
 | `same_change_later` | list of int | present on the first member of a group: the later ones |
 | `same_issue` | list | present when in a `same_issue` group: `{issue, with: [int]}` per issue |
+| `reviews_at_head` | int | GitHub reviews by someone other than the author, submitted after the head commit |
+| `peeryard_review` | string or null | link to the peeryard review that stands for this head (see `peeryard`); null when none |
+| `peeryard` | object or null | `{url, at, source, kind, head, prod_patch_id, carried_from}`: `source` is `marker` (the `<!-- peeryard {…} -->` comment), `phrase` (the credit-line words) or `legacy` (`queue/reviewers.json` backfill); `kind` is the marker's review kind or null; `head` the head it was made on (the marker's, or the review's commit); `carried_from` is set (first 9 digits of that head) when the review was made at an earlier head whose production patch-id equals the current one, null when made at this head |
 
 Draft pull requests are not in `rows` but are in the groups.
 

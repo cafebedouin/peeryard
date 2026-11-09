@@ -24,7 +24,7 @@ until the person posts it. Nothing here posts on its own.
    question; the report says which ran and which were skipped, and why.
 4. **Report** — `review/templates/review.md`: credit line first, then verdict and label, one concern per
    finding, the invariant and what would falsify it, `Recommended:`, executed (command, versions, output) or
-   read (file:line), what was not run. `review/comment-lint --kind review <file>` checks the form.
+   read (file:line), what was not run, and the `<!-- peeryard {…} -->` marker as the last line (`python3 queue/mark.py --pr N --kind <kinds>`), by which the queue page and `review/prior.sh` find the review and carry it across a rebase. `review/comment-lint --kind review <file>` checks the form.
 5. **Three reviews** of the draft, each with its own input (`review/seats/`): one reads the code first and
    asks whether the findings stand without the draft; one checks every sentence against the captures; one
    reads it as the maintainer would. Their reports sit beside the draft; the draft is fixed, not defended.

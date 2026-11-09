@@ -21,3 +21,6 @@ verdict paragraph as one clause, and keep the labelled blocks for correctness (G
 <verdict.json summary or the PASS/FAIL lines, verbatim from the captures>
 
 </details>
+
+<!-- peeryard {"head": "<full head sha>", "base": "<base branch>", "kind": "<kinds run>", "prod_patch_id": "<id>", "at": "<utc>"} -->
+<!-- the line above is written by `python3 queue/mark.py --pr N --kind <kinds>`; keep it: the queue page and review/prior.sh find and carry the review by it -->

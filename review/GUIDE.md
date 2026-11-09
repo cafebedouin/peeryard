@@ -146,3 +146,12 @@ of results, every affected post can be found and corrected). The version and the
 Posts made before the tool was renamed on 2026-09-24 carry its earlier name, "using forkbench"; `review/prior.sh`
 matches both, and a search for every post should include both phrases.
 
+Since 2026-11-09 every review also ends with a structured marker, an HTML comment GitHub hides from readers:
+`<!-- peeryard {"head": "<sha>", "base": "<branch>", "kind": "<kinds>", "prod_patch_id": "<id>", "at": "<utc>"} -->`,
+written by `python3 queue/mark.py --pr N --kind <kinds>` (the template's last line). The words are for people and
+search; the marker is for the machines: the queue page (`queue/build.py`) and `review/prior.sh` find a review by
+either, and the page uses the marker's head and production patch-id to carry a review across a rebase or a
+tests-only push (same id: the review stands, shown as carried) and to re-open the pull request on a production change.
+A review posted from another toolchain counts if it carries either the words or the marker; nothing about the poster is
+a factor.
+

@@ -16,8 +16,13 @@ and check runs (public data), and, for the same-change view, each open pull requ
 clone (--git-cache; kept between local runs, fresh on a hosted runner). Writes: <out>/index.html,
 <out>/maintainers/index.html, <out>/queue.json, <out>/history/<date>.json and <out>/history/index.json (the fields and
 their stability: docs/queue-data.md). A pull request
-reviewed with peeryard at its current head (an issue comment carrying "using peeryard" or the earlier "using
-forkbench", posted after the head commit) is shown with that review's link instead of being offered for one.
+reviewed with peeryard at its current head is shown with that review's link instead of being offered for one. A
+peeryard review is a pull-request review or an issue comment by someone other than the author that carries the structured marker
+`<!-- peeryard {"head": "<sha>", "kind": "...", "prod_patch_id": "..."} -->` (queue/mark.py writes it), or the credit-line
+phrase "using peeryard" (the earlier "using forkbench" too), or, for posts made before the marker existed, a credit-line
+opening by a login in queue/reviewers.json. A review at an earlier head still counts when the production diff has not
+changed since (same `git patch-id --stable` over the changed production lines: a rebase, or a tests-only push); the
+page says it was carried and from which head.
 """
 import argparse, datetime as dt, fnmatch, html, json, os, re, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 
@@ -48,7 +53,7 @@ def api(path, params=None, token=None, paginate=False):
                     link = r.headers.get("Link", "")
                     break
             except urllib.error.HTTPError as e:
-                if e.code in (403, 429) and attempt < 3:
+                if (e.code in (403, 429) or 500 <= e.code < 600) and attempt < 3:   # rate limit, or a passing GitHub 5xx
                     time.sleep(30 * (attempt + 1)); continue
                 raise
         if not paginate:
@@ -101,6 +106,89 @@ def carried_patches():
     return list(rows.values())
 
 
+MARKER_RE = re.compile(r"<!--\s*peeryard\s+(\{.*?\})\s*-->", re.S)
+PHRASES = ("using peeryard", "using forkbench")
+NON_REVIEW_KINDS = {"reply", "pr-description", "pr"}    # marker kinds that are posts made with peeryard but not reviews of the head
+CREDIT_RE = re.compile(r"^\s*(Review carried out by|Prepared (with|by)|Carried out by|Reply by)", re.I)
+
+
+def load_reviewers():
+    """queue/reviewers.json: logins whose credit-line posts made before the marker existed count as peeryard reviews."""
+    path = os.path.join(HERE, "reviewers.json")
+    if not os.path.isfile(path):
+        return {"logins": [], "until": "1970-01-01T00:00:00Z"}
+    with open(path) as f:
+        j = json.load(f)
+    return {"logins": set(j.get("logins") or []), "until": j.get("legacy_credit_line_until", "1970-01-01T00:00:00Z")}
+
+
+def peeryard_posts(reviews, comments):
+    """The peeryard posts on one pull request, oldest first: {url, at, source, kind, head, prod_patch_id, commit_id}.
+    source is "marker" (the structured comment), "phrase" (the credit-line words) or "legacy" (a credit-line opening by a
+    listed login, before reviewers.json's date). A pull-request review also carries commit_id, the head it was made on."""
+    legacy = load_reviewers()
+    out = []
+    for kind, items in (("review", reviews), ("comment", comments)):
+        for c in items:
+            at = c.get("submitted_at") if kind == "review" else c.get("created_at")
+            body = c.get("body") or ""
+            if not at or not body:
+                continue
+            rec = {"url": c["html_url"], "at": parse_ts(at), "login": c["user"]["login"], "source": None, "kind": None,
+                   "head": None, "prod_patch_id": None, "commit_id": c.get("commit_id") if kind == "review" else None}
+            m = MARKER_RE.search(body)
+            if m:
+                try:
+                    j = json.loads(m.group(1))
+                    rec.update({"source": "marker", "kind": j.get("kind"), "head": j.get("head"), "prod_patch_id": j.get("prod_patch_id")})
+                except ValueError:
+                    pass
+            if not rec["source"] and any(ph in body.lower() for ph in PHRASES):
+                rec["source"] = "phrase"
+            if not rec["source"] and rec["login"] in legacy["logins"] and at <= legacy["until"]:
+                first = next((l for l in body.splitlines() if l.strip()), "")
+                if CREDIT_RE.match(first):
+                    rec["source"] = "legacy"
+            if rec["source"]:
+                out.append(rec)
+    out.sort(key=lambda r: r["at"])
+    return out
+
+
+def peeryard_field(p):
+    return {"url": p["url"], "at": p["at"].isoformat(), "source": p["source"], "kind": p["kind"],
+            "head": (p["head"] or p["commit_id"] or None), "prod_patch_id": p["prod_patch_id"], "carried_from": None}
+
+
+def carry_reviews(repo, rows, diffs, gdir):
+    """A peeryard review made at an earlier head still stands when the production diff is unchanged: the marker's
+    prod_patch_id, or the -U0 production patch-id computed at the reviewed head (the marker's head, or the review's
+    commit_id), equals the current one. Sets peeryard_review and peeryard (carried_from = the reviewed head). A
+    comment without a marker names no head and cannot carry."""
+    carried = 0
+    for r in rows:
+        p = r.get("peeryard_prior")
+        cur = (diffs.get(r["number"]) or {}).get("patch_id")
+        if not p or not cur:
+            continue
+        pid = p.get("prod_patch_id")
+        if not pid and p.get("head"):
+            try:
+                if subprocess.run(["git", "--git-dir", gdir, "cat-file", "-e", p["head"] + "^{commit}"], capture_output=True).returncode:
+                    git(gdir, "fetch", "-q", "--no-tags", "origin", p["head"])
+                mb = git(gdir, "merge-base", f"refs/heads/{r['base']}", p["head"]).split()[0]
+                pid, _ = production_patch_id(gdir, mb, p["head"], "-U0")
+            except Exception:
+                pid = None
+        if pid and pid == cur:
+            r["peeryard_review"] = p["url"]
+            r["peeryard"] = dict(p, carried_from=p["head"][:9] if p.get("head") else None, prod_patch_id=pid)
+            carried += 1
+    for r in rows:
+        r.pop("peeryard_prior", None)
+    return carried
+
+
 def collect(repo, token, limit):
     """Returns (rows for the open, non-draft pull requests; the open pull-request list as GitHub gave it, drafts included)."""
     allprs = api(f"/repos/{repo}/pulls", {"state": "open", "per_page": 100}, token, paginate=True)
@@ -126,8 +214,10 @@ def collect(repo, token, limit):
         checks = api(f"/repos/{repo}/commits/{head_sha}/check-runs", {"per_page": 100}, token).get("check_runs", [])
         reviews_at_head = [r for r in reviews if r.get("submitted_at") and parse_ts(r["submitted_at"]) > head_at
                            and r["user"]["login"] != full["user"]["login"]]
-        peeryard = [c for c in comments if parse_ts(c["created_at"]) > head_at
-                    and ("using peeryard" in c["body"].lower() or "using forkbench" in c["body"].lower())]
+        posts = [c for c in peeryard_posts(reviews, comments)
+                 if c["login"] != full["user"]["login"] and c["kind"] not in NON_REVIEW_KINDS]   # the author's own posts, replies
+        peeryard = [c for c in posts if c["at"] > head_at]
+        prior = [c for c in posts if c["at"] <= head_at]       # the latest one naming a head may still carry (carry_reviews)
         last_activity = max([head_at] + [parse_ts(r["submitted_at"]) for r in reviews_at_head]
                             + [parse_ts(c["created_at"]) for c in comments if parse_ts(c["created_at"]) > head_at])
         if checks:
@@ -143,7 +233,9 @@ def collect(repo, token, limit):
             "files": len(files), "additions": full["additions"], "deletions": full["deletions"],
             "tier": tier_of(files, RULES), "reviews_at_head": len(reviews_at_head),
             "approved_at_head": any(r["state"] == "APPROVED" for r in reviews_at_head),
-            "peeryard_review": peeryard[-1]["html_url"] if peeryard else None,
+            "peeryard_review": peeryard[-1]["url"] if peeryard else None,
+            "peeryard": peeryard_field(peeryard[-1]) if peeryard else None,
+            "peeryard_prior": next((peeryard_field(c) for c in reversed(prior) if c["head"] or c["commit_id"]), None) if not peeryard else None,
             "mergeable": full.get("mergeable_state"), "ci": ci,
             "linked_issue": any(k in body.lower() for k in ("fixes #", "closes #", "resolves #")),
             "days_at_head": (now_utc() - head_at).days, "days_waiting": (now_utc() - last_activity).days,
@@ -320,11 +412,19 @@ def is_wip(r):
     return any(m.upper() in t for m in RULES.get("wip_markers", []))
 
 
+def needs_rebase(r):
+    """GitHub reports conflicts with the base branch: an author action before a maintainer can merge. Such a pull request
+    leaves the default review track (its diff against its own merge base is still readable, so a reviewer who wants it may
+    still pick it); the state is read from GitHub, nothing is posted, and it clears by itself when the author rebases."""
+    return r["mergeable"] == "dirty"
+
+
 def rank_review(rows):
     """Needs a review: no review at the current head, head pushed within stale_days, not marked WIP. Order: tier,
     then longest at the current head, then smallest."""
     stale = RULES.get("stale_days", 90)
-    todo = [r for r in rows if r["reviews_at_head"] == 0 and not r["peeryard_review"] and r["days_at_head"] <= stale and not is_wip(r)]
+    todo = [r for r in rows if r["reviews_at_head"] == 0 and not r["peeryard_review"] and r["days_at_head"] <= stale and not is_wip(r)
+            and not needs_rebase(r)]
     todo.sort(key=lambda r: (r["tier"][0], -r["days_at_head"], r["additions"] + r["deletions"]))
     for r in todo:
         r["why"] = [f"tier {r['tier'][0]} ({r['tier'][1]})", f"{r['days_at_head']} days at this head",
@@ -335,11 +435,11 @@ def rank_review(rows):
 
 def rank_maintainer(rows):
     """Needs a maintainer: reviewed at this head, CI green (or none), mergeable. Order: longest waiting first."""
-    todo = [r for r in rows if r["reviews_at_head"] > 0 and r["ci"] in ("green", "none") and r["mergeable"] in ("clean", "unstable", "has_hooks", "unknown")]
+    todo = [r for r in rows if (r["reviews_at_head"] > 0 or r["peeryard_review"]) and r["ci"] in ("green", "none") and r["mergeable"] in ("clean", "unstable", "has_hooks", "unknown")]
     todo.sort(key=lambda r: (-r["days_waiting"], r["tier"][0]))
     for r in todo:
         r["why"] = [f"{r['days_waiting']} days since the last activity", f"{r['reviews_at_head']} review(s) at this head"
-                    + (", approved" if r["approved_at_head"] else ""), f"CI {r['ci']}", ("mergeable: not yet computed by GitHub" if r["mergeable"] == "unknown" else f"mergeable: {r['mergeable']}"),
+                    + (", approved" if r["approved_at_head"] else "") + peeryard_note(r), f"CI {r['ci']}", ("mergeable: not yet computed by GitHub" if r["mergeable"] == "unknown" else f"mergeable: {r['mergeable']}"),
                     f"tier {r['tier'][0]} ({r['tier'][1]})"]
     return todo
 
@@ -531,6 +631,24 @@ def write_history(out, prior, snap):
     return dates
 
 
+def peeryard_note(r):
+    p = r.get("peeryard")
+    if not p:
+        return ""
+    note = "; peeryard review" + (f" ({p['kind']})" if p.get("kind") else "")
+    if p.get("carried_from"):
+        note += f", carried from head {p['carried_from']} (production diff unchanged)"
+    return note
+
+
+def reviewed_cell(r):
+    p = r.get("peeryard") or {}
+    tail = f" <small>{html.escape(p['kind'])}</small>" if p.get("kind") else ""
+    if p.get("carried_from"):
+        tail += f"<br><small class=why>made at head {p['carried_from']}; the production diff is unchanged since, so it stands</small>"
+    return f"<a href='{r['peeryard_review']}'>review</a>{tail}"
+
+
 def why_cell(r):
     return "<span class=why>" + "; ".join(html.escape(w) for w in r["why"]) + "</span>"
 
@@ -575,6 +693,7 @@ def main():
             if n in by_number:
                 others = sorted({m for p in g["pairs"] if n in p["prs"] for m in p["prs"]} - {n})
                 by_number[n].setdefault("same_issue", []).append({"issue": g["issue"], "with": others})
+    carried_reviews = carry_reviews(a.repo, rows, diffs, os.path.join(a.git_cache, a.repo.replace("/", "_") + ".git")) if diffs else 0
     sc_secs = round(time.time() - t0)
     uncompared = sorted(n for n, d in diffs.items() if d.get("error"))
     review = rank_review(rows)
@@ -582,6 +701,8 @@ def main():
     stale_days = RULES.get("stale_days", 90)
     stale = sorted([r for r in rows if r["days_at_head"] > stale_days], key=lambda r: -r["days_at_head"])
     wip = [r for r in rows if is_wip(r) and r["days_at_head"] <= stale_days]
+    rebase = sorted([r for r in rows if needs_rebase(r) and r["days_at_head"] <= stale_days and not is_wip(r)
+                     and r["reviews_at_head"] == 0 and not r["peeryard_review"]], key=lambda r: (r["tier"][0], -r["days_at_head"]))
     carried = [c for c in carried_patches() if c["repo"] == a.repo]
     carried.sort(key=lambda c: (-len(c["needed_by"]), c["number"]))
     now = now_utc()
@@ -596,8 +717,17 @@ def main():
          "the head has waited, then by size. An agent reviews one with peeryard's <code>AGENTS.md</code>; a person with "
          "the same steps. Pick from the top.", [(pr_cell(r), why_cell(r)) for r in review], cols),
         *same_secs,
-        ("Reviewed with peeryard at this head", "Shown so nobody does the same review twice; the link is the review.",
-         [(pr_cell(r), f"<a href='{r['peeryard_review']}'>review</a>") for r in reviewed], ["pull request", "review"]),
+        ("Reviewed with peeryard at this head", "Shown so nobody does the same review twice; the link is the review. A "
+         "pull-request review or comment counts when it carries the <code>&lt;!-- peeryard {…} --&gt;</code> marker "
+         "(<code>queue/mark.py</code>) or the credit-line words \"using peeryard\". A review made at an earlier head stands "
+         "while the production diff (<code>src/main</code>, changed lines) keeps the same <code>git patch-id</code>: a rebase "
+         "or a tests-only push does not re-open it; a production change does.",
+         [(pr_cell(r), reviewed_cell(r)) for r in reviewed], ["pull request", "review"]),
+        ("Needs a rebase before a review", "GitHub reports conflicts with the base branch, so the author has to act before a "
+         "maintainer could merge; not offered for review by default. The diff against the pull request's own merge base is "
+         "still readable, so a reviewer who wants one of these may still take it. Read from GitHub's mergeable state; nothing "
+         "is posted; a row leaves when the author rebases.",
+         [(pr_cell(r), f"<span class=why>tier {r['tier'][0]} ({html.escape(r['tier'][1])}); {r['days_at_head']} days at this head; CI {r['ci']}</span>") for r in rebase], cols),
         ("Marked WIP by their authors", "Not ranked; listed so they are not forgotten.",
          [(pr_cell(r), f"<span class=why>{r['days_at_head']} days at this head</span>") for r in wip], cols),
         (f"Older than {stale_days} days at their head ({len(stale)})", "Unranked. A pull request comes back into the work list when its author pushes.",
@@ -627,12 +757,13 @@ def main():
         f.write(maint_page)
     with open(os.path.join(a.out, "queue.json"), "w") as f:
         json.dump({"schema_version": SCHEMA_VERSION, "generated": generated, "generated_at": generated_at, "repo": a.repo, "needs_review": [r["number"] for r in review],
-                   "needs_maintainer": [r["number"] for r in maint], "carried": carried,
+                   "needs_maintainer": [r["number"] for r in maint], "needs_rebase": [r["number"] for r in rebase], "carried": carried,
                    "same_change": exact, "same_issue": related, "same_change_error": sc_error,
                    "same_change_uncompared": uncompared, "min_changed_lines": RULES.get("same_change", {}).get("min_changed_lines", 1),
                    "open_prs": len(allprs), "rows": rows}, f, indent=1, default=str)
     dates = write_history(a.out, prior, snapshot(generated_at, a.repo, allprs, rows, exact, related, sc_error, uncompared))
-    print(f"{len(rows)} open PRs: {len(review)} need a review, {len(maint)} need a maintainer, {len(reviewed)} reviewed with peeryard, "
+    print(f"{len(rows)} open PRs: {len(review)} need a review, {len(rebase)} need a rebase first, {len(maint)} need a maintainer, {len(reviewed)} reviewed with peeryard "
+          f"({carried_reviews} carried from an earlier head), "
           f"{len(carried)} carried; same change: {len(exact)} group(s), same issue: {len(related)} group(s) ({sc_secs} s"
           + (f", not computed: {sc_error}" if sc_error else "") + f"); history: {len(dates)} day(s); written to {a.out}")
 

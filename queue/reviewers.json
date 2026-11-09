@@ -1,0 +1,5 @@
+{
+ "about": "Backfill only. Posts made before legacy_credit_line_until by these logins count as peeryard reviews when they open with a credit line (Review carried out by / Prepared with ...) but carry neither the <!-- peeryard {...} --> marker nor the words 'using peeryard': reviews posted from a sibling toolchain whose credit line had dropped the phrase. After that date only the marker or the phrase counts, whoever posts; this list does not grow.",
+ "legacy_credit_line_until": "2026-11-09T23:59:59Z",
+ "logins": ["cafebedouin"]
+}

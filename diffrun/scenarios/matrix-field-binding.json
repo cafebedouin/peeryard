@@ -1,0 +1,14 @@
+{
+  "name": "matrix-field-binding",
+  "description": "Matrix line (weak-blocks), two nodes, wallet payments in input blocks: how many of the miner's announcements the follower rejects because a declared field is not among the proven extension leaves (ergoplatform/ergo#2368). Base: the check without the producer fix of #2367; candidate: the check with it. Both arms carry the check through patches/test/matrix-2368-receiver-field-binding.patch.",
+  "script": "matrix-field-binding.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "not_bound": "number", "invalid": "number", "valid": "number", "with_txs": "number", "accepted": "number", "lost": "number" },
+  "n": 3,
+  "timeout_seconds": 1500,
+  "expect": {
+    "base":      { "all": { "key": "not_bound", "op": ">", "value": 0 } },
+    "candidate": { "all": { "key": "not_bound", "op": "==", "value": 0 } }
+  }
+}

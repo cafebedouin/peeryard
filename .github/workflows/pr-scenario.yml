@@ -188,14 +188,12 @@ jobs:
             fi
             echo "RANGE=$RANGE" >> "$GITHUB_ENV"
           fi
-      - name: Cache the sigma-state snapshot the weak-blocks line depends on
-        if: env.LINE == 'matrix' || env.LINE == 'matrix-stack'
+      - name: Cache the sigma-state snapshot the weak-blocks line depends on (the next step is a no-op for a release version)
         uses: actions/cache@v4
         with:
           path: ~/.ivy2/local/org.scorexfoundation
           key: sigma-snapshot-${{ hashFiles('patches/ergo-matrix/patches.json', 'patches/sigma-snapshot.sh') }}
       - name: sigma-state snapshot (weak-blocks pins a -SNAPSHOT that is on no public repository)
-        if: env.LINE == 'matrix' || env.LINE == 'matrix-stack'
         run: JAVA8_HOME="$JAVA_HOME" bash patches/sigma-snapshot.sh "$BASE"
       - name: Build the base and the base + the PR's diff
         run: |

@@ -1,0 +1,69 @@
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/mining/CandidateBlock.scala b/ergo-core/src/main/scala/org/ergoplatform/mining/CandidateBlock.scala
+index 1c4397cb5..2c46d2a35 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/mining/CandidateBlock.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/mining/CandidateBlock.scala
+@@ -3,12 +3,12 @@ package org.ergoplatform.mining
+ import io.circe.Encoder
+ import io.circe.syntax._
+ import org.ergoplatform.modifiers.history.extension.Extension.{InputBlockTransactionsDigestKey, PrevInputBlockIdKey, PreviousInputBlockTransactionsDigestKey}
+-import org.ergoplatform.modifiers.history.extension.ExtensionCandidate
++import org.ergoplatform.modifiers.history.extension.{Extension, ExtensionCandidate}
+ import org.ergoplatform.modifiers.history.header.Header
+ import org.ergoplatform.modifiers.mempool.ErgoTransaction
+ import org.ergoplatform.settings.Algos
+-import scorex.crypto.authds.merkle.BatchMerkleProof
+-import scorex.crypto.authds.{ADDigest, SerializedAdProof}
++import scorex.crypto.authds.merkle.{BatchMerkleProof, Leaf}
++import scorex.crypto.authds.{ADDigest, LeafData, SerializedAdProof}
+ import scorex.crypto.hash.Digest32
+ 
+ /**
+@@ -49,6 +49,16 @@ object InputBlockFields {
+ 
+     ExtensionCandidate(prevInput ++ Seq(txs, prevTxs))
+   }
++
++  def toExtensionFields(fields: InputBlockFields): ExtensionCandidate = {
++    toExtensionFields(fields.prevInputBlockId, fields.transactionsDigest, fields.prevTransactionsDigest)
++  }
++
++  def fieldHashes(fields: InputBlockFields): Seq[Digest32] = {
++    toExtensionFields(fields).fields.map { kv =>
++      Leaf[Digest32](LeafData @@ Extension.kvToLeaf(kv))(Algos.hash).hash
++    }
++  }
+ }
+ 
+ case class CandidateBlock(parentOpt: Option[Header],
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/subblocks/InputBlockAnnouncement.scala b/ergo-core/src/main/scala/org/ergoplatform/subblocks/InputBlockAnnouncement.scala
+index 9b9e49c2f..7af3b0bf0 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/subblocks/InputBlockAnnouncement.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/subblocks/InputBlockAnnouncement.scala
+@@ -34,6 +34,11 @@ case class InputBlockAnnouncement(version: Byte,
+              expectedNBits: Option[Long]): Boolean = {
+     val powValid = powScheme.checkInputBlockPoW(header, parameters)
+     val extValid = inputBlockFields.inputBlockFieldsProof.valid(header.extensionRoot)
++    val fieldsBound = InputBlockFields.fieldHashes(inputBlockFields).forall { expectedFieldHash =>
++      inputBlockFields.inputBlockFieldsProof.indices.exists {
++        case (_, provenFieldHash) => provenFieldHash.sameElements(expectedFieldHash)
++      }
++    }
+     val nBitsValid = expectedNBits.forall(header.nBits == _)
+ 
+     if (!powValid) {
+@@ -42,11 +47,14 @@ case class InputBlockAnnouncement(version: Byte,
+     if (!extValid) {
+       log.warn(s"Extension section check fails for sub-block ${header.id}")
+     }
++    if (!fieldsBound) {
++      log.warn(s"Input block fields are not bound to extension proof for sub-block ${header.id}")
++    }
+     if (!nBitsValid) {
+       log.warn(s"Difficulty (nBits) mismatch for sub-block ${header.id}: " +
+         s"header.nBits=${header.nBits}, expected=${expectedNBits.getOrElse("unknown")}")
+     }
+-    powValid && extValid && nBitsValid
++    powValid && extValid && fieldsBound && nBitsValid
+   }
+ 
+   lazy val prevInputBlockId: Option[ModifierId] = inputBlockFields.prevInputBlockId.map(bytesToId)

@@ -51,3 +51,5 @@ wallet-oracle-restart	WALLET-ORACLE-RESTART \(restart\): PASS	1200	-	-
 wallet-workload	WALLET-WORKLOAD: PASS	900	WW_PRESET=aa	-
 blockwatch	BLOCKWATCH: PASS	900	-	-
 blockwatch-control	BLOCKWATCH-CONTROL: PASS	600	-	-
+reorg-invalid-mempool	REORG-INVALID-MEMPOOL: PASS	2400	RIM_K=500	-
+cache-window-fork	CACHE-WINDOW-FORK: PASS	4200	-	-

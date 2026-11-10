@@ -1,0 +1,12 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "C", "mining": true, "mine_poll": "500ms", "knownPeers": [],
+      "conf": { "ergo.node.mempoolCapacity": 10000 } },
+    { "name": "A", "mining": false, "knownPeers": ["C"],
+      "conf": { "ergo.node.mempoolCapacity": 10000 } }
+  ],
+  "links": [
+    { "a": "A", "b": "C", "delay_ms": 0 }
+  ]
+}

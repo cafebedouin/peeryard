@@ -202,8 +202,9 @@ while [ $SECONDS -lt $end ]; do
 done
 sed -n "$((cl0 + 1)),\$p" "$CLOG" | grep -E 'CLEANUP-RUN|ROLLBACK-TXS|Chain switch:|Initiating mempool cleanup|Mempool validation failed|OutOfMemory' > "$RIG_LOG_DIR/rim_C_lines.log"
 say "C log lines after the heal: $(grep -c CLEANUP-RUN "$RIG_LOG_DIR/rim_C_lines.log") CLEANUP-RUN, $(grep -c ROLLBACK-TXS "$RIG_LOG_DIR/rim_C_lines.log") ROLLBACK-TXS, $(grep -c 'Chain switch:' "$RIG_LOG_DIR/rim_C_lines.log") chain switch"
-grep -E 'ROLLBACK-TXS|Chain switch:' "$RIG_LOG_DIR/rim_C_lines.log" | head -8
-grep -E 'CLEANUP-RUN' "$RIG_LOG_DIR/rim_C_lines.log" | awk '$0 !~ /due=0 /' | head -12
+# prefixed so a wrapper that forwards only "[...]" lines (diffrun's rig-example) keeps them
+grep -E 'ROLLBACK-TXS|Chain switch:' "$RIG_LOG_DIR/rim_C_lines.log" | head -8 | sed -E 's/^.*(ROLLBACK-TXS|Chain switch:)/[rim] node C: \1/'
+grep -E 'CLEANUP-RUN' "$RIG_LOG_DIR/rim_C_lines.log" | awk '$0 !~ /due=0 /' | head -12 | sed -E 's/^.*(CLEANUP-RUN)/[rim] node C: \1/'
 
 cf=$(full_height C)
 chain_txids C $((h0 + 1)) "$cf" > "$W/c_final_txids"

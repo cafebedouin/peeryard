@@ -1,0 +1,32 @@
+diff --git a/src/main/scala/org/ergoplatform/local/CleanupWorker.scala b/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
+index 2aeaf28cd..8fa6162a1 100644
+--- a/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
++++ b/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
+@@ -6,6 +6,7 @@ import org.ergoplatform.local.MempoolAuditor.CleanupDone
+ import org.ergoplatform.network.ErgoNodeViewSynchronizerMessages.RecheckMempool
+ import org.ergoplatform.modifiers.mempool.UnconfirmedTransaction
+ import org.ergoplatform.nodeView.mempool.ErgoMemPoolReader
++import org.ergoplatform.nodeView.mempool.ErgoMemPoolUtils.ProcessingOutcome
+ import org.ergoplatform.nodeView.state.UtxoStateReader
+ import org.ergoplatform.settings.NodeConfigurationSettings
+ import org.ergoplatform.nodeView.ErgoNodeViewHolder.ReceivableMessages.RecheckedTransactions
+@@ -80,6 +81,7 @@ class CleanupWorker(nodeSettings: NodeConfigurationSettings) extends Actor with
+       txs match {
+         case head :: tail if costAcc < CostLimit =>
+           val validationContext = state.stateContext.simplifiedUpcoming()
++          val validationStartTime = System.currentTimeMillis()
+           state.validateWithCost(head.transaction, validationContext, nodeSettings.maxTransactionCost, None) match {
+             case Success(txCost) =>
+               val updTx = head.withCost(txCost)
+@@ -87,7 +89,10 @@ class CleanupWorker(nodeSettings: NodeConfigurationSettings) extends Actor with
+             case Failure(e) =>
+               val txId = head.id
+               log.debug(s"Transaction $txId failed cleanup validation: ${e.getMessage}")
+-              validationLoop(tail, validated, invalidated += txId, head.lastCost.getOrElse(0) + costAcc) //add old cost
++              // without a recorded cost (a rolled-back transaction re-enters the pool without one), count the time
++              // this check took, as the pool does for a transaction it invalidates
++              val failedCost = head.lastCost.getOrElse(new ProcessingOutcome.Invalidated(e, validationStartTime).cost)
++              validationLoop(tail, validated, invalidated += txId, failedCost + costAcc)
+           }
+         case _ =>
+           validated -> invalidated

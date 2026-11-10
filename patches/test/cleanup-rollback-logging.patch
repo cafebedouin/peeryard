@@ -1,0 +1,54 @@
+diff --git a/src/main/scala/org/ergoplatform/local/CleanupWorker.scala b/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
+index 2aeaf28cd..991264fe3 100644
+--- a/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
++++ b/src/main/scala/org/ergoplatform/local/CleanupWorker.scala
+@@ -95,7 +95,11 @@ class CleanupWorker(nodeSettings: NodeConfigurationSettings) extends Actor with
+     }
+ 
+     val res = validationLoop(txsToValidate, mutable.ArrayBuilder.make(), mutable.ArrayBuilder.make(), 0L)
+-    RecheckedTransactions(stateRevision, allPoolTxs, wrapRefArray(res._1.result()), wrapRefArray(res._2.result()))
++    val rechecked = RecheckedTransactions(stateRevision, allPoolTxs, wrapRefArray(res._1.result()), wrapRefArray(res._2.result()))
++    // peeryard instrumentation (logging only)
++    log.info(s"CLEANUP-RUN pool=${allPoolTxs.size} due=${txsToValidate.size} valid=${rechecked.unconfirmedTxs.size} " +
++      s"failed=${rechecked.invalidatedIds.size} ms=${System.currentTimeMillis() - now}")
++    rechecked
+   }
+ 
+ }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+index a16387445..24708099f 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+@@ -457,7 +457,14 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+                               memPool: ErgoMemPool): ErgoMemPool = {
+     val appliedTxs = blocksApplied.flatMap(extractTransactions)
+     context.system.eventStream.publish(BlockAppliedTransactions(appliedTxs.map(_.id)))
+-    val rolledBackTxs = rolledBackTransactions(blocksRemoved, appliedTxs).map(tx => UnconfirmedTransaction(tx, None))
++    val rbT0 = System.currentTimeMillis()
++    val rolledBack = rolledBackTransactions(blocksRemoved, appliedTxs)
++    // peeryard instrumentation (logging only)
++    if (blocksRemoved.nonEmpty) {
++      log.info(s"ROLLBACK-TXS blocksRemoved=${blocksRemoved.size} rolledBack=${rolledBack.size} applied=${appliedTxs.size} " +
++        s"ms=${System.currentTimeMillis() - rbT0}")
++    }
++    val rolledBackTxs = rolledBack.map(tx => UnconfirmedTransaction(tx, None))
+     memPool.removeWithDoubleSpends(appliedTxs).put(rolledBackTxs)
+   }
+ 
+@@ -587,7 +594,15 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+ 
+                   if (progressInfo.chainSwitchingNeeded) {
+                     val returned = if (returnRolledBack) {
+-                      rolledBackTransactions(progressInfo.toRemove, blocksApplied.flatMap(extractTransactions)).size
++                      val appliedForLog = blocksApplied.flatMap(extractTransactions)
++                      val rbT0 = System.currentTimeMillis()
++                      val rolledBack = rolledBackTransactions(progressInfo.toRemove, appliedForLog)
++                      // peeryard instrumentation (logging only)
++                      if (progressInfo.toRemove.nonEmpty) {
++                        log.info(s"ROLLBACK-TXS blocksRemoved=${progressInfo.toRemove.size} rolledBack=${rolledBack.size} " +
++                          s"applied=${appliedForLog.size} ms=${System.currentTimeMillis() - rbT0}")
++                      }
++                      rolledBack.size
+                     } else {
+                       0
+                     }

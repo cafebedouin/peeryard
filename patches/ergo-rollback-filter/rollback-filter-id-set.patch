@@ -1,0 +1,16 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+index a16387445..261796033 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/ErgoNodeViewHolder.scala
+@@ -467,9 +467,10 @@ abstract class ErgoNodeViewHolder[State <: ErgoState[State]](settings: ErgoSetti
+     */
+   private def rolledBackTransactions(blocksRemoved: Seq[BlockSection],
+                                      appliedTxs: Seq[ErgoTransaction]): Seq[ErgoTransaction] = {
++    val appliedIds = appliedTxs.iterator.map(_.id).toSet
+     blocksRemoved
+       .flatMap(extractTransactions)
+-      .filter(tx => !appliedTxs.exists(_.id == tx.id))
++      .filter(tx => !appliedIds.contains(tx.id))
+   }
+ 
+   /**

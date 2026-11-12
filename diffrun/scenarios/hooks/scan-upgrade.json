@@ -1,0 +1,8 @@
+{
+  "chain": "current",
+  "nodes": [
+    { "name": "A", "mining": false, "knownPeers": [], "jar": "${SCANUP_WRITER_JAR}",
+      "conf": { "ergo.wallet.keepSpentBoxes": true } }
+  ],
+  "links": []
+}

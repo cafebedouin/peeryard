@@ -1,0 +1,15 @@
+{
+  "name": "peer-pair-release",
+  "description": "This role's jar (A) and a pinned ergoplatform/ergo release jar (B) on one two-node network, bring-up gate off. First the release jar parses the sync-info payloads this jar writes (V2, and V3 if present); then, after PP_WAIT_S of their own syncing, does each node list the other as connected, and did either fail to parse the other's messages or blacklist it?",
+  "script": "peer-pair-release.sh",
+  "tier": "public",
+  "env": { "PP_WAIT_S": "60", "PP_RELEASE_TAG": "v6.1.7", "PP_RELEASE_SHA256": "e2e95b5a153895580903bb6bebe9250f459165f371f5656d332fc92f9fd23900" },
+  "metrics": { "paired": "boolean", "banned_by_release": "boolean", "parse_failures_release": "number", "v3_written": "boolean", "v3_parsed_by_release": "boolean", "v2_parsed_by_release": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base":      { "all": { "key": "paired", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "paired", "op": "==", "value": true } }
+  }
+}

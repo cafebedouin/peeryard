@@ -1,0 +1,18 @@
+{
+  "name": "parse-error-log",
+  "description": "What one node logs when its REST port receives input that is not HTTP (ergoplatform/ergo#1318): three probes on their own connections (a method longer than 16 characters starting with ESC, a short unknown method of bytes 0x80-0x82, a TLS-style start as the control), each HTTP status, and the 'Illegal request' lines the console log gains. pass = every probe logged a line, no line carries a detail after the summary or a byte outside printable ASCII, and /info still answers. Base (akka's default full verbosity): the detail and the request bytes are logged, pass false; candidate with error-logging-verbosity = simple: pass true.",
+  "script": "parse-error-log.sh",
+  "tier": "public",
+  "env": {},
+  "metrics": { "alive": "boolean", "pass": "boolean",
+               "p1_status": "number", "p1_lines": "number", "p1_detail": "boolean", "p1_nonprint": "number",
+               "p2_status": "number", "p2_lines": "number", "p2_detail": "boolean", "p2_nonprint": "number",
+               "p3_status": "number", "p3_lines": "number", "p3_detail": "boolean", "p3_nonprint": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 600,
+  "expect": {
+    "base":      { "all": { "key": "pass", "op": "==", "value": false } },
+    "candidate": { "all": { "key": "pass", "op": "==", "value": true } }
+  }
+}

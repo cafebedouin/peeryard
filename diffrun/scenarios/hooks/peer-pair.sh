@@ -10,7 +10,7 @@ sleep "$pp_wait"
 pp_node(){ local n=$1 o=$2 l c1 c2 c3 bl why con ban
   l="$RIG_LOG_DIR/node_$n.log"
   c1=$(grep -c 'Failed to deserialize data from' "$l" 2>/dev/null); c2=$(grep -c 'penalized, penalty:' "$l" 2>/dev/null)
-  c3=$(grep -c ' blacklisted$' "$l" 2>/dev/null)
+  c3=$(grep ' blacklisted$' "$l" 2>/dev/null | grep -vc 'already blacklisted')
   why=$(grep -A1 'Failed to deserialize data from' "$l" 2>/dev/null | grep -m1 -oE '[A-Za-z.]*(Exception|Error)[^@]{0,80}' || true)
   bl=$(rest "$n" /peers/blacklisted | jq -c '.addresses // []' 2>/dev/null); [[ -n "$bl" ]] || bl='[]'
   con=false; [[ " $(peers_of "$n") " == *" $o "* ]] && con=true

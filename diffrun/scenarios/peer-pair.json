@@ -1,0 +1,16 @@
+{
+  "name": "peer-pair",
+  "description": "This role's jar and the other role's jar on one two-node network, bring-up gate off: after PP_WAIT_S of their own syncing, does each list the other as connected, and did either fail to parse the other's messages or blacklist it?",
+  "script": "peer-pair.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": { "PP_WAIT_S": "60" },
+  "metrics": { "paired": "boolean", "banned_by_A": "boolean", "banned_by_B": "boolean", "parse_failures_A": "number", "parse_failures_B": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 600,
+  "expect": {
+    "base":      { "all": { "key": "paired", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "paired", "op": "==", "value": true } }
+  }
+}

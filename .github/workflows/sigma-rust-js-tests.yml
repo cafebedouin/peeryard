@@ -1,0 +1,131 @@
+# sigma-rust's "Run JS tests and publish alpha versions" CI job (ergoplatform/sigma-rust, .github/workflows/ci.yml,
+# job js_tests), replayed on GitHub-hosted runners at a fixed sigma-rust commit with two Node settings, so the
+# effect of the Node version on that job can be seen and re-run by anyone:
+#   lts    node-version "lts/*", as ci.yml has it at that commit
+#   pinned node-version 24.13.1, the version sigma-rust's own release_preflight.yml pins
+# The steps are the job's own, in its order, with the same runner image, toolchain action, service container and
+# commands. Left out: the two npm publish steps (they need a token and run only on a push to sigma-rust itself).
+# Each step after the first test step runs even if an earlier one failed (continue-on-error on the test steps, a
+# final step that fails the job if any failed), so one run shows the state of every step, not only the first red one.
+# Expected size: 2 jobs, about 15 runner-minutes each (two wasm builds and the browser bundle dominate).
+# Runs by hand, or on a push to ci/sigma-rust-js-tests (a new workflow can be dispatched only once it is on the
+# default branch).
+name: sigma-rust JS tests
+on:
+  workflow_dispatch:
+    inputs:
+      sigma_rust_ref:
+        description: sigma-rust commit to test
+        default: 688511dff3e3436dfdd6bd368e3eeef6f67d59e9
+  push:
+    branches: [ 'ci/sigma-rust-js-tests' ]
+permissions:
+  contents: read
+env:
+  SIGMA_RUST_REF: ${{ inputs.sigma_rust_ref || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}
+jobs:
+  js_tests:
+    name: JS tests, Node ${{ matrix.node.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - { label: 'lts/* (as ci.yml)', version: 'lts/*' }
+          - { label: '24.13.1 (pinned)', version: '24.13.1' }
+    services:
+      ergo_node:
+        image: ergoplatform/ergo-devnet:latest
+        ports:
+          - 9053:9053
+    steps:
+      - name: set_file_permissions
+        run: sudo chown -R $USER:$USER ${{ github.workspace }}
+
+      - name: checkout sigma-rust
+        uses: actions/checkout@v4
+        with:
+          repository: ergoplatform/sigma-rust
+          ref: ${{ env.SIGMA_RUST_REF }}
+
+      - name: what is under test
+        run: |
+          echo "sigma-rust $(git rev-parse HEAD)"
+          grep -n 'node-version' .github/workflows/ci.yml .github/workflows/release_preflight.yml
+          grep -n '"mocha"' bindings/ergo-lib-wasm/package.json
+
+      - uses: dtolnay/rust-toolchain@1.91.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node.version }}
+
+      - name: node version resolved
+        run: node --version
+
+      - name: install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-dependencies: true
+          install-chromedriver: true
+
+      - name: install deps
+        run: |
+          cd bindings/ergo-lib-wasm
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh -s -- -f
+
+      - name: run Wasm tests
+        id: wasm
+        continue-on-error: true
+        run: |
+          cd bindings/ergo-lib-wasm
+          wasm-pack build
+          wasm-pack test --node
+          wasm-pack test --node --release
+
+      - name: run node JS tests
+        id: node_js
+        continue-on-error: true
+        run: |
+          cd bindings/ergo-lib-wasm
+          wasm-pack build
+          npm install
+          npm run test
+
+      - name: run browser JS tests
+        id: browser_js
+        continue-on-error: true
+        run: |
+          cd bindings/ergo-lib-wasm
+          wasm-pack build
+          npm install
+          npm run test-browser
+
+      - name: build alpha versions
+        id: alpha
+        continue-on-error: true
+        run: |
+          cd bindings/ergo-lib-wasm
+          npm run build-nodejs-alpha
+          npm run build-browser-alpha
+
+      - name: check generated TypeScript declarations
+        id: types
+        continue-on-error: true
+        working-directory: bindings/ergo-lib-wasm
+        run: npm run test-types
+
+      - name: step outcomes
+        run: |
+          {
+            echo "### sigma-rust ${SIGMA_RUST_REF}, Node ${{ matrix.node.version }} ($(node --version))"
+            echo "| step | outcome |"
+            echo "|---|---|"
+            echo "| run Wasm tests | ${{ steps.wasm.outcome }} |"
+            echo "| run node JS tests | ${{ steps.node_js.outcome }} |"
+            echo "| run browser JS tests | ${{ steps.browser_js.outcome }} |"
+            echo "| build alpha versions | ${{ steps.alpha.outcome }} |"
+            echo "| check generated TypeScript declarations | ${{ steps.types.outcome }} |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "${{ steps.wasm.outcome }}${{ steps.node_js.outcome }}${{ steps.browser_js.outcome }}${{ steps.alpha.outcome }}${{ steps.types.outcome }}" = "successsuccesssuccesssuccesssuccess" ]

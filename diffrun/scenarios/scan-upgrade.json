@@ -3,15 +3,47 @@
   "description": "Wallet scans written by the v6.0.8 release, read after an in-place upgrade to this role's jar (ergoplatform/ergo#1668, the scan id type). One node: the release registers scan 11 (the emission contract) and scan 12 (the miner's reward script) and mines until they hold boxes; the node is stopped and started on this role's jar over the same data directory, and /scan/listAll, /scan/unspentBoxes, /scan/spentBoxes and /wallet/transactionsByScanId must answer as the release did at the same height; then 5 more blocks must be tracked and the next scan must get id 13. pass = all of that. Both roles: pass true.",
   "script": "scan-upgrade.sh",
   "tier": "public",
-  "env": { "SCANUP_WRAP": "0" },
-  "metrics": { "writer_ok": "boolean", "alive": "boolean", "eq_listall": "boolean", "eq_boxes": "boolean", "eq_txs": "boolean", "tracks": "boolean", "blocks_after": "number",
-               "next_id": "number", "next_code": "number", "wrapped": "boolean", "neg_listed": "boolean", "neg_box_found": "boolean", "neg_tracks": "boolean",
-               "neg_box_code": "number", "fill_seconds": "number", "pass": "boolean", "wrapped_supported": "boolean" },
+  "env": {
+    "SCANUP_WRAP": "0"
+  },
+  "metrics": {
+    "writer_ok": "boolean",
+    "alive": "boolean",
+    "eq_listall": "boolean",
+    "eq_boxes": "boolean",
+    "eq_txs": "boolean",
+    "tracks": "boolean",
+    "blocks_after": "number",
+    "next_id": "number",
+    "next_code": "number",
+    "wrapped": "boolean",
+    "neg_listed": "boolean",
+    "neg_box_found": "boolean",
+    "neg_tracks": "boolean",
+    "neg_box_code": "number",
+    "fill_seconds": "number",
+    "pass": "boolean",
+    "wrapped_supported": "boolean",
+    "long_tracks": "boolean",
+    "long_restart_eq": "boolean"
+  },
   "n": 1,
   "min_valid_runs": 1,
   "timeout_seconds": 1200,
   "expect": {
-    "base":      { "all": { "key": "pass", "op": "==", "value": true } },
-    "candidate": { "all": { "key": "pass", "op": "==", "value": true } }
+    "base": {
+      "all": {
+        "key": "pass",
+        "op": "==",
+        "value": true
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "pass",
+        "op": "==",
+        "value": true
+      }
+    }
   }
 }

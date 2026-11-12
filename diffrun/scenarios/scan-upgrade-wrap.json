@@ -3,15 +3,47 @@
   "description": "scan-upgrade with a wrapped scan counter (ergoplatform/ergo#1668): before the upgrade the v6.0.8 release registers filler scans until its Short counter passes 32767, then two scans it numbers -32768 and -32767 (the miner's reward script), and adds one confirmed reward box to both with /scan/addBox. After the upgrade: pass = the release's answers for every scan it can serve, kept (as scan-upgrade); wrapped_supported = the wrapped scans are listed, hold the added box, gain a box per new block, and the next scan gets 32768. A jar that keeps the Short id (base) is expected to leave the wrapped scans unlisted: wrapped_supported false; the candidate (Long ids with the Short range kept): true.",
   "script": "scan-upgrade.sh",
   "tier": "public",
-  "env": { "SCANUP_WRAP": "1" },
-  "metrics": { "writer_ok": "boolean", "alive": "boolean", "eq_listall": "boolean", "eq_boxes": "boolean", "eq_txs": "boolean", "tracks": "boolean", "blocks_after": "number",
-               "next_id": "number", "next_code": "number", "wrapped": "boolean", "neg_listed": "boolean", "neg_box_found": "boolean", "neg_tracks": "boolean",
-               "neg_box_code": "number", "fill_seconds": "number", "pass": "boolean", "wrapped_supported": "boolean" },
+  "env": {
+    "SCANUP_WRAP": "1"
+  },
+  "metrics": {
+    "writer_ok": "boolean",
+    "alive": "boolean",
+    "eq_listall": "boolean",
+    "eq_boxes": "boolean",
+    "eq_txs": "boolean",
+    "tracks": "boolean",
+    "blocks_after": "number",
+    "next_id": "number",
+    "next_code": "number",
+    "wrapped": "boolean",
+    "neg_listed": "boolean",
+    "neg_box_found": "boolean",
+    "neg_tracks": "boolean",
+    "neg_box_code": "number",
+    "fill_seconds": "number",
+    "pass": "boolean",
+    "wrapped_supported": "boolean",
+    "long_tracks": "boolean",
+    "long_restart_eq": "boolean"
+  },
   "n": 1,
   "min_valid_runs": 1,
   "timeout_seconds": 1800,
   "expect": {
-    "base":      { "all": { "key": "wrapped_supported", "op": "==", "value": false } },
-    "candidate": { "all": { "key": "wrapped_supported", "op": "==", "value": true } }
+    "base": {
+      "all": {
+        "key": "wrapped_supported",
+        "op": "==",
+        "value": false
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "wrapped_supported",
+        "op": "==",
+        "value": true
+      }
+    }
   }
 }

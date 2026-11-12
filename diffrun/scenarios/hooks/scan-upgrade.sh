@@ -27,7 +27,10 @@
 #   the swap), neg_box_code (HTTP status of /scan/unspentBoxes/-32767 on this role's jar, 0 when not asked),
 #   fill_seconds (time to register the filler scans, -1 when none),
 #   pass = writer_ok, alive, eq_listall, eq_boxes, eq_txs, tracks (and next_id 13 when SCANUP_WRAP=0),
-#   wrapped_supported = neg_listed, neg_box_found, neg_tracks and next_id 32768 (SCANUP_WRAP=1 only, else false).
+#   wrapped_supported = neg_listed, neg_box_found, neg_tracks, next_id 32768, long_tracks and long_restart_eq
+#   (SCANUP_WRAP=1 only, else false);
+#   long_tracks (SCANUP_WRAP=1: the next scan gains a box per block over K more blocks), long_restart_eq (and its
+#   unspent boxes and listAll entry are unchanged after a restart on the same jar); false when not reached.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SU_WRAP="${SCANUP_WRAP:-0}"; SU_K="${SCANUP_K:-5}"; SU_MIN="${SCANUP_MIN_BOXES:-10}"
 su(){ echo "[scan-up] $*"; }
@@ -64,7 +67,7 @@ su_inconclusive(){ rig_verdict=INCONCLUSIVE; su "=== SCAN-UPGRADE: INCONCLUSIVE 
 scan_upgrade(){
   local reader writer vW vR em emv rw rwv id11 id12 i end W R0 R1 fill fill_s=-1 wrapped=false nid1 nid2 added=""
   local writer_ok=false alive=false eq_l=true eq_b=true eq_t=true tracks=false nb=0 next_id=-1 next_code=0
-  local neg_listed=false neg_found=false neg_tracks=false neg_code=0 ids pass wsup h0 h1 hs c
+  local neg_listed=false neg_found=false neg_tracks=false neg_code=0 ids pass wsup h0 h1 hs c long_tracks=false long_restart_eq=false
   reader="$(readlink -f "${PEERYARD_JAR:-}")"; writer="$(readlink -f "${NODE_JAR[A]}")"
   [[ -f "$reader" && -f "$writer" ]] || { su_inconclusive "needs the writer jar (topology) and this role's jar (PEERYARD_JAR)"; return; }
   su "writer $(basename "$writer") ($(sha256sum "$writer" | cut -c1-16)), reader $(basename "$reader") ($(sha256sum "$reader" | cut -c1-16)), wrap=$SU_WRAP"
@@ -138,6 +141,20 @@ scan_upgrade(){
     next_id=$(su_reg su-next "$rwv"); [[ "$next_id" =~ ^-?[0-9]+$ ]] || next_id=-1
     next_code=$(su_get "/scan/unspentBoxes/$next_id?limit=10" "$SCRATCH/next.json")
     su "next scan id $next_id (unspentBoxes HTTP $next_code)"
+    # 4. (SCANUP_WRAP=1) the next scan above the Short range: K blocks tracked, then a restart on the same jar
+    if [[ "$SU_WRAP" == 1 && "$next_code" == 200 ]]; then
+      local L1="$SCRATCH/su-L1" L2="$SCRATCH/su-L2" hl0 hl1 nl
+      mkdir -p "$L1" "$L2"
+      hl0=$(full_height A); mine A "$SU_K" > /dev/null; hl1=$(full_height A); nl=$((hl1 - hl0))
+      su_q "$L1" "u_$next_id" "/scan/unspentBoxes/$next_id?limit=2500" "$SU_PB"
+      relaunch A > /dev/null; su_ready || su "WARN the wallet did not report ready after the restart"
+      su_q "$L2" "u_$next_id" "/scan/unspentBoxes/$next_id?limit=2500" "$SU_PB"
+      su_q "$L2" listall /scan/listAll "$SU_PL"
+      su "scan $next_id: $(su_count "$L1/u_$next_id.json") unspent after $nl blocks; after a restart $(su_count "$L2/u_$next_id.json")"
+      [[ $nl -ge 1 && "$(su_count "$L1/u_$next_id.json")" -ge "$nl" ]] && long_tracks=true
+      su_same "$L1/u_$next_id.json" "$L2/u_$next_id.json" \
+        && [[ "$(jq -r --argjson i "$next_id" '[.[]? | .scanId] | index($i) != null' "$L2/listall.json" 2>/dev/null)" == true ]] && long_restart_eq=true
+    fi
   else
     # no REST on this role's jar: the version is the jar's own (application.conf), so the run is still classified
     vR=$(unzip -p "$reader" application.conf 2>/dev/null | sed -n 's/^ *appVersion *= *//p' | head -1)
@@ -149,7 +166,7 @@ scan_upgrade(){
   pass=false
   [[ $writer_ok == true && $alive == true && $eq_l == true && $eq_b == true && $eq_t == true && $tracks == true ]] && pass=true
   [[ "$SU_WRAP" == 1 || "$next_id" == 13 ]] || pass=false
-  wsup=false; [[ "$SU_WRAP" == 1 && $neg_listed == true && $neg_found == true && $neg_tracks == true && "$next_id" == 32768 ]] && wsup=true
+  wsup=false; [[ "$SU_WRAP" == 1 && $neg_listed == true && $neg_found == true && $neg_tracks == true && "$next_id" == 32768 && $long_tracks == true && $long_restart_eq == true ]] && wsup=true
   rig_verdict=$([[ $pass == true ]] && echo PASS || echo FAIL)
   echo "RESULT_JSON $(jq -cn --arg v "${vR:-null}" --arg wv "$vW" --arg wt "${SCANUP_WRITER_TAG:-}" \
     --arg jv "$(${PEERYARD_JAVA:-java} -version 2>&1 | head -1)" \
@@ -158,11 +175,12 @@ scan_upgrade(){
     --argjson ni "$next_id" --argjson nc "${next_code:-0}" --argjson wr "$(su_bool $wrapped)" --argjson nl "$(su_bool $neg_listed)" \
     --argjson nf "$(su_bool $neg_found)" --argjson nt "$(su_bool $neg_tracks)" --argjson ncd "${neg_code:-0}" \
     --argjson fs "$fill_s" --argjson p "$(su_bool $pass)" --argjson ws "$(su_bool $wsup)" \
+    --argjson lt "$(su_bool $long_tracks)" --argjson lr "$(su_bool $long_restart_eq)" \
     '{schema_version:1, scenario:(if env.SCANUP_WRAP == "1" then "scan-upgrade-wrap" else "scan-upgrade" end),
       runtime:{java:$jv, writer_tag:$wt, writer_version:$wv}, versions:{A:$v},
       metrics:{writer_ok:$wo, alive:$al, eq_listall:$el, eq_boxes:$eb, eq_txs:$et, tracks:$tr, blocks_after:$nb,
         next_id:$ni, next_code:$nc, wrapped:$wr, neg_listed:$nl, neg_box_found:$nf, neg_tracks:$nt, neg_box_code:$ncd,
-        fill_seconds:$fs, pass:$p, wrapped_supported:$ws}}')"
+        fill_seconds:$fs, pass:$p, wrapped_supported:$ws, long_tracks:$lt, long_restart_eq:$lr}}')"
   su "=== SCAN-UPGRADE: $rig_verdict (writer $vW -> $vR; writer_ok $writer_ok alive $alive listAll $eq_l boxes $eq_b txs $eq_t tracks $tracks next $next_id; wrapped $wrapped listed $neg_listed found $neg_found tracks $neg_tracks) ==="
 }
 scan_upgrade

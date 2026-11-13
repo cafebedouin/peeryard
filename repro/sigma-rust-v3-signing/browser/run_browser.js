@@ -3,7 +3,7 @@
 //
 // usage: node run_browser.js --pw <dir holding node_modules/playwright> --lib <dir of an ergo-lib-wasm browser pkg>
 //                            --label <V0|V1|V2> --corpus <corpus.json> --out <results.json>
-//                            [--only <txId>]
+//                            [--set <name>] [--only <txId>]
 //
 // Serves page/ (this script's sibling dir), the library dir and the corpus from a static server on 127.0.0.1,
 // launches Playwright's Chromium headless (default launch: no args, no --js-flags, default stack), and loads
@@ -27,6 +27,7 @@ const LABEL = arg('label', 'V?');
 const CORPUS = path.resolve(arg('corpus'));
 const OUT = arg('out');
 const ONLY = arg('only');
+const SET = arg('set', null);
 const PAGE_DIR = path.join(__dirname, 'page');
 const TX_TIMEOUT_MS = 300000;
 
@@ -77,7 +78,7 @@ async function runPage(browser, base, url) {
 
 async function main() {
   const corpusBytes = fs.readFileSync(CORPUS);
-  const corpus = JSON.parse(corpusBytes);
+  const corpus = JSON.parse(corpusBytes);   // tx count and ids only; the page parses the corpus with parseCorpus()
   const pkg = JSON.parse(fs.readFileSync(path.join(LIB, 'package.json')));
   const wasm = fs.readdirSync(LIB).find((f) => f.endsWith('_bg.wasm'));
   const server = http.createServer(serve);
@@ -90,7 +91,7 @@ async function main() {
     runtime: { playwright: pwVersion, browser_version: browser.version(), launch: 'chromium.launch() defaults (headless)',
                executable_full_chromium: chromium.executablePath(), node_driver: process.version,
                node_stack_probe_reference: nodeStackProbe() },
-    server: base, corpus_sha256: sha256(corpusBytes), started_utc: new Date().toISOString(), results: [], shims: [],
+    server: base, set: SET, corpus_sha256: sha256(corpusBytes), started_utc: new Date().toISOString(), results: [], shims: [],
   };
   {
     const ctx = await browser.newPage(); out.runtime.user_agent = await ctx.evaluate(() => navigator.userAgent); await ctx.close();
@@ -110,6 +111,7 @@ async function main() {
     r.browser = { page_error: o ? o.page_error || null : null, page_error_stack: o ? o.page_error_stack || null : null,
                   range_error_page: o ? !!o.range_error : null, driver_error: driverErr, crashed: ev.crashed,
                   page_corpus_sha256_ok: o ? o.corpus_sha256 === out.corpus_sha256 : null,
+                  page_corpus_unsafe_ints_as_strings: o ? o.corpus_unsafe_ints_as_strings : null,
                   load_info: o ? o.load_info : null, load_ms: o ? o.load_ms : null, run_ms: o ? o.run_ms : null,
                   stack_probe_before: o ? o.stack_probe_before : null, stack_probe_after: o ? o.stack_probe_after : null,
                   console: ev.console, page_errors: ev.page_errors, request_failed: ev.request_failed };
@@ -117,7 +119,8 @@ async function main() {
     const ok = !r.page_failed;
     process.stderr.write(`${LABEL} [${i + 1}/${corpus.txs.length}] ${entry.txId.slice(0, 12)} ` +
       (ok ? `a:${r.inputs.filter((x) => x.a.pass).length}/${r.inputs.length} ` +
-            `b:${r.inputs.filter((x) => x.b.pass).length}/${r.inputs.length} c:${r.c.pass} d:${r.d.applicable ? r.d.pass : '-'}`
+            `b:${r.inputs.filter((x) => x.b.pass).length}/${r.inputs.length} c:${r.c.pass} d:${r.d.applicable ? r.d.pass : '-'}` +
+            `${r.d.key_missing_at_contract ? ` (key missing at contract input ${r.d.err_input_index})` : ''}`
           : `PAGE FAILED ${r.browser.page_error || driverErr || ''} crashed=${ev.crashed}`) +
       ` probe=${o && o.stack_probe_after ? o.stack_probe_after.depth : '?'} run_ms=${o ? o.run_ms : '?'}` +
       (ev.console.length ? ` console=${ev.console.length}` : '') + (ev.page_errors.length ? ` pageerrors=${ev.page_errors.length}` : '') + '\n');

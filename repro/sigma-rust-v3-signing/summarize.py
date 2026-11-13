@@ -4,8 +4,11 @@
 usage: summarize.py CORPUS.json RESULTS_V0.json RESULTS_V1.json RESULTS_V2.json
 
 Prints: controls, per-version counts per step per contract, the per-tx table (markdown), and every
-distinct failure string. Tx kind comes from context var 0 (the op byte) of the Lithos inputs, with the
-op names from Lithos-Client 14ad1fe LDHelpers.scala:61-81.
+distinct failure string, for one corpus (run it once per set). For the Lithos corpus, tx kind comes from
+context var 0 (the op byte) of the Lithos inputs, with the op names from Lithos-Client 14ad1fe
+LDHelpers.scala:61-81, and the pool-tree and SigUSD controls apply; for any other corpus the kind is the
+tx's set name. Step d's "key missing at a contract input" (reduction passed, the prover stopped for lack
+of a secret at a non-P2PK input) is counted apart and is not a pass.
 """
 import collections
 import json
@@ -23,7 +26,13 @@ def op_of(ext):
     return None
 
 
-def kind(entry, contracts):
+def tree_version(x):
+    return int(x["tree_prefix"][:2], 16) & 0x07
+
+
+def kind(entry, contracts, lithos):
+    if not lithos:
+        return entry["sets"][0], []
     tx = entry["tx"]
     parts = []
     for inp, c in zip(tx["inputs"], contracts):
@@ -45,21 +54,8 @@ def kind(entry, contracts):
     return k, parts
 
 
-def main():
-    corpus = json.load(open(sys.argv[1]))
-    runs = [json.load(open(p)) for p in sys.argv[2:5]]
-    by = [{r["txId"]: r for r in run["results"]} for run in runs]
-    labels = [run["label"] for run in runs]
-
-    print("== versions")
-    for run in runs:
-        print(f"{run['label']}: {run['lib_name']}@{run['lib_version']} wasm_sha256={run['wasm_sha256']} "
-              f"node={run['node']} corpus_sha256={run['corpus_sha256']} shims={run['shims']} "
-              f"crashed={sum(1 for r in run['results'] if r.get('child_crashed'))} "
-              f"range_errors={sum(1 for r in run['results'] for x in r.get('inputs', []) for s in ('a','b') if x[s].get('range_error')) + sum(1 for r in run['results'] if r.get('c',{}).get('range_error') or r.get('d',{}).get('range_error') or r.get('range_error'))}")
-
+def print_lithos_controls(corpus, runs):
     pool_sha = corpus["resolution"]["pool_tree_sha256"]
-    print("\n== controls")
     for run in runs:
         L = run["label"]
         pool_a = [x for r in run["results"] for x in r["inputs"] if x["tree_sha256"] == pool_sha]
@@ -72,6 +68,37 @@ def main():
               f"{len(ncb)}/{len(pool_a)} | P2PK inputs verify true: {len(p2pk_ok)}/{len(p2pk)} | "
               f"SigUSD control a-c pass: {ctrl_ok} (tx {ctrl['txId']})")
 
+
+def main():
+    corpus = json.load(open(sys.argv[1]))
+    runs = [json.load(open(p)) for p in sys.argv[2:5]]
+    by = [{r["txId"]: r for r in run["results"]} for run in runs]
+    labels = [run["label"] for run in runs]
+    lithos = "pool_tree_sha256" in corpus["resolution"]
+
+    print(f"== set: {sys.argv[1].split('/')[-1]}, {len(corpus['txs'])} txs, sets "
+          f"{sorted({s for e in corpus['txs'] for s in e['sets']})}, integers above 2^53 read as strings: "
+          f"{runs[0].get('corpus_unsafe_ints_as_strings')}")
+    print("\n== versions")
+    for run in runs:
+        print(f"{run['label']}: {run['lib_name']}@{run['lib_version']} wasm_sha256={run['wasm_sha256']} "
+              f"node={run['node']} corpus_sha256={run['corpus_sha256']} shims={run['shims']} "
+              f"crashed={sum(1 for r in run['results'] if r.get('child_crashed'))} "
+              f"range_errors={sum(1 for r in run['results'] for x in r.get('inputs', []) for s in ('a','b') if x[s].get('range_error')) + sum(1 for r in run['results'] if r.get('c',{}).get('range_error') or r.get('d',{}).get('range_error') or r.get('range_error'))}")
+
+    print("\n== controls")
+    for run in runs:
+        L = run["label"]
+        ins = [x for r in run["results"] for x in r.get("inputs", [])]
+        v2 = [x for x in ins if tree_version(x) >= 2]
+        v2_ncb = [x for x in v2 if not x["a"]["pass"] and "NonConsumedBytes" in (x["a"].get("err") or "")]
+        p2pk = [x for x in ins if x["contract"] == "P2PK"]
+        p2pk_ok = [x for x in p2pk if x["b"].get("value") is True]
+        print(f"{L}: inputs with tree version >= 2 fail step a with NonConsumedBytes: {len(v2_ncb)}/{len(v2)} | "
+              f"P2PK inputs verify true: {len(p2pk_ok)}/{len(p2pk)}")
+    if lithos:
+        print_lithos_controls(corpus, runs)
+
     print("\n== per version, per contract: step a / step b pass counts (inputs)")
     contracts = sorted({x["contract"] for run in runs for r in run["results"] for x in r["inputs"]})
     for run in runs:
@@ -83,14 +110,16 @@ def main():
     kinds = {}
     for e in corpus["txs"]:
         cs = [x["contract"] for x in by[0][e["txId"]]["inputs"]]
-        kinds[e["txId"]] = kind(e, cs)
+        kinds[e["txId"]] = kind(e, cs, lithos)
     for run in runs:
         rs = run["results"]
         dd = [r for r in rs if r["d"]["applicable"]]
         d354 = [r for r in dd if r["shape354"]]
+        dk = [r for r in dd if r["d"].get("key_missing_at_contract")]
         print(f"{run['label']}: c {sum(r['c']['pass'] for r in rs)}/{len(rs)}  "
-              f"d(all P2PK-bearing) {sum(r['d']['pass'] for r in dd)}/{len(dd)}  "
-              f"d(#354 shape: pool+P2PK) {sum(r['d']['pass'] for r in d354)}/{len(d354)}")
+              f"d(all P2PK-bearing) {sum(r['d']['pass'] for r in dd)}/{len(dd)}, "
+              f"key missing at a contract input {len(dk)}/{len(dd)}"
+              + (f"  d(#354 shape: pool+P2PK) {sum(r['d']['pass'] for r in d354)}/{len(d354)}" if lithos else ""))
         for k in sorted({v[0] for v in kinds.values()}):
             ks = [r for r in rs if kinds[r["txId"]][0] == k]
             full = [r for r in ks if all(x["a"]["pass"] and x["b"]["pass"] for x in r["inputs"]) and r["c"]["pass"]
@@ -102,10 +131,10 @@ def main():
 
     def cell(r):
         a = sum(x["a"]["pass"] for x in r["inputs"]); b = sum(x["b"]["pass"] for x in r["inputs"]); n = len(r["inputs"])
-        d = ("P" if r["d"]["pass"] else "F") if r["d"]["applicable"] else "-"
+        d = ("P" if r["d"]["pass"] else "K" if r["d"].get("key_missing_at_contract") else "F") if r["d"]["applicable"] else "-"
         return f"{a}/{n} {b}/{n} {'P' if r['c']['pass'] else 'F'} {d}"
 
-    print("\n== per-tx table (a = inputs parsed / n, b = inputs verified / n, c = reduce, d = sign-to-key-missing)")
+    print("\n== per-tx table (a = inputs parsed / n, b = inputs verified / n, c = reduce, d = sign-to-key-missing: P pass, K key missing at a contract input, F fail)")
     print("| # | tx id | height | sets | kind | Lithos inputs (op) | " + " | ".join(f"{L} a b c d" for L in labels) + " |")
     print("|---|---|---|---|---|---|" + "---|" * len(labels))
     for i, e in enumerate(corpus["txs"]):
@@ -125,7 +154,8 @@ def main():
             if not r["c"]["pass"]:
                 cnt[("c", kinds[r["txId"]][0], r["c"].get("err"))] += 1
             if r["d"]["applicable"] and not r["d"]["pass"]:
-                cnt[("d", kinds[r["txId"]][0], r["d"].get("err"))] += 1
+                s = "d(key missing at contract input)" if r["d"].get("key_missing_at_contract") else "d"
+                cnt[(s, kinds[r["txId"]][0], r["d"].get("err"))] += 1
         for (s, c, err), n in sorted(cnt.items()):
             print(f"{run['label']} step {s} {c} x{n}: {json.dumps(err)}")
 

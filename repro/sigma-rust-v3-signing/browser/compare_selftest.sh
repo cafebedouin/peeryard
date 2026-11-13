@@ -2,27 +2,27 @@
 # browser/compare_selftest.sh: shows compare.py can find what it reports zero of. Plants one verdict flip with a
 # RangeError, one console error and one page crash in a scratch copy of the V2 browser results, and one wasm trap
 # string in V1; re-runs compare.py on them. Passes when compare.py exits 1 and reports every planted item.
-# usage: compare_selftest.sh <node results dir> <browser results dir> <scratch dir>
+# usage: compare_selftest.sh <node results dir> <browser results dir> <scratch dir> [set, default lithos]
 set -euo pipefail
-N="$1"; B="$2"; T="$3"; HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-mkdir -p "$T"; cp "$B"/results-browser-V0.json "$T"/
-python3 -I - "$B" "$T" <<'PYEOF'
+N="$1"; B="$2"; T="$3"; SET="${4:-lithos}"; HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "$T"; cp "$B/results-browser-$SET-V0.json" "$T"/
+python3 -I - "$B" "$T" "$SET" <<'PYEOF'
 import json, sys
-B, T = sys.argv[1], sys.argv[2]
-v2 = json.load(open(f"{B}/results-browser-V2.json"))
+B, T, S = sys.argv[1], sys.argv[2], sys.argv[3]
+v2 = json.load(open(f"{B}/results-browser-{S}-V2.json"))
 r = v2["results"][5]
 r["inputs"][0]["b"] = {"pass": False, "err": "RangeError: Maximum call stack size exceeded", "range_error": True}
 v2["results"][6]["browser"]["console"].append({"type": "error", "text": "planted console error"})
 v2["results"][7]["browser"]["crashed"] = True
-json.dump(v2, open(f"{T}/results-browser-V2.json", "w"))
-v1 = json.load(open(f"{B}/results-browser-V1.json"))
+json.dump(v2, open(f"{T}/results-browser-{S}-V2.json", "w"))
+v1 = json.load(open(f"{B}/results-browser-{S}-V1.json"))
 v1["results"][3]["c"] = {"pass": False, "err": "RuntimeError: unreachable"}
-json.dump(v1, open(f"{T}/results-browser-V1.json", "w"))
+json.dump(v1, open(f"{T}/results-browser-{S}-V1.json", "w"))
 print("planted: V2 tx5 in0.b RangeError (verdict flip + err diff + stack hit); V2 tx6 console error; V2 tx7 crashed;"
       " V1 tx3 c -> RuntimeError: unreachable (verdict flip + err diff + trap hit)")
 PYEOF
 set +e
-out="$(python3 -I "$HERE/compare.py" "$N" "$T")"; rc=$?
+out="$(python3 -I "$HERE/compare.py" "$N" "$T" --set "$SET")"; rc=$?
 set -e
 sed -n '/== verdict diff/,/== stack-depth/p' <<< "$out"
 sed -n '/== checks/,$p' <<< "$out" | grep -v '^ok '

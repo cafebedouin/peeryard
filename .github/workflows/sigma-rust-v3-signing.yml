@@ -1,72 +1,141 @@
-# sigma-rust's wasm binding on Lithos ErgoTree-v3 transactions (repro/sigma-rust-v3-signing/README.md), on
-# GitHub-hosted runners so the result can be re-run by anyone: one job per build (V0 ergo-lib-wasm-nodejs 0.28.0,
-# V1 0.29.0-alpha-2f840d3, both from npm with their integrity checked; V2 sigma-rust develop at a fixed commit, built
-# with wasm-pack), each running run.js and negative_check.js on the frozen corpus (sha256 checked, never refetched),
-# and a summary job that runs summarize.py over the three results and prints it to the job summary.
-# Browser half (README, "In a browser" and "In Nautilus's unit tests"): browser-build builds sigma-rust develop with
-# the repo's build-browser script once and shares it as an artifact; browser runs the same steps in Chromium
-# (Playwright, headless) on the three browser builds and compares every verdict with the Node jobs' results;
-# nautilus runs Nautilus's own unit test framework on Node 26, stock (expected red) and on the develop build
-# (expected green). Expected size: about 20 runner-minutes for the Node half (V0, V1 a few minutes each; V2 compiles
-# sigma-rust), about 20 more for the browser half. Runs by hand, or on a push to ci/sigma-rust-v3-signing
-# (git push origin <branch>:ci/sigma-rust-v3-signing; a new workflow can be dispatched only once it is on the
-# default branch).
+# sigma-rust's wasm binding on recorded mainnet transactions with ErgoTree v2/v3 inputs
+# (repro/sigma-rust-v3-signing/README.md), on GitHub-hosted runners so the result can be re-run by anyone.
+# Two frozen corpora (sha256 checked, never refetched): corpus.json (Lithos, 84 txs) and corpus-machina.json (Machina
+# limit orders, 15 txs). Three builds: V0 ergo-lib-wasm-nodejs 0.28.0 and V1 0.29.0-alpha-2f840d3 from npm (integrity
+# checked); V2 sigma-rust at the commit given as input, built by `build` with the repo's own npm scripts and the tool
+# pins of its release_preflight.yml (Node 24.13.1, wasm-pack 0.14.0 from the pinned release archive).
+# Jobs: build (V2 nodejs + BV2 browser, one compile job); run (V0, V1, V2: run.js on both corpora, negative_check.js on
+# the Lithos one); summary (summarize.py once per corpus); browser (the same steps in Chromium on BV0, BV1, BV2, both
+# corpora, compared with the Node results); nautilus (Nautilus's own unit test on Node 26, stock = expected red, and
+# with BV2's tarball = expected green). 8 jobs; expected about 15 runner-minutes (build ~6, browser ~4, the rest ~5).
+# Runs by hand (workflow_dispatch, input sigma_rust_commit) or on a push to ci/sigma-rust-v3-signing with the default
+# commit (a new workflow can be dispatched only once it is on the default branch).
 name: sigma-rust v3 signing
+run-name: sigma-rust v3 signing at ${{ inputs.sigma_rust_commit || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}
 on:
   workflow_dispatch:
+    inputs:
+      sigma_rust_commit:
+        description: 'sigma-rust commit for V2/BV2 (40 hex digits)'
+        required: true
+        default: '688511dff3e3436dfdd6bd368e3eeef6f67d59e9'
   push:
     branches: [ 'ci/sigma-rust-v3-signing' ]
 permissions:
   contents: read
 env:
   D: repro/sigma-rust-v3-signing
+  SIGMA_RUST_COMMIT: ${{ inputs.sigma_rust_commit || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}
   CORPUS_SHA256: 17064042ef93dea429b36c8c865b1bfb565ca605299ce48736bd085fee1c4c5c
+  CORPUS_MACHINA_SHA256: 3eb60c6b373deca64c9996ab96c62b1beaad0bf4f3bcd65279e2a53ac8d7d942
   NODE_VERSION: '25.1.0'
+  BUILD_NODE_VERSION: '24.13.1'
+  BUILD_NPM_VERSION: '11.8.0'
   NAUTILUS_NODE_VERSION: '26.13.0'
   PNPM_VERSION: '12.16.1'
 jobs:
-  run:
-    name: ${{ matrix.v.label }} ${{ matrix.v.name }}
+  build:
+    name: Build V2 + BV2, sigma-rust ${{ inputs.sigma_rust_commit || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }} (its own build scripts)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    outputs:
+      nodejs_wasm_sha256: ${{ steps.stage.outputs.nodejs_wasm_sha256 }}
+      browser_wasm_sha256: ${{ steps.stage.outputs.browser_wasm_sha256 }}
+      browser_tarball: ${{ steps.stage.outputs.browser_tarball }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commit input is 40 hex digits
+        run: '[[ "$SIGMA_RUST_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "bad commit: $SIGMA_RUST_COMMIT"; exit 1; }; echo "$SIGMA_RUST_COMMIT"'
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.BUILD_NODE_VERSION }}' }
+      - name: Assert Node and npm versions (as sigma-rust's release_preflight.yml)
+        run: |
+          test "$(node --version)" = "v$BUILD_NODE_VERSION"
+          test "$(npm --version)" = "$BUILD_NPM_VERSION"
+      - name: Install pinned wasm-pack (as sigma-rust's release_preflight.yml)
+        run: |
+          archive="$RUNNER_TEMP/wasm-pack-v0.14.0-x86_64-unknown-linux-musl.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 \
+            --output "$archive" \
+            https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.14.0/wasm-pack-v0.14.0-x86_64-unknown-linux-musl.tar.gz
+          echo "278a8d668085821f4d1a637bd864f1713f872b0ae3a118c77562a308c0abfe8d  $archive" | sha256sum --check --strict
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+          install --directory "$RUNNER_TEMP/bin"
+          install "$RUNNER_TEMP/wasm-pack-v0.14.0-x86_64-unknown-linux-musl/wasm-pack" "$RUNNER_TEMP/bin/wasm-pack"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          test "$("$RUNNER_TEMP/bin/wasm-pack" --version)" = "wasm-pack 0.14.0"
+      - name: Build (npm ci, npm run build-nodejs, npm run build-browser; rust toolchain from the commit's rust-toolchain)
+        env:
+          INSTALL_RUST_TOOLCHAIN: '1'
+        run: |
+          set -o pipefail; mkdir -p out
+          bash "$D/build_sigma_rust.sh" "$RUNNER_TEMP/libs" "$SIGMA_RUST_COMMIT" 2>&1 | tee out/build.txt
+      - name: Stage, with the sha256 of each built .wasm
+        id: stage
+        run: |
+          P="$RUNNER_TEMP/libs/sigma-rust/bindings/ergo-lib-wasm"
+          cp -r "$P/pkg-nodejs" out/pkg-nodejs
+          cp -r "$P/pkg-browser" out/pkg-browser
+          cp "$RUNNER_TEMP"/libs/pack/*.tgz out/
+          cp "$RUNNER_TEMP/libs/sigma-rust-build.env" out/
+          sha256sum out/pkg-nodejs/ergo_lib_wasm_bg.wasm out/pkg-browser/ergo_lib_wasm_bg.wasm out/*.tgz | tee out/sha256.txt
+          grep -E '^(nodejs_wasm_sha256|browser_wasm_sha256|browser_tarball)=' out/sigma-rust-build.env >> "$GITHUB_OUTPUT"
+          { echo "## Build: sigma-rust $SIGMA_RUST_COMMIT"; echo; echo '```'; cat out/sigma-rust-build.env; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sigma-rust-v3-signing-build
+          path: out/
+          retention-days: 30
+  run:
+    name: ${{ matrix.v.label }} ${{ matrix.v.name }}${{ matrix.v.label == 'V2' && format(' {0}', inputs.sigma_rust_commit || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9') || '' }}
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         v:
-          - { label: V0, name: 'ergo-lib-wasm-nodejs 0.28.0',              build: v0, lib: 'v0/node_modules/ergo-lib-wasm-nodejs' }
-          - { label: V1, name: 'ergo-lib-wasm-nodejs 0.29.0-alpha-2f840d3', build: v1, lib: 'v1/node_modules/ergo-lib-wasm-nodejs' }
-          - { label: V2, name: 'sigma-rust develop 8120eddd',              build: v2, lib: 'sigma-rust/bindings/ergo-lib-wasm/pkg' }
+          - { label: V0, name: 'ergo-lib-wasm-nodejs 0.28.0',              build: v0 }
+          - { label: V1, name: 'ergo-lib-wasm-nodejs 0.29.0-alpha-2f840d3', build: v1 }
+          - { label: V2, name: 'sigma-rust build-nodejs at',               build: v2 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '${{ env.NODE_VERSION }}' }
-      - name: Corpus (sha256 checked)
-        run: echo "$CORPUS_SHA256  $D/corpus.json" | sha256sum -c
-      - name: Rust 1.91.1 with the wasm target, and wasm-pack 0.15.0 (V2 only)
-        if: matrix.v.build == 'v2'
+      - name: Corpora (sha256 checked)
         run: |
-          rustup toolchain install 1.91.1 --profile minimal --target wasm32-unknown-unknown
-          cargo install wasm-pack --version 0.15.0 --locked
-      - name: Build
+          echo "$CORPUS_SHA256  $D/corpus.json" | sha256sum -c
+          echo "$CORPUS_MACHINA_SHA256  $D/corpus-machina.json" | sha256sum -c
+      - name: Install from npm (V0, V1)
+        if: matrix.v.build != 'v2'
         run: |
           set -o pipefail; mkdir -p out
           bash "$D/build.sh" "$RUNNER_TEMP/libs" ${{ matrix.v.build }} 2>&1 | tee out/build-${{ matrix.v.label }}.txt
-      - name: V2 built with the toolchain sigma-rust names
+          echo "LIB=$RUNNER_TEMP/libs/${{ matrix.v.build }}/node_modules/ergo-lib-wasm-nodejs" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        if: matrix.v.build == 'v2'
+        with: { name: sigma-rust-v3-signing-build, path: build }
+      - name: V2 from the build job
         if: matrix.v.build == 'v2'
         run: |
-          want="$(cat "$RUNNER_TEMP"/libs/sigma-rust/rust-toolchain*)"
-          grep -q "^rustc $want " out/build-V2.txt || { echo "rustc is not $want"; grep '^rustc ' out/build-V2.txt; exit 1; }
-          echo "rustc $want"
-      - name: Run (one child node process per tx, default stack)
+          mkdir -p out
+          { cat build/sigma-rust-build.env; sha256sum build/pkg-nodejs/ergo_lib_wasm_bg.wasm; } | tee out/build-V2.txt
+          grep -q "^commit=$SIGMA_RUST_COMMIT$" build/sigma-rust-build.env || { echo "build is not at $SIGMA_RUST_COMMIT"; exit 1; }
+          echo "LIB=$PWD/build/pkg-nodejs" >> "$GITHUB_ENV"
+      - name: Run (one child node process per tx, default stack), both corpora
         run: |
           set -o pipefail
           { echo "node $(node --version)"; uname -r; nproc; } | tee out/host-${{ matrix.v.label }}.txt
-          node "$D/run.js" --lib "$RUNNER_TEMP/libs/${{ matrix.v.lib }}" --label ${{ matrix.v.label }} \
-            --corpus "$D/corpus.json" --out out/results-${{ matrix.v.label }}.json 2>&1 | tee out/run-${{ matrix.v.label }}.txt
-      - name: Negative check (informational)
+          for s in lithos:corpus.json machina:corpus-machina.json; do
+            n="${s%%:*}"
+            node "$D/run.js" --lib "$LIB" --label ${{ matrix.v.label }} --set "$n" --corpus "$D/${s#*:}" \
+              --out "out/results-$n-${{ matrix.v.label }}.json" 2>&1 | tee "out/run-$n-${{ matrix.v.label }}.txt"
+          done
+      - name: Negative check on the Lithos corpus (informational)
         continue-on-error: true
         run: |
-          node "$D/negative_check.js" --lib "$RUNNER_TEMP/libs/${{ matrix.v.lib }}" --corpus "$D/corpus.json" \
+          node "$D/negative_check.js" --lib "$LIB" --corpus "$D/corpus.json" \
             --tx 31d34067ed51143caf64be16b1b78f919ddae5a6792fbbfebe33d85ba3011547 \
             --tx 568bdafe39312f32db46d3334dc8493d2d748a4249c812189779299cdda24cf8 \
             --tx 4c91124c7e8aab2f24838493c85ee3fcfcedf7aa5e5ab1272af0efa68fede2ce \
@@ -87,69 +156,44 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { pattern: 'sigma-rust-v3-signing-V*', path: rows, merge-multiple: true }
-      - name: Summarize
+      - name: Summarize, once per corpus
         run: |
           mkdir -p out
-          for l in V0 V1 V2; do [[ -f rows/results-$l.json ]] || { echo "no results for $l" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
-          python3 -I "$D/summarize.py" "$D/corpus.json" rows/results-V0.json rows/results-V1.json rows/results-V2.json > out/summary.txt
-          cat out/summary.txt
-          {
-            echo "## sigma-rust v3 signing"; echo
-            echo '```'; sed '/^== per-tx table/,$d' out/summary.txt; echo '```'; echo
-            grep '^== per-tx table' out/summary.txt; echo; grep '^|' out/summary.txt; echo
-            echo '```'; sed -n '/^== distinct failure/,$p' out/summary.txt; echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## sigma-rust v3 signing, V2 = sigma-rust $SIGMA_RUST_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          for s in lithos:corpus.json machina:corpus-machina.json; do
+            n="${s%%:*}"
+            for l in V0 V1 V2; do [[ -f rows/results-$n-$l.json ]] || { echo "no $n results for $l" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
+            python3 -I "$D/summarize.py" "$D/${s#*:}" rows/results-$n-V0.json rows/results-$n-V1.json rows/results-$n-V2.json > out/summary-$n.txt
+            cat out/summary-$n.txt
+            {
+              echo; echo "### corpus: $n"; echo
+              echo '```'; sed '/^== per-tx table/,$d' out/summary-$n.txt; echo '```'; echo
+              grep '^== per-tx table' out/summary-$n.txt; echo; grep '^|' out/summary-$n.txt; echo
+              echo '```'; sed -n '/^== distinct failure/,$p' out/summary-$n.txt; echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sigma-rust-v3-signing-summary
           path: out/
           retention-days: 30
-  browser-build:
-    name: BV2 sigma-rust develop 8120eddd, browser build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}' }
-      - name: Rust 1.91.1 with the wasm target, and wasm-pack 0.15.0
-        run: |
-          rustup toolchain install 1.91.1 --profile minimal --target wasm32-unknown-unknown
-          cargo install wasm-pack --version 0.15.0 --locked
-      - name: Build (the repo's build-browser script, then npm pack)
-        run: |
-          set -o pipefail; mkdir -p out
-          bash "$D/browser/build.sh" "$RUNNER_TEMP/libs" bv2 2>&1 | tee out/build-BV2.txt
-      - name: Built with the toolchain sigma-rust names
-        run: |
-          want="$(cat "$RUNNER_TEMP"/libs/sigma-rust/rust-toolchain*)"
-          grep -q "^rustc $want " out/build-BV2.txt || { echo "rustc is not $want"; grep '^rustc ' out/build-BV2.txt; exit 1; }
-          echo "rustc $want"
-      - name: Stage
-        run: |
-          cp -r "$RUNNER_TEMP/libs/sigma-rust/bindings/ergo-lib-wasm/pkg-browser" out/pkg-browser
-          cp "$RUNNER_TEMP/libs/pack/ergo-lib-wasm-browser-0.29.0.tgz" out/
-          sha256sum out/pkg-browser/ergo_lib_wasm_bg.wasm out/ergo-lib-wasm-browser-0.29.0.tgz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sigma-rust-v3-signing-browser-build
-          path: out/
-          retention-days: 30
   browser:
-    name: Browser (Chromium) BV0 BV1 BV2, compared with V0 V1 V2
-    needs: [run, browser-build]
-    if: always() && needs.browser-build.result == 'success'
+    name: Browser (Chromium) BV0 BV1 BV2, both corpora, compared with V0 V1 V2
+    needs: [run, build]
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '${{ env.NODE_VERSION }}' }
-      - name: Corpus (sha256 checked)
-        run: echo "$CORPUS_SHA256  $D/corpus.json" | sha256sum -c
+      - name: Corpora (sha256 checked)
+        run: |
+          echo "$CORPUS_SHA256  $D/corpus.json" | sha256sum -c
+          echo "$CORPUS_MACHINA_SHA256  $D/corpus-machina.json" | sha256sum -c
       - uses: actions/download-artifact@v4
-        with: { name: sigma-rust-v3-signing-browser-build, path: bv2 }
+        with: { name: sigma-rust-v3-signing-build, path: build }
       - uses: actions/download-artifact@v4
         with: { pattern: 'sigma-rust-v3-signing-V*', path: noderows, merge-multiple: true }
       - name: BV0, BV1 from npm, and Playwright with Chromium
@@ -159,40 +203,45 @@ jobs:
         run: |
           set -o pipefail; mkdir -p out
           bash "$D/browser/build.sh" "$RUNNER_TEMP/libs" bv0 bv1 pw 2>&1 | tee out/build-browser.txt
-          echo "== BV2 (from browser-build)" | tee -a out/build-browser.txt
-          sha256sum bv2/pkg-browser/ergo_lib_wasm_bg.wasm | tee -a out/build-browser.txt
+          echo "== BV2 (from build)" | tee -a out/build-browser.txt
+          { cat build/sigma-rust-build.env; sha256sum build/pkg-browser/ergo_lib_wasm_bg.wasm; } | tee -a out/build-browser.txt
       - name: Port check (page steps vs run.js; informational)
         run: |
           diff <(sed -n '/^const errStr/,/^function main/p' "$D/run.js") \
                <(sed -n '/^const errStr/,/^\/\/ Stack-depth probe/p' "$D/browser/page/run_page.js") | tee out/port-diff.txt || true
-      - name: Run (one fresh page per tx, page main thread, Chromium defaults)
+      - name: Run (one fresh page per tx, page main thread, Chromium defaults), both corpora
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/pw-browsers
         run: |
           set -o pipefail
           { echo "node $(node --version)"; uname -r; nproc; } | tee out/host-browser.txt
-          for x in V0:"$RUNNER_TEMP/libs/bv0/node_modules/ergo-lib-wasm-browser" \
-                   V1:"$RUNNER_TEMP/libs/bv1/node_modules/ergo-lib-wasm-browser" V2:"$PWD/bv2/pkg-browser"; do
-            l="${x%%:*}"
-            node "$D/browser/run_browser.js" --pw "$RUNNER_TEMP/libs/pw" --lib "${x#*:}" --label "$l" \
-              --corpus "$D/corpus.json" --out "out/results-browser-$l.json" 2>&1 | tee "out/run-browser-$l.txt"
+          for s in lithos:corpus.json machina:corpus-machina.json; do
+            n="${s%%:*}"
+            for x in V0:"$RUNNER_TEMP/libs/bv0/node_modules/ergo-lib-wasm-browser" \
+                     V1:"$RUNNER_TEMP/libs/bv1/node_modules/ergo-lib-wasm-browser" V2:"$PWD/build/pkg-browser"; do
+              l="${x%%:*}"
+              node "$D/browser/run_browser.js" --pw "$RUNNER_TEMP/libs/pw" --lib "${x#*:}" --label "$l" --set "$n" \
+                --corpus "$D/${s#*:}" --out "out/results-browser-$n-$l.json" 2>&1 | tee "out/run-browser-$n-$l.txt"
+            done
           done
-      - name: Compare with the Node results
+      - name: Compare with the Node results, per corpus
         run: |
-          for l in V0 V1 V2; do [[ -f noderows/results-$l.json ]] || { echo "no Node results for $l" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
-          set +e; python3 -I "$D/browser/compare.py" noderows out --json out/compare.json > out/compare.txt; rc=$?; set -e
-          cat out/compare.txt
-          {
-            echo "## sigma-rust v3 signing, browser"; echo
-            echo '```'; grep -v '^   ' out/compare.txt; echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## sigma-rust v3 signing, browser (BV2 = sigma-rust $SIGMA_RUST_COMMIT)" >> "$GITHUB_STEP_SUMMARY"
+          rc=0
+          for n in lithos machina; do
+            for l in V0 V1 V2; do [[ -f noderows/results-$n-$l.json ]] || { echo "no Node $n results for $l" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }; done
+            set +e; python3 -I "$D/browser/compare.py" noderows out --set "$n" --json "out/compare-$n.json" > "out/compare-$n.txt"; r=$?; set -e
+            cat "out/compare-$n.txt"
+            { echo; echo "### corpus: $n"; echo; echo '```'; grep -v '^   ' "out/compare-$n.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            (( r == 0 )) || rc=1
+          done
           exit $rc
       - name: Compare self-test (the comparison finds planted differences)
         if: always()
         run: |
           set -o pipefail
-          [[ -f out/results-browser-V2.json ]] || { echo "no browser results"; exit 1; }
-          bash "$D/browser/compare_selftest.sh" noderows out "$RUNNER_TEMP/selftest" 2>&1 | tee out/compare-selftest.txt
+          [[ -f out/results-browser-lithos-V2.json ]] || { echo "no browser results"; exit 1; }
+          bash "$D/browser/compare_selftest.sh" noderows out "$RUNNER_TEMP/selftest" lithos 2>&1 | tee out/compare-selftest.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -200,8 +249,8 @@ jobs:
           path: out/
           retention-days: 30
   nautilus:
-    name: Nautilus unit test, ${{ matrix.arm }} (Node 26)
-    needs: browser-build
+    name: Nautilus unit test, ${{ matrix.arm }} (Node 26)${{ matrix.arm == 'develop' && format(', sigma-rust {0}', inputs.sigma_rust_commit || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9') || '' }}
+    needs: build
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -217,17 +266,23 @@ jobs:
         run: npm install -g --no-audit --no-fund "pnpm@$PNPM_VERSION" && pnpm --version
       - uses: actions/download-artifact@v4
         if: matrix.arm == 'develop'
-        with: { name: sigma-rust-v3-signing-browser-build, path: bv2 }
+        with: { name: sigma-rust-v3-signing-build, path: build }
       - name: Run (${{ matrix.arm }})
         run: |
           set -o pipefail; mkdir -p out
-          bash "$D/nautilus/run.sh" ${{ matrix.arm }} "$RUNNER_TEMP/n" out "$PWD/bv2/ergo-lib-wasm-browser-0.29.0.tgz" 2>&1 | tee out/run-${{ matrix.arm }}.txt
+          tgz=""
+          if [[ "${{ matrix.arm }}" == develop ]]; then
+            grep -q "^commit=$SIGMA_RUST_COMMIT$" build/sigma-rust-build.env || { echo "build is not at $SIGMA_RUST_COMMIT"; exit 1; }
+            tgz="$PWD/build/$(sed -n 's/^browser_tarball=//p' build/sigma-rust-build.env)"
+            echo "sigma-rust $SIGMA_RUST_COMMIT, tarball $(basename "$tgz")" | tee out/run-${{ matrix.arm }}.txt
+          fi
+          bash "$D/nautilus/run.sh" ${{ matrix.arm }} "$RUNNER_TEMP/n" out ${tgz:+"$tgz"} 2>&1 | tee -a out/run-${{ matrix.arm }}.txt
       - name: Job summary
         if: always()
         run: |
           {
             echo "## Nautilus unit test, ${{ matrix.arm }}"; echo; echo '```'
-            grep -E '^(node|pnpm) |^installed:|Test Files|Tests |^ *[×✓] |^exit=|^RESULT|^stock:|^develop:' out/run-${{ matrix.arm }}.txt || true
+            grep -E '^(node|pnpm) |^sigma-rust |^installed:|Test Files|Tests |^ *[×✓] |^exit=|^RESULT|^stock:|^develop:' out/run-${{ matrix.arm }}.txt || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

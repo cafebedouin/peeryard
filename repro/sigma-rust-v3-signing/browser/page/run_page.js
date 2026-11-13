@@ -1,5 +1,5 @@
 // browser/page/run_page.js: ../run.js's steps a-d, ported to a browser page.
-// Port rule: errStr, isRangeError, the shims, classify() and runOne() are ../run.js's verbatim except the lines
+// Port rule: errStr, isRangeError, the shims, parseCorpus(), classify() and runOne() are ../run.js's verbatim except the lines
 // marked "PORT:" (import mechanism / Node Buffer+crypto replaced by browser equivalents); the workflow prints the diff.
 // main() is new: one tx per page load (run.js uses one child process per tx), selected by ?tx=<index>; the result
 // is left in window.__RESULT.
@@ -24,19 +24,47 @@ const isRangeError = (e) => e instanceof RangeError || /RangeError|Maximum call 
 const SHIMS = [];
 function shim(note) { if (!SHIMS.includes(note)) SHIMS.push(note); }
 
+// Corpus parsing. JSON.parse reads every number as an IEEE-754 double, so an integer above 2^53 - 1 comes back
+// rounded (token amounts up to 2^63 - 1 occur on chain), and a box built from it no longer matches its box id. This is
+// a property of JavaScript callers, not of the library. Before parsing, an integer literal of 16 or more digits after
+// "amount": or "value": that is above Number.MAX_SAFE_INTEGER is rewritten as a JSON string, which the library's JSON
+// accepts; smaller ones stay numbers. After parsing, any number still above Number.MAX_SAFE_INTEGER is an error.
+const UNSAFE_INT_RE = /("(?:amount|value)"\s*:\s*)(\d{16,})(?=\s*[,}\]])/g;
+function parseCorpus(text) {
+  let rewritten = 0;
+  const safe = text.replace(UNSAFE_INT_RE, (m, key, digits) => {
+    if (BigInt(digits) <= BigInt(Number.MAX_SAFE_INTEGER)) return m;
+    rewritten++;
+    return `${key}"${digits}"`;
+  });
+  const corpus = JSON.parse(safe);
+  const bad = [];
+  const walk = (o, at) => {
+    if (typeof o === 'number') { if (Math.abs(o) > Number.MAX_SAFE_INTEGER) bad.push(at); }
+    else if (o !== null && typeof o === 'object') Object.keys(o).forEach((k) => walk(o[k], `${at}.${k}`));
+  };
+  walk(corpus, '$');
+  if (bad.length) throw new Error(`corpus: ${bad.length} number(s) above Number.MAX_SAFE_INTEGER after parsing, e.g. ${bad[0]}`);
+  return { corpus, unsafe_ints_as_strings: rewritten };
+}
+
+// Contract labels. A corpus whose header carries the Lithos fields (pool NFT, vault NFT, provision token) gets the
+// Lithos labels; any other corpus labels every non-P2PK input by its tree header byte and length.
 function classify(corpus) {
-  const r = corpus.resolution;
-  const poolNft = r.pool_assets[0].tokenId;
-  const vaultNft = r.vault_nft;
-  const provTok = r['provision_token (pool box tokens(2))'];
+  const r = corpus.resolution || {};
+  const lithos = !!(r.pool_assets && r.vault_nft && r['provision_token (pool box tokens(2))']);
+  const poolNft = lithos ? r.pool_assets[0].tokenId : null;
+  const vaultNft = lithos ? r.vault_nft : null;
+  const provTok = lithos ? r['provision_token (pool box tokens(2))'] : null;
   return (box) => {
     const t = box.ergoTree;
     const tok0 = box.assets.length ? box.assets[0].tokenId : null;
     if (t.startsWith('0008cd')) return 'P2PK';
+    if (!lithos) return `tree(${t.slice(0, 2)},${t.length / 2}B)`;
     if (tok0 === poolNft) return 'LD_LiquidityPool';
     if (tok0 === vaultNft) return 'LD_FeeVault';
     if (tok0 === provTok) return 'LD_Provision(guard)';
-    if (corpus.resolution.control && box.assets.some((a) => a.tokenId === corpus.resolution.control.sigusd_bank_nft))
+    if (r.control && box.assets.some((a) => a.tokenId === r.control.sigusd_bank_nft))
       return 'SigUSD_bank';
     return `other(header=${t.slice(0, 2)})`;
   };
@@ -144,6 +172,10 @@ function runOne(corpus, entry) {
         d.err_at_p2pk = d.err_input_index !== null && P2PK[d.err_input_index] === true;
         d.err_mentions_parse = /pars|deserializ|NonConsumed/i.test(d.err);
         d.pass = d.err_at_p2pk && !d.err_mentions_parse;
+        // Not a pass, recorded apart: reduction passed (step c) and the prover stopped for lack of a secret at a
+        // non-P2PK input, i.e. a spend path that needs a key the throwaway wallet does not hold (an owner-only path).
+        d.key_missing_at_contract = !d.pass && c.pass && d.err_input_index !== null &&
+          P2PK[d.err_input_index] === false && !d.err_mentions_parse && /does not have enough witnesses/i.test(d.err);
       }
     }
   }
@@ -170,7 +202,9 @@ async function main() {
     out.load_info = ld.info;
     const corpusBytes = new Uint8Array(await (await fetch('/corpus.json')).arrayBuffer());
     out.corpus_sha256 = await subtleSha256(corpusBytes);
-    const corpus = JSON.parse(new TextDecoder().decode(corpusBytes));
+    const parsed = parseCorpus(new TextDecoder().decode(corpusBytes));
+    const corpus = parsed.corpus;
+    out.corpus_unsafe_ints_as_strings = parsed.unsafe_ints_as_strings;
     out.n_txs = corpus.txs.length;
     out.stack_probe_before = stackProbe();
     if (q.has('tx')) {

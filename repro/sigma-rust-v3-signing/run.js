@@ -2,9 +2,11 @@
 // run.js: parse / verify / reduce / sign each corpus transaction with one ergo-lib-wasm nodejs build. Standalone.
 //
 // usage: node run.js --lib <dir of an ergo-lib-wasm nodejs build> --label <V0|V1|V2>
-//                    --corpus <corpus.json> --out <results.json> [--only <txId>] [--child-node-flag <flag>]
+//                    --corpus <corpus.json> --out <results.json> [--set <name>] [--only <txId>]
+//                    [--child-node-flag <flag>]
 //
-// Inputs: the captured corpus file (fetch_corpus.py output) and the library under test.
+// Inputs: a captured corpus file (fetch_corpus.py or fetch_machina.py output) and the library under test.
+// The corpus is parsed by parseCorpus() below (integers above 2^53 - 1 kept exact), not by a bare JSON.parse.
 // Output: JSON, per tx, per input, per step: pass/fail + the exact error string.
 //
 // Each tx runs in its own child Node process (default stack unless --child-node-flag is given),
@@ -18,7 +20,8 @@
 //   c  ReducedTransaction.from_unsigned_tx(tx with proofs stripped, context extensions kept, ...)
 //   d  if the tx has a P2PK (0008cd) input: Wallet(throwaway key).sign_transaction(...); the
 //      expected outcome is a signing error located at a P2PK input (the key is missing), not a
-//      parse/reduce error at a contract input.
+//      parse/reduce error at a contract input. Recorded apart, not a pass: c passed and the prover
+//      stopped for lack of a secret at a non-P2PK input (key_missing_at_contract).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -34,6 +37,7 @@ const LABEL = arg('label', 'V?');
 const CORPUS = path.resolve(arg('corpus'));
 const OUT = arg('out');
 const ONLY = arg('only');
+const SET = arg('set', null);
 const CHILD_FLAG = arg('child-node-flag');
 const TX_INDEX = arg('tx-index');
 
@@ -50,19 +54,47 @@ const isRangeError = (e) => e instanceof RangeError || /RangeError|Maximum call 
 const SHIMS = [];
 function shim(note) { if (!SHIMS.includes(note)) SHIMS.push(note); }
 
+// Corpus parsing. JSON.parse reads every number as an IEEE-754 double, so an integer above 2^53 - 1 comes back
+// rounded (token amounts up to 2^63 - 1 occur on chain), and a box built from it no longer matches its box id. This is
+// a property of JavaScript callers, not of the library. Before parsing, an integer literal of 16 or more digits after
+// "amount": or "value": that is above Number.MAX_SAFE_INTEGER is rewritten as a JSON string, which the library's JSON
+// accepts; smaller ones stay numbers. After parsing, any number still above Number.MAX_SAFE_INTEGER is an error.
+const UNSAFE_INT_RE = /("(?:amount|value)"\s*:\s*)(\d{16,})(?=\s*[,}\]])/g;
+function parseCorpus(text) {
+  let rewritten = 0;
+  const safe = text.replace(UNSAFE_INT_RE, (m, key, digits) => {
+    if (BigInt(digits) <= BigInt(Number.MAX_SAFE_INTEGER)) return m;
+    rewritten++;
+    return `${key}"${digits}"`;
+  });
+  const corpus = JSON.parse(safe);
+  const bad = [];
+  const walk = (o, at) => {
+    if (typeof o === 'number') { if (Math.abs(o) > Number.MAX_SAFE_INTEGER) bad.push(at); }
+    else if (o !== null && typeof o === 'object') Object.keys(o).forEach((k) => walk(o[k], `${at}.${k}`));
+  };
+  walk(corpus, '$');
+  if (bad.length) throw new Error(`corpus: ${bad.length} number(s) above Number.MAX_SAFE_INTEGER after parsing, e.g. ${bad[0]}`);
+  return { corpus, unsafe_ints_as_strings: rewritten };
+}
+
+// Contract labels. A corpus whose header carries the Lithos fields (pool NFT, vault NFT, provision token) gets the
+// Lithos labels; any other corpus labels every non-P2PK input by its tree header byte and length.
 function classify(corpus) {
-  const r = corpus.resolution;
-  const poolNft = r.pool_assets[0].tokenId;
-  const vaultNft = r.vault_nft;
-  const provTok = r['provision_token (pool box tokens(2))'];
+  const r = corpus.resolution || {};
+  const lithos = !!(r.pool_assets && r.vault_nft && r['provision_token (pool box tokens(2))']);
+  const poolNft = lithos ? r.pool_assets[0].tokenId : null;
+  const vaultNft = lithos ? r.vault_nft : null;
+  const provTok = lithos ? r['provision_token (pool box tokens(2))'] : null;
   return (box) => {
     const t = box.ergoTree;
     const tok0 = box.assets.length ? box.assets[0].tokenId : null;
     if (t.startsWith('0008cd')) return 'P2PK';
+    if (!lithos) return `tree(${t.slice(0, 2)},${t.length / 2}B)`;
     if (tok0 === poolNft) return 'LD_LiquidityPool';
     if (tok0 === vaultNft) return 'LD_FeeVault';
     if (tok0 === provTok) return 'LD_Provision(guard)';
-    if (corpus.resolution.control && box.assets.some((a) => a.tokenId === corpus.resolution.control.sigusd_bank_nft))
+    if (r.control && box.assets.some((a) => a.tokenId === r.control.sigusd_bank_nft))
       return 'SigUSD_bank';
     return `other(header=${t.slice(0, 2)})`;
   };
@@ -170,6 +202,10 @@ function runOne(corpus, entry) {
         d.err_at_p2pk = d.err_input_index !== null && P2PK[d.err_input_index] === true;
         d.err_mentions_parse = /pars|deserializ|NonConsumed/i.test(d.err);
         d.pass = d.err_at_p2pk && !d.err_mentions_parse;
+        // Not a pass, recorded apart: reduction passed (step c) and the prover stopped for lack of a secret at a
+        // non-P2PK input, i.e. a spend path that needs a key the throwaway wallet does not hold (an owner-only path).
+        d.key_missing_at_contract = !d.pass && c.pass && d.err_input_index !== null &&
+          P2PK[d.err_input_index] === false && !d.err_mentions_parse && /does not have enough witnesses/i.test(d.err);
       }
     }
   }
@@ -179,7 +215,7 @@ function runOne(corpus, entry) {
 
 function main() {
   const corpusBytes = fs.readFileSync(CORPUS);
-  const corpus = JSON.parse(corpusBytes);
+  const { corpus, unsafe_ints_as_strings } = parseCorpus(corpusBytes.toString('utf8'));
   if (TX_INDEX !== undefined) {           // child mode
     const r = runOne(corpus, corpus.txs[Number(TX_INDEX)]);
     r.shims = SHIMS;
@@ -192,7 +228,7 @@ function main() {
     schema: 'sigma-rust-v3-signing-results/1', label: LABEL, lib: LIB, lib_name: pkg.name, lib_version: pkg.version,
     wasm_file: wasm, wasm_sha256: sha256(fs.readFileSync(path.join(LIB, wasm))),
     node: process.version, child_node_flag: CHILD_FLAG || null,
-    corpus_sha256: sha256(corpusBytes), started_utc: new Date().toISOString(), results: [], shims: [],
+    set: SET, corpus_sha256: sha256(corpusBytes), corpus_unsafe_ints_as_strings: unsafe_ints_as_strings, started_utc: new Date().toISOString(), results: [], shims: [],
   };
   corpus.txs.forEach((entry, i) => {
     if (ONLY && entry.txId !== ONLY) return;
@@ -213,7 +249,8 @@ function main() {
     out.results.push(r);
     process.stderr.write(`${LABEL} [${i + 1}/${corpus.txs.length}] ${entry.txId.slice(0, 12)} ` +
       `${r.child_crashed ? 'CRASH' : `a:${r.inputs.filter((x) => x.a.pass).length}/${r.inputs.length} ` +
-      `b:${r.inputs.filter((x) => x.b.pass).length}/${r.inputs.length} c:${r.c.pass} d:${r.d.applicable ? r.d.pass : '-'}`}\n`);
+      `b:${r.inputs.filter((x) => x.b.pass).length}/${r.inputs.length} c:${r.c.pass} d:${r.d.applicable ? r.d.pass : '-'}` +
+      `${r.d.key_missing_at_contract ? ` (key missing at contract input ${r.d.err_input_index})` : ''}`}\n`);
   });
   out.finished_utc = new Date().toISOString();
   fs.writeFileSync(OUT, JSON.stringify(out, null, 1));

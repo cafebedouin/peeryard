@@ -1,12 +1,16 @@
 """browser/compare.py: per tx, per input, per step, the browser verdict vs the Node verdict of the same build.
 
-usage: python3 -I compare.py <node results dir> <browser results dir> [--json <out.json>]
-Reads results-V{0,1,2}.json (../run.js, Node) and results-browser-V{0,1,2}.json (run_browser.js). Prints:
+usage: python3 -I compare.py <node results dir> <browser results dir> [--set <name>] [--json <out.json>]
+Reads results-<set>-V{0,1,2}.json (../run.js, Node) and results-browser-<set>-V{0,1,2}.json (run_browser.js) for one
+corpus (--set, default lithos). Controls: on every set, BV0 fails step a with NonConsumedBytes on every input whose
+tree version is 2 or more, and every P2PK input verifies true on every build; on the lithos set also the pool-tree
+and SigUSD controls. Prints:
 controls, per-version counts, verdict diffs, error-string diffs, stack/trap/crash scan, stack-probe budget, and
 == checks: exit 1 if any check fails (a control, a verdict diff, a stack/trap/crash/console hit, a page-side corpus
 sha256 mismatch, a different tx list). Error-string differences are printed, not checked.
 A "verdict" is the pass/fail outcome of a step (a: pass + its three sub-results; b: pass + returned value;
-c: pass; d: applicable + pass + the error's input index / at-P2PK flag). Error strings are compared separately.
+c: pass; d: applicable + pass + the error's input index / at-P2PK flag / key missing at a contract input). Error
+strings are compared separately.
 """
 import json
 import re
@@ -15,6 +19,8 @@ from collections import Counter
 
 NODE_DIR, BR_DIR = sys.argv[1], sys.argv[2]
 JSON_OUT = sys.argv[sys.argv.index("--json") + 1] if "--json" in sys.argv else None
+SET = sys.argv[sys.argv.index("--set") + 1] if "--set" in sys.argv else "lithos"
+LITHOS = SET == "lithos"
 CHECKS = []  # (name, ok, detail)
 
 
@@ -40,7 +46,7 @@ def verdicts(r):
     if "d" in r:
         d = r["d"]
         v["d"] = (d["applicable"], d["pass"], d.get("err_input_index"), d.get("err_at_p2pk"), d.get("err_mentions_parse"),
-                  d.get("outcome"))
+                  d.get("outcome"), bool(d.get("key_missing_at_contract")))
     v["setup"] = tuple(sorted((k, val) for k, val in r.get("setup", {}).items() if not k.endswith("_err")))
     v["crashed"] = bool(r.get("child_crashed") or r.get("page_failed"))
     return v
@@ -107,6 +113,7 @@ def counts(run):
         "a": sum(x["a"]["pass"] for x in ins), "b": sum(x["b"]["pass"] for x in ins),
         "c": sum(r.get("c", {}).get("pass", False) for r in res),
         "d_applicable": len(dd), "d": sum(r["d"]["pass"] for r in dd),
+        "d_key_missing_at_contract": sum(bool(r["d"].get("key_missing_at_contract")) for r in dd),
         "d354_applicable": len(s354), "d354": sum(r["d"]["pass"] for r in s354),
     }
 
@@ -122,11 +129,16 @@ def by_contract(run):
     return n, c
 
 
-print("== runs")
+def tree_version(x):
+    return int(x["tree_prefix"][:2], 16) & 0x07
+
+
+print(f"== set: {SET}")
+print("\n== runs")
 runs = {}
 for V in ("V0", "V1", "V2"):
-    node = load(f"{NODE_DIR}/results-{V}.json")
-    br = load(f"{BR_DIR}/results-browser-{V}.json")
+    node = load(f"{NODE_DIR}/results-{SET}-{V}.json")
+    br = load(f"{BR_DIR}/results-browser-{SET}-{V}.json")
     runs[V] = (node, br)
     print(f"{V} node:    {node['lib_name']}@{node['lib_version']} wasm={node['wasm_sha256']} corpus={node['corpus_sha256']} {node['node']}")
     print(f"{V} browser: {br['lib_name']}@{br['lib_version']} wasm={br['wasm_sha256']} corpus={br['corpus_sha256']} "
@@ -143,20 +155,31 @@ print("\n== controls")
 for V in ("V0", "V1", "V2"):
     node, br = runs[V]
     for tag, run in (("node", node), ("browser", br)):
-        pool = [x for r in run["results"] for x in r.get("inputs", []) if x["contract"] == "LD_LiquidityPool"]
-        pool_ncb = sum(1 for x in pool if not x["a"]["pass"] and "NonConsumedBytes" in (x["a"].get("err") or ""))
-        p2pk = [x for r in run["results"] for x in r.get("inputs", []) if x["contract"] == "P2PK"]
+        ins = [x for r in run["results"] for x in r.get("inputs", [])]
+        v2 = [x for x in ins if tree_version(x) >= 2]
+        v2_ncb = sum(1 for x in v2 if not x["a"]["pass"] and "NonConsumedBytes" in (x["a"].get("err") or ""))
+        p2pk = [x for x in ins if x["contract"] == "P2PK"]
         p2pk_ok = sum(1 for x in p2pk if x["b"].get("value") is True)
-        sig = [r for r in run["results"] if "control_sigusd_bank" in r.get("sets", [])]
-        sig_ok = all(all(x["a"]["pass"] and x["b"]["pass"] for x in r["inputs"]) and r["c"]["pass"] for r in sig) and len(sig) == 1
-        print(f"{V} {tag:8s} pool tree fails a with NonConsumedBytes: {pool_ncb}/{len(pool)}   "
-              f"P2PK b verify true: {p2pk_ok}/{len(p2pk)}   SigUSD control a-c: {'yes' if sig_ok else 'NO'}")
+        line = (f"{V} {tag:8s} tree version >= 2 fails a with NonConsumedBytes: {v2_ncb}/{len(v2)}   "
+                f"P2PK b verify true: {p2pk_ok}/{len(p2pk)}")
+        if LITHOS:
+            pool = [x for x in ins if x["contract"] == "LD_LiquidityPool"]
+            pool_ncb = sum(1 for x in pool if not x["a"]["pass"] and "NonConsumedBytes" in (x["a"].get("err") or ""))
+            sig = [r for r in run["results"] if "control_sigusd_bank" in r.get("sets", [])]
+            sig_ok = all(all(x["a"]["pass"] and x["b"]["pass"] for x in r["inputs"]) and r["c"]["pass"] for r in sig) and len(sig) == 1
+            line += (f"   pool tree fails a with NonConsumedBytes: {pool_ncb}/{len(pool)}   "
+                     f"SigUSD control a-c: {'yes' if sig_ok else 'NO'}")
+        print(line)
         if tag == "browser":
             if V == "V0":
-                check("V0 browser: pool tree fails step a with NonConsumedBytes on every pool input",
-                      len(pool) > 0 and pool_ncb == len(pool), f"{pool_ncb}/{len(pool)}")
+                check("V0 browser: every input with tree version >= 2 fails step a with NonConsumedBytes",
+                      len(v2) > 0 and v2_ncb == len(v2), f"{v2_ncb}/{len(v2)}")
+                if LITHOS:
+                    check("V0 browser: pool tree fails step a with NonConsumedBytes on every pool input",
+                          len(pool) > 0 and pool_ncb == len(pool), f"{pool_ncb}/{len(pool)}")
             check(f"{V} browser: every P2PK input verifies true", len(p2pk) > 0 and p2pk_ok == len(p2pk), f"{p2pk_ok}/{len(p2pk)}")
-            check(f"{V} browser: SigUSD control passes a-c", sig_ok)
+            if LITHOS:
+                check(f"{V} browser: SigUSD control passes a-c", sig_ok)
 
 print("\n== per version counts (a, b over inputs; c over txs; d over P2PK-bearing txs; d354 = pool+P2PK shape)")
 for V in ("V0", "V1", "V2"):
@@ -232,7 +255,7 @@ failed = [c for c in CHECKS if not c[1]]
 print(f"{len(CHECKS) - len(failed)}/{len(CHECKS)} checks hold")
 if JSON_OUT:
     with open(JSON_OUT, "w") as f:
-        json.dump({"schema": "sigma-rust-v3-signing-browser-compare/1",
+        json.dump({"schema": "sigma-rust-v3-signing-browser-compare/1", "set": SET,
                    "checks": [{"name": n, "ok": o, "detail": d} for n, o, d in CHECKS],
                    "counts": {V: {"node": counts(runs[V][0]), "browser": counts(runs[V][1])} for V in runs}}, f, indent=1)
 sys.exit(1 if failed else 0)

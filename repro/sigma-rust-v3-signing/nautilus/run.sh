@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # nautilus/run.sh: Nautilus's own unit test framework on ErgoTree-v3 signing, one arm per call.
 # usage: run.sh stock   <workdir> <outdir>
-#        run.sh develop <workdir> <outdir> <ergo-lib-wasm-browser-0.29.0.tgz>   (browser/build.sh bv2 makes it)
+#        run.sh develop <workdir> <outdir> <ergo-lib-wasm-browser-0.29.0.tgz>   (../build_sigma_rust.sh makes it)
 #   stock:   nautls/nautilus-wallet at $SHA + upgrade.patch 2/2 only (the test + fixture), stock dependencies
 #            (ergo-lib-wasm-browser 0.28.0 from the lockfile). Expected: the test fails 3 of 3, with NonConsumedBytes.
 #   develop: $SHA + both commits of upgrade.patch (the dependency line ^0.29.0, then the test), the dependency

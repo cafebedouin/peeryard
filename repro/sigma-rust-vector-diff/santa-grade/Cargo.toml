@@ -1,0 +1,13 @@
+# Grades emitted SANTA actuals with SANTA's own comparator (the santa-check library) and compares a base run with
+# change runs. `santa` is a symlink to a SANTA checkout, created by build_grader.sh in a scratch copy of this crate.
+[package]
+name = "santa-grade"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+santa-check = { path = "santa/tools/santa-check" }
+serde_json = "1"
+
+[workspace]

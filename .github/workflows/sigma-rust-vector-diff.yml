@@ -1,0 +1,172 @@
+# SANTA's conformance vectors over sigma-rust at a base commit and at base + one change, per change
+# (repro/sigma-rust-vector-diff/README.md), on GitHub-hosted runners so the result can be re-run by anyone.
+# A change is `pr:<N>` (merge refs/pull/<N>/head of ergoplatform/sigma-rust onto the base), `pick:<sha>` (cherry-pick)
+# or `noop` (the base again, a control). Each label is built with SANTA's sigma-rust runner (mwaddip/santa-blitzen,
+# pinned commit, its declared lenient-parse patch, Rust from its mise.toml) and emits actuals for eight eval/wire
+# leaf directories of SANTA's vectors (pinned commit). The compare job grades every entry with SANTA's own comparator
+# (tools/santa-check) and lists, per change, the entries fixed, regressed, changed in verdict with the same pass/fail
+# (e.g. errored -> panicked) and changed in output only. It fails when a control fails: `noop` shows any fixed or
+# regressed entry, or the base's failing count on a leaf differs from the expected count (SANTA's public scoreboard
+# for the default base commit).
+# Jobs: plan (1), build (base + one per change; 6 with the default list), compare (1): 8 jobs. Expected about
+# 40-60 runner-minutes (a cold release build of the runner and sigma-rust, ~6-9 min per build job), ~10 min wall.
+# Runs by hand (workflow_dispatch) or on a push to ci/sigma-rust-vector-diff with the defaults (a new workflow can be
+# dispatched only once it is on the default branch).
+name: sigma-rust vector diff
+run-name: sigma-rust vector diff at ${{ inputs.sigma_rust_base || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}, ${{ inputs.changes || 'pr:884 pr:874 pr:873 pr:870 noop' }}
+on:
+  workflow_dispatch:
+    inputs:
+      sigma_rust_base:
+        description: 'sigma-rust base commit (40 hex digits)'
+        required: true
+        default: '688511dff3e3436dfdd6bd368e3eeef6f67d59e9'
+      changes:
+        description: 'changes, space separated: pr:<N>, pick:<40-hex sha>, noop (at most 12)'
+        required: true
+        default: 'pr:884 pr:874 pr:873 pr:870 noop'
+      expected_base_failing:
+        description: 'expected failing entries per leaf on the base ("<leaf>=<n> ..."), or "none" to skip; the default is for the default base'
+        required: true
+        default: 'eval/v5/authored=62 eval/v5/spec=4 eval/v6/authored=301 eval/v6/captured=62 eval/v6/spec=15 wire/v5/authored=11 wire/v6/authored=429'
+      santa_commit:
+        description: 'mwaddip/santa commit (vectors and comparator)'
+        required: true
+        default: '1820b01971901af93c7ca39e213f51860831848d'
+      runner_commit:
+        description: 'mwaddip/santa-blitzen commit (the sigma-rust runner)'
+        required: true
+        default: '912c34c792ebc8534918bad74c0d375559295515'
+  push:
+    branches: [ 'ci/sigma-rust-vector-diff' ]
+permissions:
+  contents: read
+env:
+  D: repro/sigma-rust-vector-diff
+  SIGMA_RUST_BASE: ${{ inputs.sigma_rust_base || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}
+  CHANGES: ${{ inputs.changes || 'pr:884 pr:874 pr:873 pr:870 noop' }}
+  EXPECTED_BASE_FAILING_INPUT: ${{ inputs.expected_base_failing || 'eval/v5/authored=62 eval/v5/spec=4 eval/v6/authored=301 eval/v6/captured=62 eval/v6/spec=15 wire/v5/authored=11 wire/v6/authored=429' }}
+  SANTA_COMMIT: ${{ inputs.santa_commit || '1820b01971901af93c7ca39e213f51860831848d' }}
+  RUNNER_COMMIT: ${{ inputs.runner_commit || '912c34c792ebc8534918bad74c0d375559295515' }}
+  LEAVES: 'eval/v5/authored eval/v5/spec eval/v6/authored eval/v6/captured eval/v6/spec wire/v5/authored wire/v5/vendored wire/v6/authored'
+  ARTIFACT_PREFIX: sigma-rust-vector-diff-label-
+jobs:
+  plan:
+    name: Plan (base + changes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      labels: ${{ steps.plan.outputs.labels }}
+      controls: ${{ steps.plan.outputs.controls }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commits are 40 hex digits
+        run: |
+          for c in "$SIGMA_RUST_BASE" "$SANTA_COMMIT" "$RUNNER_COMMIT"; do
+            [[ "$c" =~ ^[0-9a-f]{40}$ ]] || { echo "bad commit: $c"; exit 1; }
+          done
+      - name: Build matrix from the change list
+        id: plan
+        run: |
+          set -o pipefail
+          bash "$D/plan.sh" "$CHANGES" | tee -a "$GITHUB_OUTPUT"
+  build:
+    name: Build + emit ${{ matrix.l.label }} (${{ matrix.l.change }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        l: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: sigma-rust base + change, runner build, emit (Rust toolchain from the runner's mise.toml)
+        env:
+          LABEL: ${{ matrix.l.label }}
+          CHANGE: ${{ matrix.l.change }}
+          INSTALL_RUST_TOOLCHAIN: '1'
+        run: |
+          set -o pipefail; mkdir -p out
+          bash "$D/build_label.sh" "$RUNNER_TEMP/w" out "$LABEL" "$CHANGE" 2>&1 | tee out/run.txt
+      - name: Job summary
+        if: always()
+        env:
+          LABEL: ${{ matrix.l.label }}
+        run: |
+          [[ -f out/manifest.json ]] || { echo "no manifest" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          {
+            echo "## $LABEL"; echo; echo '```'
+            jq -r '"change: \(.change)\nstatus: \(.status)\(if .detail then " (\(.detail))" else "" end)",
+                   "sigma-rust base: \(.sigma_rust_base)", "change head: \(.change_head // "-")",
+                   "sigma-rust HEAD: \(.sigma_rust_head // "-") \(.diff_shortstat // "")",
+                   "runner: \(.runner.commit), lenient-parse patch sha256 \(.runner.lenient_parse_patch_sha256 // "-")",
+                   "runner Cargo.lock sha256 (resolved): \(.runner.cargo_lock_sha256 // "-")",
+                   "SANTA: \(.santa.commit)", "toolchain: \(.toolchain.rustc // "-")",
+                   (.leaves | to_entries[] | "\(.key): emit exit \(.value.emit_exit), \(.value.actual_files)/\(.value.vector_files) files")' \
+              out/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}${{ matrix.l.label }}
+          path: out/
+          retention-days: 30
+  compare:
+    name: Compare with SANTA's comparator
+    needs: [plan, build]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: SANTA and the runner at their pinned commits
+        run: |
+          git clone -q --filter=blob:none --no-checkout https://github.com/mwaddip/santa.git "$RUNNER_TEMP/santa"
+          git -C "$RUNNER_TEMP/santa" -c advice.detachedHead=false checkout -q --detach "$SANTA_COMMIT"
+          git clone -q --no-checkout https://github.com/mwaddip/santa-blitzen.git "$RUNNER_TEMP/blitzen"
+          git -C "$RUNNER_TEMP/blitzen" -c advice.detachedHead=false checkout -q --detach "$RUNNER_COMMIT"
+          echo "SANTA $(git -C "$RUNNER_TEMP/santa" rev-parse HEAD), runner $(git -C "$RUNNER_TEMP/blitzen" rev-parse HEAD)"
+          cat "$RUNNER_TEMP/blitzen/runner.json"
+      - name: Build the grader against SANTA's santa-check (Rust from SANTA's tools/mise.toml)
+        run: |
+          v="$(sed -n 's/^rust = "\([0-9.]*\)"$/\1/p' "$RUNNER_TEMP/santa/tools/mise.toml")"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "no rust pin in SANTA's tools/mise.toml"; exit 1; }
+          rustup toolchain install "$v" --profile minimal --no-self-update
+          export RUSTUP_TOOLCHAIN="$v"; echo "RUSTUP_TOOLCHAIN=$v" >> "$GITHUB_ENV"
+          rustc --version
+          g="$(bash "$D/build_grader.sh" "$RUNNER_TEMP/santa" "$RUNNER_TEMP/grader" | tail -1)"
+          echo "GRADER=$g" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with: { pattern: '${{ env.ARTIFACT_PREFIX }}*', path: labels }
+      - name: Grade and compare
+        env:
+          LABELS: ${{ needs.plan.outputs.labels }}
+          CONTROLS: ${{ needs.plan.outputs.controls }}
+        run: |
+          mkdir -p out
+          EXPECTED_BASE_FAILING="$EXPECTED_BASE_FAILING_INPUT"; [[ "$EXPECTED_BASE_FAILING" != none ]] || EXPECTED_BASE_FAILING=""
+          export EXPECTED_BASE_FAILING LABEL_PREFIX="$ARTIFACT_PREFIX"
+          set +e
+          bash "$D/compare.sh" "$GRADER" "$RUNNER_TEMP/santa" "$RUNNER_TEMP/blitzen/runner.json" labels out
+          rc=$?
+          set -e
+          [[ -f out/summary.md ]] && cat out/summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: Grader self-test (the comparison finds planted differences)
+        if: always() && env.GRADER != ''
+        run: |
+          set -o pipefail
+          b="labels/${ARTIFACT_PREFIX}base"
+          [[ -d "$b/actuals" ]] || { echo "no base actuals"; exit 1; }
+          read -r -a leaves <<< "$LEAVES"
+          python3 -I "$D/grader_selftest.py" "$GRADER" "$RUNNER_TEMP/santa/vectors" "$RUNNER_TEMP/blitzen/runner.json" \
+            "$b" "$RUNNER_TEMP/selftest" "${leaves[@]}" 2>&1 | tee out/grader-selftest.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sigma-rust-vector-diff-report
+          path: out/
+          retention-days: 30

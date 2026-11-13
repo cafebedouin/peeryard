@@ -12,7 +12,7 @@ needs no rig. It adds a Rust toolchain, which is what the library under test is 
 | what | pin |
 |---|---|
 | sigma-rust base | `688511dff3e3436dfdd6bd368e3eeef6f67d59e9` (`develop`) |
-| changes | `pr:884 pr:874 pr:873 pr:870 noop` |
+| changes | `pick:57570dfe246f546015a67e418b86d9d6105ce9f7 pr:847 merge:cafebedouin/sigma-rust@1fb216b0dfb26e059ede5290e97888f27659de61 noop` (the first run on this branch used `pr:884 pr:874 pr:873 pr:870 noop`) |
 | SANTA (vectors and comparator) | `mwaddip/santa` at `1820b01971901af93c7ca39e213f51860831848d` |
 | runner | `mwaddip/santa-blitzen` (SANTA's sigma-rust runner, branch `develop`) at `912c34c792ebc8534918bad74c0d375559295515` |
 | runner toolchain | Rust from the runner's `mise.toml` (1.92.0 at the pin), installed with `rustup --profile minimal` |
@@ -21,6 +21,8 @@ needs no rig. It adds a Rust toolchain, which is what the library under test is 
 
 A change is one of:
 - `pr:<N>`: `refs/pull/<N>/head` of `ergoplatform/sigma-rust`, merged onto the base (`git merge --no-edit`);
+- `merge:<owner>/<repo>@<sha>`: that commit fetched from that GitHub repository (a fork branch holding several
+  changes together) and merged onto the base;
 - `pick:<sha>`: that commit cherry-picked onto the base (it must be fetchable from `ergoplatform/sigma-rust`: a
   branch, tag or pull request head);
 - `noop`: the base again. It is a control: built and emitted in its own job, it must show no fixed and no regressed

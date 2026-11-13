@@ -13,7 +13,7 @@
 # Runs by hand (workflow_dispatch) or on a push to ci/sigma-rust-vector-diff with the defaults (a new workflow can be
 # dispatched only once it is on the default branch).
 name: sigma-rust vector diff
-run-name: sigma-rust vector diff at ${{ inputs.sigma_rust_base || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}, ${{ inputs.changes || 'pr:884 pr:874 pr:873 pr:870 noop' }}
+run-name: sigma-rust vector diff at ${{ inputs.sigma_rust_base || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}, ${{ inputs.changes || 'pick:57570dfe246f546015a67e418b86d9d6105ce9f7 pr:847 merge:cafebedouin/sigma-rust@1fb216b0dfb26e059ede5290e97888f27659de61 noop' }}
 on:
   workflow_dispatch:
     inputs:
@@ -22,9 +22,9 @@ on:
         required: true
         default: '688511dff3e3436dfdd6bd368e3eeef6f67d59e9'
       changes:
-        description: 'changes, space separated: pr:<N>, pick:<40-hex sha>, noop (at most 12)'
+        description: 'changes, space separated: pr:<N>, pick:<40-hex sha>, merge:<owner>/<repo>@<40-hex sha>, noop (at most 12)'
         required: true
-        default: 'pr:884 pr:874 pr:873 pr:870 noop'
+        default: 'pick:57570dfe246f546015a67e418b86d9d6105ce9f7 pr:847 merge:cafebedouin/sigma-rust@1fb216b0dfb26e059ede5290e97888f27659de61 noop'
       expected_base_failing:
         description: 'expected failing entries per leaf on the base ("<leaf>=<n> ..."), or "none" to skip; the default is for the default base'
         required: true
@@ -44,7 +44,7 @@ permissions:
 env:
   D: repro/sigma-rust-vector-diff
   SIGMA_RUST_BASE: ${{ inputs.sigma_rust_base || '688511dff3e3436dfdd6bd368e3eeef6f67d59e9' }}
-  CHANGES: ${{ inputs.changes || 'pr:884 pr:874 pr:873 pr:870 noop' }}
+  CHANGES: ${{ inputs.changes || 'pick:57570dfe246f546015a67e418b86d9d6105ce9f7 pr:847 merge:cafebedouin/sigma-rust@1fb216b0dfb26e059ede5290e97888f27659de61 noop' }}
   EXPECTED_BASE_FAILING_INPUT: ${{ inputs.expected_base_failing || 'eval/v5/authored=62 eval/v5/spec=4 eval/v6/authored=301 eval/v6/captured=62 eval/v6/spec=15 wire/v5/authored=11 wire/v6/authored=429' }}
   SANTA_COMMIT: ${{ inputs.santa_commit || '1820b01971901af93c7ca39e213f51860831848d' }}
   RUNNER_COMMIT: ${{ inputs.runner_commit || '912c34c792ebc8534918bad74c0d375559295515' }}

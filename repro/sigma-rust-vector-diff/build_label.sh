@@ -70,6 +70,16 @@ case "$change" in
       g -C "$SR" cherry-pick --abort
       fail pick-conflict "$s does not cherry-pick cleanly onto $SIGMA_RUST_BASE: ${conflicts//$'\n'/ }" 3
     fi ;;
+  merge:*)
+    r="${change#merge:}"; repo="${r%@*}"; s="${r##*@}"
+    g -C "$SR" fetch -q "https://github.com/$repo.git" "$s" || fail fetch-failed "commit $s is not fetchable from $repo"
+    change_head="$s"
+    echo "merge $s from $repo"
+    if ! g -C "$SR" merge -q --no-edit FETCH_HEAD; then
+      conflicts="$(git -C "$SR" diff --name-only --diff-filter=U)"
+      g -C "$SR" merge --abort
+      fail merge-conflict "$s (from $repo) does not merge cleanly onto $SIGMA_RUST_BASE: ${conflicts//$'\n'/ }" 3
+    fi ;;
   *) fail bad-change "unknown change '$change'" ;;
 esac
 head="$(git -C "$SR" rev-parse HEAD)"

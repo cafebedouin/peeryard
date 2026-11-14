@@ -1,0 +1,54 @@
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+index ee520d8d4..5199060ee 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+@@ -128,6 +128,30 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     }
+   }
+ 
++  // whether the one-time rebuild of a nipopow proof stored by a previous node version was tried by this process
++  @volatile private var nipopowMigrationTried: Boolean = false
++
++  /**
++    * Rebuilds the proof stored by a previous node version (under `LegacyNipopowSnapshotKey`) in the current form,
++    * for the same suffix head.
++    *
++    * @return serialized proof, or None if a current proof is stored already, or there is no previous one,
++    *         or the proof can not be rebuilt
++    */
++  protected def migratedPopowProofBytes(): Option[Array[Byte]] = {
++    if (historyStorage.getIndex(NipopowProofV2Key).isEmpty) {
++      historyStorage.getIndex(LegacyNipopowSnapshotKey).flatMap { bytes =>
++        val rebuilt = nipopowSerializer.parseBytesTry(bytes).flatMap { legacy =>
++          popowProofBytes(P2PNipopowProofM, P2PNipopowProofK, Some(legacy.suffixHead.id))
++        }
++        rebuilt.failed.foreach(e => log.warn("Stored nipopow proof can not be rebuilt in the current form", e))
++        rebuilt.toOption
++      }
++    } else {
++      None
++    }
++  }
++
+   /**
+     * Data to add to and remove from the storage to process a header
+     * @param h - header to be written into the storage
+@@ -193,6 +217,18 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+           log.error("Nipopow proof generation failed ", e)
+           Array.empty[(ByteArrayWrapper, Array[Byte])]
+       }
++    } else if (!nipopowMigrationTried && this.isHeadersChainSynced &&
++      !settings.nodeSettings.nipopowSettings.nipopowBootstrap) {
++      // a node upgraded from a version storing the proof under `LegacyNipopowSnapshotKey` rebuilds it once,
++      // to have a proof to serve before the next proof height
++      nipopowMigrationTried = true
++      migratedPopowProofBytes() match {
++        case Some(pbs) =>
++          log.info(s"Rebuilt stored nipopow proof in the current form (size: ${pbs.length})")
++          Array(NipopowSnapshotHeightKey -> pbs)
++        case None =>
++          Array.empty[(ByteArrayWrapper, Array[Byte])]
++      }
+     } else {
+       Array.empty[(ByteArrayWrapper, Array[Byte])]
+     }

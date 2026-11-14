@@ -1,0 +1,28 @@
+{
+  "name": "nipopow-cutover",
+  "description": "A NiPoPoW proof-form change deployed on a running network: serving peers build their stored proof on the base jar and are then upgraded in place (UPGRADE), and a bootstrapping joiner on the new or the old jar (JOINER) asks them for a proof. The base role runs the same restarts on the base jar (the control). Reports whether the joiner applies or rejects a proof, whom it asked, and what the upgraded servers had to serve and when.",
+  "script": "nipopow-cutover.sh",
+  "tier": "public",
+  "env": { "UPGRADE": "A B", "JOINER": "new", "QUORUM": 1, "AGE": 0, "NEWVER": "6.0.12" },
+  "metrics": {
+    "proof_applied": "boolean",
+    "synced": "boolean",
+    "wrong_proof": "number",
+    "misbehavior": "number",
+    "no_peers": "number",
+    "asked_upgraded": "number",
+    "asked_not_upgraded": "number",
+    "rebuilt": "number",
+    "no_cached": "number",
+    "proof_before_next_dump": "boolean",
+    "proof_bytes": "number",
+    "c_headers": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1700,
+  "expect": {
+    "base":      { "all": { "key": "proof_applied", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "wrong_proof", "op": "==", "value": 0 } }
+  }
+}

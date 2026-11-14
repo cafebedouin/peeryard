@@ -1,0 +1,118 @@
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/network/Version.scala b/ergo-core/src/main/scala/org/ergoplatform/network/Version.scala
+index a91ae9b79..49994b007 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/network/Version.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/network/Version.scala
+@@ -40,6 +40,12 @@ object Version {
+   val UtxoSnapsnotActivationVersion: Version = Version(5, 0, 12)
+ 
+   val NipopowActivationVersion: Version = Version(5, 0, 13)
++
++  /**
++    * First version which builds and checks NiPoPoW interlink proofs against header's extension root.
++    * Peers announcing a lower version build and check the proofs against a root of interlinks only.
++    */
++  val NipopowBoundProofVersion: Version = Version(6, 0, 12)
+ }
+ 
+ object ApplicationVersionSerializer extends ErgoSerializer[Version] {
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+index 3801a3548..663b65007 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoNodeViewSynchronizer.scala
+@@ -1151,7 +1151,15 @@ class ErgoNodeViewSynchronizer(networkControllerRef: ActorRef,
+     */
+   private def sendNipopowProof(data: NipopowProofData, hr: ErgoHistory, peer: ConnectedPeer): Unit = {
+     if (data.m == hr.P2PNipopowProofM && data.k == hr.P2PNipopowProofK && data.headerIdBytesOpt.isEmpty) {
+-      hr.readPopowProofBytesFromDb() match {
++      // a peer announcing a version before `NipopowBoundProofVersion` checks the previous proof form, so it is
++      // served the proof stored by a previous version of this node, if any
++      val peerVersion = peer.peerInfo.map(_.peerSpec.protocolVersion).getOrElse(Version.initial)
++      val proofBytesOpt = if (peerVersion.compare(Version.NipopowBoundProofVersion) >= 0) {
++        hr.readPopowProofBytesFromDb()
++      } else {
++        hr.readLegacyPopowProofBytesFromDb()
++      }
++      proofBytesOpt match {
+         case Some(proofBytes) =>
+           val msg = Message(NipopowProofSpec, Right(proofBytes), None)
+           networkControllerRef ! SendToNetwork(msg, SendToPeer(peer))
+diff --git a/src/main/scala/org/ergoplatform/network/VersionBasedPeerFilteringRule.scala b/src/main/scala/org/ergoplatform/network/VersionBasedPeerFilteringRule.scala
+index e3b357eeb..1a0b8e6ad 100644
+--- a/src/main/scala/org/ergoplatform/network/VersionBasedPeerFilteringRule.scala
++++ b/src/main/scala/org/ergoplatform/network/VersionBasedPeerFilteringRule.scala
+@@ -86,7 +86,7 @@ object NipopowSupportFilter extends PeerFilteringRule {
+     val version = peer.peerInfo.map(_.peerSpec.protocolVersion).getOrElse(Version.initial)
+ 
+     peer.mode.flatMap(_.nipopowBootstrapped).isEmpty &&
+-      version.compare(Version.NipopowActivationVersion) >= 0
++      version.compare(Version.NipopowBoundProofVersion) >= 0
+   }
+ 
+ }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
+index 01a231557..d1259fb33 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
+@@ -609,6 +609,13 @@ trait ErgoHistoryReader
+     historyStorage.getIndex(NipopowProofV2Key)
+   }
+ 
++  /**
++    * @return serialized NiPoPoW proof stored by a node version before `Version.NipopowBoundProofVersion`, if any
++    */
++  def readLegacyPopowProofBytesFromDb(): Option[Array[Byte]] = {
++    historyStorage.getIndex(LegacyNipopowSnapshotKey)
++  }
++
+ }
+ 
+ object ErgoHistoryReader {
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+index ee520d8d4..ca31d7ca2 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
+@@ -128,6 +128,25 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+     }
+   }
+ 
++  // whether the one-time rebuild of a nipopow proof stored by a previous node version was tried
++  @volatile private var nipopowMigrationTried: Boolean = false
++
++  /**
++    * Rebuilds the proof stored by a previous node version in the current form, for the same suffix head.
++    *
++    * @return serialized proof, or None if a current proof is stored already, or there is no previous one,
++    *         or the proof can not be rebuilt
++    */
++  protected def migratedPopowProofBytes(): Option[Array[Byte]] = {
++    if (historyStorage.getIndex(NipopowProofV2Key).isEmpty) {
++      historyStorage.getIndex(LegacyNipopowSnapshotKey)
++        .flatMap(bytes => nipopowSerializer.parseBytesTry(bytes).toOption)
++        .flatMap(legacy => popowProofBytes(P2PNipopowProofM, P2PNipopowProofK, Some(legacy.suffixHead.id)).toOption)
++    } else {
++      None
++    }
++  }
++
+   /**
+     * Data to add to and remove from the storage to process a header
+     * @param h - header to be written into the storage
+@@ -193,6 +212,18 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
+           log.error("Nipopow proof generation failed ", e)
+           Array.empty[(ByteArrayWrapper, Array[Byte])]
+       }
++    } else if (!nipopowMigrationTried && this.isHeadersChainSynced &&
++      !settings.nodeSettings.nipopowSettings.nipopowBootstrap) {
++      // a node upgraded from a version before `Version.NipopowBoundProofVersion` rebuilds its stored proof once,
++      // to have a proof to serve before the next snapshot height
++      nipopowMigrationTried = true
++      migratedPopowProofBytes() match {
++        case Some(pbs) =>
++          log.info(s"Rebuilt stored nipopow proof in the current form (size: ${pbs.length})")
++          Array(NipopowSnapshotHeightKey -> pbs)
++        case None =>
++          Array.empty[(ByteArrayWrapper, Array[Byte])]
++      }
+     } else {
+       Array.empty[(ByteArrayWrapper, Array[Byte])]
+     }

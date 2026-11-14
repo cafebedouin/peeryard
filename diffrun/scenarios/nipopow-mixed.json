@@ -1,0 +1,23 @@
+{
+  "name": "nipopow-mixed",
+  "description": "A NiPoPoW-bootstrapping joiner on one jar against serving peers on the other jar: does the joiner apply the served proof, or reject it and stall? Both arms are mixed (C runs the other role's jar via ${PEERYARD_JAR_B}), so base and candidate cover the two directions of the change.",
+  "script": "nipopow-mixed.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {},
+  "metrics": {
+    "a_served_proof": "boolean",
+    "proof_applied": "boolean",
+    "rejected": "boolean",
+    "penalties": "number",
+    "no_peers_logged": "boolean",
+    "c_headers": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1700,
+  "expect": {
+    "base":      { "all": { "key": "rejected", "op": "==", "value": true } },
+    "candidate": { "all": { "key": "rejected", "op": "==", "value": true } }
+  }
+}

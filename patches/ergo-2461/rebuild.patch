@@ -1,5 +1,5 @@
 diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
-index ee520d8d4..5199060ee 100644
+index ee520d8d4..5cadb6caa 100644
 --- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
 +++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/HeadersProcessor.scala
 @@ -128,6 +128,30 @@ trait HeadersProcessor extends ToDownloadProcessor with PopowProcessor with Scor
@@ -45,7 +45,7 @@ index ee520d8d4..5199060ee 100644
 +      migratedPopowProofBytes() match {
 +        case Some(pbs) =>
 +          log.info(s"Rebuilt stored nipopow proof in the current form (size: ${pbs.length})")
-+          Array(NipopowSnapshotHeightKey -> pbs)
++          Array(NipopowProofV2Key -> pbs)
 +        case None =>
 +          Array.empty[(ByteArrayWrapper, Array[Byte])]
 +      }

@@ -1,0 +1,31 @@
+# Runs one reproduction script from repro/<dir>/run.sh on a GitHub-hosted runner and keeps its output.
+# The script decides the verdict: it must end with a VERDICT line and exit non-zero when its claim does not hold.
+name: repro script
+on:
+  workflow_dispatch:
+    inputs:
+      dir: { description: 'directory under repro/ holding run.sh', required: true }
+run-name: "repro: ${{ inputs.dir }}"
+permissions:
+  contents: read
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DIR: ${{ inputs.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: check the input
+        run: |
+          [[ "$DIR" =~ ^[a-z0-9][a-z0-9-]*$ && -f "repro/$DIR/run.sh" ]] || { echo "no repro/$DIR/run.sh"; exit 2; }
+          sha256sum "repro/$DIR"/*
+      - name: run
+        run: |
+          set -o pipefail
+          WORKDIR="$RUNNER_TEMP/work" bash "repro/$DIR/run.sh" 2>&1 | tee "$RUNNER_TEMP/output.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repro-${{ inputs.dir }}
+          path: ${{ runner.temp }}/output.txt

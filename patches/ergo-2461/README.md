@@ -19,7 +19,7 @@ Measured with `diffrun/scenarios/nipopow-cutover.json`: serving peers build thei
 are restarted in place on the candidate jar, and a joiner on the new or the old jar asks them for a proof. Read
 against a run of the same scenario without `extra_patch` (the PR alone).
 
-`rebuild.patch` is the last row alone (the `HeadersProcessor` hunk, 37 added lines, one file), plus a warning
+`rebuild.patch` is the last row alone (the `HeadersProcessor` hunk, 36 added lines, one file), plus a warning
 when a stored proof cannot be rebuilt: an upgraded node rebuilds its stored proof once, with no version constant
 and no change to whom a node asks or what it serves to whom. Same base, same input.
 

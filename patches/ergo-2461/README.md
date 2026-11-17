@@ -24,3 +24,30 @@ when a stored proof cannot be rebuilt: an upgraded node rebuilds its stored proo
 and no change to whom a node asks or what it serves to whom. Same base, same input.
 
 No unit tests yet; a prototype for measurement, not a filed change.
+
+## Another option: keep the deployed proof form (`keep-deployed-form.patch`)
+
+`keep-deployed-form.patch` is `git diff` against the same PR head (production paths only, 74 added and 12 removed
+lines over 6 files), for the same `extra_patch` input. It is a different answer to the same rollout question, and
+is not meant to be combined with the two patches above.
+
+The whole-extension proof #2461 builds and the interlinks-only proof deployed nodes build are the same bytes for a
+block whose extension holds only interlinks. On mainnet they differ at the first block of a voting epoch, whose
+extension also holds system parameters (`repro/interlink-roots/` shows it for a served proof). The patch:
+
+| where | change |
+|---|---|
+| `PopowProcessor.popowHeader` | the database prover builds the interlinks-only proof for a block which starts a voting epoch, the whole-extension proof for every other block |
+| `NipopowProof.hasValidProofs` | accepts the interlinks-only proof for such a header and for no other |
+| `ErgoHistoryReader`, `PopowProcessor` | the stored proof is written and read under the key deployed nodes use; the second key goes |
+
+It is the production diff of three commits (tests, the exception, the storage key) on branch
+`nipopow/keep-deployed-proof-form` of cafebedouin/ergo; `repro/ergo-2461-keep-deployed-form/run.sh` runs the
+NiPoPoW suites at each of them.
+
+To be measured with `diffrun/scenarios/nipopow-mixed-accept.json` (a joiner on one jar against servers on the other,
+both directions; the same runs as `nipopow-mixed`, expecting the proof to be applied) and with
+`diffrun/scenarios/nipopow-cutover.json` (servers upgraded in place, a joiner on the new or the old jar).
+
+Limits, as read: at a voting-epoch start the check is the one deployed nodes apply to every header. The two forms
+are the same bytes only while other blocks hold nothing but interlinks.

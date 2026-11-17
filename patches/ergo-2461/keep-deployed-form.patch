@@ -1,0 +1,173 @@
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/extension/ExtensionCandidate.scala b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/extension/ExtensionCandidate.scala
+index a91063418..0be0a0854 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/extension/ExtensionCandidate.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/extension/ExtensionCandidate.scala
+@@ -35,6 +35,21 @@ class ExtensionCandidate(val fields: Seq[(Array[Byte], Array[Byte])]) {
+       .map(Extension.kvToLeaf)
+       .flatMap(kv => merkleTree.proofByElement(Leaf[Digest32](LeafData @@ kv)(Algos.hash)))
+ 
++  /**
++    * Constructs a BatchMerkleProof for interlinks against the Merkle tree of the interlink fields alone.
++    * For an extension which holds nothing but interlinks it is the same proof as `batchProofFor` gives.
++    *
++    * @param keys - array of 2-byte keys
++    * @return BatchMerkleProof or None if keys not found
++    */
++  def batchProofForInterlinks(keys: Array[Byte]*): Option[BatchMerkleProof[Digest32]] = {
++    val indices = keys.flatMap(key => fields.find(_._1 sameElements key)
++      .map(Extension.kvToLeaf)
++      .map(kv => Leaf[Digest32](LeafData @@ kv)(Algos.hash).hash)
++      .flatMap(leafData => interlinksMerkleTree.indexByElementHash(leafData)))
++    if (indices.isEmpty) None else interlinksMerkleTree.proofByIndices(indices)
++  }
++
+   /**
+     * Constructs a BatchMerkleProof for the requested extension fields
+     *
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowAlgos.scala b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowAlgos.scala
+index abcee591a..2a6f4ef11 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowAlgos.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowAlgos.scala
+@@ -228,4 +228,19 @@ object NipopowAlgos {
+     }
+   }
+ 
++  /**
++    * Proves the inclusion of the interlink vector in the Merkle Tree of the interlink fields alone. This is the
++    * proof deployed nodes build and check. It is the same proof as `proofForInterlinkVector` gives when the
++    * extension holds nothing but interlinks, and it is kept for a block which starts a voting epoch, whose
++    * extension holds system parameters too: there the two proofs differ, and deployed nodes accept only this one.
++    */
++  def proofForInterlinksOnly(ext: ExtensionCandidate): Option[BatchMerkleProof[Digest32]] = {
++    val keys = ext.fields.collect { case (key, _) if key.head == InterlinksVectorPrefix => key }
++    if (keys.isEmpty) {
++      Some(BatchMerkleProof(Seq.empty, Seq.empty)(Algos.hash))
++    } else {
++      ext.batchProofForInterlinks(keys: _*)
++    }
++  }
++
+ }
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowProof.scala b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowProof.scala
+index 2a8838bf2..6cecd310d 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowProof.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/NipopowProof.scala
+@@ -166,8 +166,9 @@ case class NipopowProof(popowAlgos: NipopowAlgos,
+    * Checks the interlink proofs of the blocks in the proof.
+    */
+   lazy val hasValidProofs: Boolean = {
+-    prefix.forall(_.checkInterlinksProof()) &&
+-      suffixHead.checkInterlinksProof()
++    val votingLength = popowAlgos.chainSettings.voting.votingLength
++    prefix.forall(_.checkInterlinksProof(votingLength)) &&
++      suffixHead.checkInterlinksProof(votingLength)
+   }
+ 
+   lazy val hasValidPow: Boolean = headersChain.forall(popowAlgos.hasValidPow)
+diff --git a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/PoPowHeader.scala b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/PoPowHeader.scala
+index 8bd1598cc..495e30ca0 100644
+--- a/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/PoPowHeader.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/modifiers/history/popow/PoPowHeader.scala
+@@ -52,6 +52,25 @@ case class PoPowHeader(header: Header,
+       PoPowHeader.checkInterlinksProof(interlinks, interlinksProof, header.extensionRoot)
+     }
+   }
++
++  /**
++    * As `checkInterlinksProof()`, and for a header which starts a voting epoch also accepts a proof which
++    * leads to the root of the interlinks alone.
++    *
++    * For a block whose extension holds nothing but interlinks the two roots are the same, so the proof deployed
++    * nodes build is a proof against the extension root already. The first block of a voting epoch has system
++    * parameters in its extension as well; there the proof deployed nodes build, and the only one they accept,
++    * leads to the root of the interlinks alone. That root is rebuilt from the interlinks shown, so a proof
++    * which leads to it does not bind them to the header; the proof against the extension root, which does,
++    * is accepted for such a header as well.
++    *
++    * @param votingLength - length of a voting epoch
++    */
++  def checkInterlinksProof(votingLength: Int): Boolean = {
++    checkInterlinksProof() || (header.votingStarts(votingLength) &&
++      PoPowHeader.hasCanonicalInterlinkRuns(interlinks) &&
++      PoPowHeader.checkInterlinksProof(interlinks, interlinksProof, PoPowHeader.interlinksOnlyRoot(interlinks)))
++  }
+ }
+ 
+ object PoPowHeader {
+@@ -90,6 +109,12 @@ object PoPowHeader {
+     }
+   }
+ 
++  /**
++    * Root of the Merkle tree of the packed interlinks alone
++    */
++  def interlinksOnlyRoot(interlinks: Seq[ModifierId]): Digest32 =
++    Algos.merkleTreeRoot(Extension.merkleTree(NipopowAlgos.packInterlinks(interlinks)))
++
+   /**
+     * Validates the exact packed interlink leaves against the full extension root
+     */
+@@ -119,7 +144,9 @@ object PoPowHeader {
+   }
+ 
+   /**
+-    * Create PoPowHeader from a given block
++    * Create PoPowHeader from a given block. The interlinks proof is built against the whole extension for
++    * every block, also for the first block of a voting epoch, for which deployed nodes accept only the proof
++    * `NipopowAlgos.proofForInterlinksOnly` gives.
+     */
+   def fromBlock(b: ErgoFullBlock): Try[PoPowHeader] = {
+     val proof = NipopowAlgos.proofForInterlinkVector(b.extension).get
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
+index 01a231557..7b9b25fbc 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/ErgoHistoryReader.scala
+@@ -606,7 +606,7 @@ trait ErgoHistoryReader
+     * @return serialized NiPoPoW proof stored under the current P2P cache key
+     */
+   def readPopowProofBytesFromDb(): Option[Array[Byte]] = {
+-    historyStorage.getIndex(NipopowProofV2Key)
++    historyStorage.getIndex(NipopowSnapshotHeightKey)
+   }
+ 
+ }
+diff --git a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/PopowProcessor.scala b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/PopowProcessor.scala
+index f3c9d6f18..81a2635c3 100644
+--- a/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/PopowProcessor.scala
++++ b/src/main/scala/org/ergoplatform/nodeView/history/storage/modifierprocessors/PopowProcessor.scala
+@@ -43,15 +43,13 @@ trait PopowProcessor extends BasicReaders with ScorexLogging {
+   private lazy val nipopowVerifier =
+     new NipopowVerifier(chainSettings.genesisId.orElse(bestHeaderIdAtHeight(ErgoHistoryUtils.GenesisHeight)))
+ 
+-  private[history] val LegacyNipopowSnapshotKey: ByteArrayWrapper =
++  // The stored proof stays under the key deployed nodes use, so a proof stored before an upgrade is served
++  // after it. A proof stored by a deployed node is valid here as long as the blocks in it, other than the
++  // first of a voting epoch, hold only interlinks in their extensions
++  // (see `PoPowHeader.checkInterlinksProof(votingLength)`).
++  private[history] val NipopowSnapshotHeightKey: ByteArrayWrapper =
+     ByteArrayWrapper(Array.fill(HashLength)(50: Byte))
+ 
+-  private[history] val NipopowProofV2Key: ByteArrayWrapper =
+-    ByteArrayWrapper(Array.fill(HashLength)(51: Byte))
+-
+-  // Periodic snapshot production and P2P reads use V2. The legacy row remains untouched.
+-  protected val NipopowSnapshotHeightKey: ByteArrayWrapper = NipopowProofV2Key
+-
+   /**
+     * Minimal superchain length ('m' in KMZ17 paper) value used in NiPoPoW proofs for bootstrapping
+     */
+@@ -88,7 +86,13 @@ trait PopowProcessor extends BasicReaders with ScorexLogging {
+     typedModifierById[Header](headerId).flatMap(h =>
+       typedModifierById[Extension](h.extensionId).flatMap { ext =>
+         val interlinks = NipopowAlgos.unpackInterlinks(ext.fields).toOption
+-        val interlinkProof = NipopowAlgos.proofForInterlinkVector(ext)
++        // for the first block of a voting epoch the proof stays the one deployed nodes build and accept,
++        // see `PoPowHeader.checkInterlinksProof(votingLength)`
++        val interlinkProof = if (h.votingStarts(chainSettings.voting.votingLength)) {
++          NipopowAlgos.proofForInterlinksOnly(ext)
++        } else {
++          NipopowAlgos.proofForInterlinkVector(ext)
++        }
+         (interlinks, interlinkProof) match {
+           case (Some(links), Some(proof)) => Some(PoPowHeader(h, links, proof))
+           case _ => None

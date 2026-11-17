@@ -16,6 +16,9 @@ jobs:
       DIR: ${{ inputs.dir }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '8' }
+      - uses: sbt/setup-sbt@v1
       - name: check the input
         run: |
           [[ "$DIR" =~ ^[a-z0-9][a-z0-9-]*$ && -f "repro/$DIR/run.sh" ]] || { echo "no repro/$DIR/run.sh"; exit 2; }

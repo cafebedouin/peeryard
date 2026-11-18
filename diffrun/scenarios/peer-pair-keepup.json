@@ -1,0 +1,38 @@
+{
+  "name": "peer-pair-keepup",
+  "description": "This role's jar on both nodes of a two-node network (A mines, B dials A), bring-up gate off: after PK_WAIT_S of their own syncing, how far are B's applied full blocks behind A's, and behind B's own headers? kept_up is: B's full-block height is within PK_MAX_LAG of A's.",
+  "script": "peer-pair-keepup.sh",
+  "tier": "public",
+  "env": {
+    "PK_WAIT_S": "120",
+    "PK_MAX_LAG": "5",
+    "PK_SAMPLE_S": "15"
+  },
+  "metrics": {
+    "kept_up": "boolean",
+    "paired": "boolean",
+    "a_full_height": "number",
+    "b_headers_height": "number",
+    "b_full_height": "number",
+    "b_full_lag": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "kept_up",
+        "op": "==",
+        "value": true
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "kept_up",
+        "op": "==",
+        "value": true
+      }
+    }
+  }
+}

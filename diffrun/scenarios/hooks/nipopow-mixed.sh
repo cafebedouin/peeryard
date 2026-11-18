@@ -17,8 +17,8 @@ start_mining A 3s >/dev/null
 gen=$(genesis_id A) || { echo "[nipopow-mixed] INCONCLUSIVE: A gave no well-formed genesis id"; echo "RESULT_JSON $(jq -cn '{schema_version:1,scenario:"nipopow-mixed",inconclusive:"no genesis id"}')"; rig_verdict=FAIL; return; }
 CONF_OVR[C]="ergo.chain.genesisId=\"$gen\""
 # proofs built/served by A and B (the serving side has something to offer)
-a_proofs=$(grep -c -i 'nipopow proof' "$RIG_LOG_DIR/node_A.log" 2>/dev/null || echo 0)
-b_proofs=$(grep -c -i 'nipopow proof' "$RIG_LOG_DIR/node_B.log" 2>/dev/null || echo 0)
+a_proofs=$(grep -c -i 'nipopow proof' "$RIG_LOG_DIR/node_A.log" 2>/dev/null || true)
+b_proofs=$(grep -c -i 'nipopow proof' "$RIG_LOG_DIR/node_B.log" 2>/dev/null || true)
 echo "[nipopow-mixed] genesis ${gen:0:16}; nipopow-proof log lines A/B: $a_proofs/$b_proofs"
 launch C; wait_up C || { echo "[nipopow-mixed] INCONCLUSIVE: C never came up"; echo "RESULT_JSON $(jq -cn '{schema_version:1,scenario:"nipopow-mixed",inconclusive:"C did not come up"}')"; rig_verdict=FAIL; return; }
 # C asks each reachable peer for a proof once; a cross-version proof is rejected within ~50 ms. Poll a few minutes
@@ -26,17 +26,17 @@ launch C; wait_up C || { echo "[nipopow-mixed] INCONCLUSIVE: C never came up"; e
 t0=$SECONDS; end=$((SECONDS + 360))
 while [ $SECONDS -lt $end ]; do
   ci=$(rest C /info); ch=$(jq -r '.headersHeight // 0' <<< "$ci"); cf=$(jq -r '.fullHeight // 0' <<< "$ci")
-  rej=$(grep -c 'sent wrong nipopow' "$RIG_LOG_DIR/node_C.log" 2>/dev/null || echo 0)
+  rej=$(grep -c 'sent wrong nipopow' "$RIG_LOG_DIR/node_C.log" 2>/dev/null || true)
   app=no; grep -q 'Nipopow proof applied' "$RIG_LOG_DIR/node_C.log" && app=yes
   echo "  t+$((SECONDS - t0))s A.full=$(full_height A) C.hdr=$ch C.full=$cf rejected=$rej applied=$app"
   { [ "$app" = yes ] || [ "${rej:-0}" -ge 2 ]; } && break
   sleep 10
 done
 proof_applied=no; grep -q 'Nipopow proof applied' "$RIG_LOG_DIR/node_C.log" && proof_applied=yes
-rej=$(grep -c 'sent wrong nipopow' "$RIG_LOG_DIR/node_C.log" 2>/dev/null || echo 0)
+rej=$(grep -c 'sent wrong nipopow' "$RIG_LOG_DIR/node_C.log" 2>/dev/null || true)
 # penalties: the node applies MisbehaviorPenalty on the rejected proof; count the misbehaviour/penalty lines, and
 # fall back to the reject-line count (each reject penalises its peer) when the penalty is not logged at this level.
-pen=$(grep -Eci 'misbehav|penal' "$RIG_LOG_DIR/node_C.log" 2>/dev/null || echo 0); [ "${pen:-0}" -lt "${rej:-0}" ] && pen=$rej
+pen=$(grep -Eci 'misbehav|penal' "$RIG_LOG_DIR/node_C.log" 2>/dev/null || true); [ "${pen:-0}" -lt "${rej:-0}" ] && pen=$rej
 no_peers=no; grep -q 'No peers to ask NiPoPoWs from' "$RIG_LOG_DIR/node_C.log" && no_peers=yes
 c_hdr=$(rest C /info | jq -r '.headersHeight // 0')
 a_served=$([ "${a_proofs:-0}" -gt 0 ] || [ "${rej:-0}" -gt 0 ] && echo yes || echo no)
@@ -45,8 +45,11 @@ va=$(rest A /info | jq -r '.appVersion // "null"'); vc=$(rest C /info | jq -r '.
 echo "[nipopow-mixed] A(serve)=$va C(join)=$vc; proof_applied=$proof_applied rejected=$rej penalties=$pen no_peers=$no_peers C-headers=$c_hdr; A snapshot logged=$snap_a"
 echo "[nipopow-mixed] peers vs topology:"; check_topology || echo "  (mismatch reported)"
 # PASS = the served cross-version proof was rejected and not applied (the mixed-version reproduction).
+# EXPECT=applied (nipopow-mixed-accept.json): PASS = the served cross-version proof was applied and none was rejected.
 res=FAIL
-if [ "${rej:-0}" -ge 1 ] && [ "$proof_applied" = no ]; then res=PASS; fi
+if [ "${EXPECT:-rejected}" = applied ]; then
+  if [ "${rej:-0}" -eq 0 ] && [ "$proof_applied" = yes ]; then res=PASS; fi
+elif [ "${rej:-0}" -ge 1 ] && [ "$proof_applied" = no ]; then res=PASS; fi
 echo "[nipopow-mixed] === NIPOPOW-MIXED: $res (serve=$va join=$vc rejected=$rej applied=$proof_applied C-headers=$c_hdr) ==="
 echo "RESULT_JSON $(jq -cn \
   --arg A "$va" --arg C "$vc" \

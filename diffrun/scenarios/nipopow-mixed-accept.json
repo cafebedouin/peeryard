@@ -1,10 +1,12 @@
 {
   "name": "nipopow-mixed",
-  "description": "The nipopow-mixed scenario (a NiPoPoW-bootstrapping joiner on one jar against serving peers on the other jar, both directions; same script, same result name) with the opposite expectation: for a candidate whose proofs the base accepts and which accepts the base's, the joiner applies the served proof in both arms. Whether it also rejected a proof is in the metrics (rejected, penalties) and is read from them, not judged.",
+  "description": "The nipopow-mixed scenario (a NiPoPoW-bootstrapping joiner on one jar against serving peers on the other jar, both directions; same script, same result name) with the opposite expectation (EXPECT=applied): for a candidate whose proofs the base accepts and which accepts the base's, a run passes when the joiner applies the served proof and rejects none, in both arms.",
   "script": "nipopow-mixed.sh",
   "tier": "public",
   "mixed_jars": true,
-  "env": {},
+  "env": {
+    "EXPECT": "applied"
+  },
   "metrics": {
     "a_served_proof": "boolean",
     "proof_applied": "boolean",

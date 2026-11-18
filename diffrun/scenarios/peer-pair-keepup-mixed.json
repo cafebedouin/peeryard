@@ -1,0 +1,39 @@
+{
+  "name": "peer-pair-keepup-mixed",
+  "description": "As peer-pair-keepup, with the other role's jar on node B: in the base role A (mining) is the base jar and B the candidate jar, in the candidate role the reverse. kept_up is: B's full-block height is within PK_MAX_LAG of A's at the last sample.",
+  "script": "peer-pair-keepup-mixed.sh",
+  "tier": "public",
+  "env": {
+    "PK_WAIT_S": "120",
+    "PK_MAX_LAG": "5",
+    "PK_SAMPLE_S": "15"
+  },
+  "metrics": {
+    "kept_up": "boolean",
+    "paired": "boolean",
+    "a_full_height": "number",
+    "b_headers_height": "number",
+    "b_full_height": "number",
+    "b_full_lag": "number"
+  },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 900,
+  "expect": {
+    "base": {
+      "all": {
+        "key": "kept_up",
+        "op": "==",
+        "value": true
+      }
+    },
+    "candidate": {
+      "all": {
+        "key": "kept_up",
+        "op": "==",
+        "value": true
+      }
+    }
+  },
+  "mixed_jars": true
+}

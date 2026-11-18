@@ -1,0 +1,29 @@
+diff --git a/src/main/scala/org/ergoplatform/network/ErgoPeerStatus.scala b/src/main/scala/org/ergoplatform/network/ErgoPeerStatus.scala
+index 3a81627a0..c1e2a278d 100644
+--- a/src/main/scala/org/ergoplatform/network/ErgoPeerStatus.scala
++++ b/src/main/scala/org/ergoplatform/network/ErgoPeerStatus.scala
+@@ -44,17 +44,19 @@ case class ErgoPeerStatus(peer: ConnectedPeer,
+     * Whether the peer stores a full block at the given height h
+     */
+   def hasFullBlockAt(h: Height): Boolean = {
++    // `storedFullblocks` and `headersHeight` are as of the peer's last sync message, so they give no upper bound:
++    // the peer may have got blocks since. Only what the peer does not keep is excluded.
+     if (storedFullblocks.nonEmpty) {
+-      storedFullblocks.exists { case (start, end) => h >= start && h <= end }
++      storedFullblocks.exists { case (start, end) => h >= start && h <= end } ||
++        h > storedFullblocks.map(_._2).max
+     } else {
+       mode match {
+         case Some(m) if m.allBlocksAvailable =>
+-          headersHeight <= 0 || h <= headersHeight
++          true
+         case Some(m) if m.blocksToKeep > 0 && headersHeight > 0 =>
+-          val minHeight = Math.max(1, headersHeight - m.blocksToKeep + 1)
+-          h >= minHeight && h <= headersHeight
++          h >= Math.max(1, headersHeight - m.blocksToKeep + 1)
+         case None =>
+-          headersHeight <= 0 || h <= headersHeight
++          true
+         case _ =>
+           false
+       }

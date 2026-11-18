@@ -25,9 +25,9 @@ pk_node(){ local n=$1 o=$2 l c1 c2 c3 bl con ban
     '{($n): {connected:$con, banned_other:$ban, parse_failures:$pf, penalties:$pe, blacklistings:$bk}}')"); }
 PK_JSON=(); pk_node A B; pk_node B A
 nodes=$(printf '%s\n' "${PK_JSON[@]}" | jq -cs 'add')
-echo "RESULT_JSON $(jq -cn --arg A "$va" --arg B "$vb" --argjson nodes "$nodes" --argjson series "$series" --argjson lag "$pk_lag" --arg jv "$(${PEERYARD_JAVA:-java} -version 2>&1 | head -1)" \
+echo "RESULT_JSON $(jq -cn --arg name "${PK_SCENARIO:-peer-pair-keepup}" --arg A "$va" --arg B "$vb" --argjson nodes "$nodes" --argjson series "$series" --argjson lag "$pk_lag" --arg jv "$(${PEERYARD_JAVA:-java} -version 2>&1 | head -1)" \
   '($series | last) as $e | ($e.a_full - $e.b_full) as $d
    | ($nodes.A.connected and $nodes.B.connected and ($nodes.A.banned_other|not) and ($nodes.B.banned_other|not)) as $paired
-   | {schema_version:1,scenario:"peer-pair-keepup",runtime:{java:$jv},versions:{A:$A,B:$B},nodes:$nodes,series:$series,
+   | {schema_version:1,scenario:$name,runtime:{java:$jv},versions:{A:$A,B:$B},nodes:$nodes,series:$series,
       metrics:{kept_up:($e.a_full > 0 and $d <= $lag),paired:$paired,a_full_height:$e.a_full,b_headers_height:$e.b_headers,b_full_height:$e.b_full,b_full_lag:$d}}')"
 rig_verdict=$(jq -e '.[-1] | .a_full > 0 and (.a_full - .b_full) <= '"$pk_lag" <<< "$series" >/dev/null && echo PASS || echo FAIL)

@@ -64,3 +64,15 @@ it-spec:
   report: [PASS/FAIL with the spec's "Tests:" line, the ref, whether the same spec is one upstream tracks as flaky (say which issue), the run's log path or Actions link, the log A/B against the base's runs (review/logab-runs.sh)]
   status: implemented (review/it-spec.sh; ergo's integration suite is a dependency peeryard calls, not code it carries); use when a PR changes src/it or a multi-node behaviour the rig does not stage (container stop/start under the suite's harness), or to give a flaky upstream spec a second sample on the PR's tree
 
+evidence:
+  question: what does an executed check on the PR's own head show (a compile, one of its specs, a targeted test, a log) that a read can only claim?
+  command: none fixed; the check runs in a clone at the PR head (locally, labelled so, or on a hosted runner) and its output is quoted with the command
+  needs: [the clone; JDK 8 + sbt for a compile or a spec]
+  report: [the command, the head, where it ran (local, or the hosted run's link), the output excerpt, what was not run]
+  status: implemented as a discipline, not a script
+integration:
+  question: which open pull requests carry the same change, and which of them is closest to merging?
+  command: none fixed; each PR's diff against its own merge base compared line by line (git diff -U0), same-blob files (git rev-parse <head>:<path>), git merge-tree against the target branch, review/provenance.sh where it applies
+  needs: [the clone with each pull head fetched]
+  report: [the PRs with heads and bases, the overlap counts, which one compiles and merges, what each adds beyond the others, the PR the others are pointed to]
+  status: implemented as a discipline, not a script

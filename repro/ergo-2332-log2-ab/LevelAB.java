@@ -1,5 +1,5 @@
 // #2332 A/B: the base jar's NipopowAlgos.log2 against the candidate jar's, in one JVM, each jar in its own
-// classloader, over the E-011 boundary rows, 1,000,000 seeded random pairs and the PR's three canary pairs.
+// classloader, over level-boundary rows (as in issue #2556), 1,000,000 seeded random pairs and the PR's three canary pairs.
 // Java 8 source, no dependencies beyond the two jars.
 //
 //   java LevelAB <base.jar> <candidate.jar>
@@ -7,7 +7,7 @@
 // Per row the level is (log2(T) - log2(h)).toInt, as NipopowAlgos.maxLevelOf computes it:
 //   base:      log2(Double) applied to BigInt.doubleValue (the base jar's own method and its own BigInt)
 //   candidate: log2(BigInt) (the candidate jar's own method and its own BigInt)
-//   control:   StrictMath.log in this harness; it must differ from base on some x86_64 boundary row (E-011 class C).
+//   control:   StrictMath.log in this harness; it must differ from base on some x86_64 boundary row (class C of issue #2556).
 // Exit 0 and "VERDICT SAME" when no row differs between base and candidate (level or bits) and the controls hold.
 import java.io.File;
 import java.lang.reflect.*;
@@ -65,7 +65,7 @@ public class LevelAB {
 
   static double ctlLog2(BigInteger x) { return StrictMath.log(x.doubleValue()) / StrictMath.log(2); }
 
-  // Replicas of the candidate's log2 with a different shift threshold (prereg amendment 1, C3). Not the jar.
+  // Replicas of the candidate's log2 with a different shift threshold. Not the jar.
   static final int[] TH = {64, 128, 255, 256, 977};
   static final long[] thLevel = new long[TH.length], thBits = new long[TH.length];
   static final double LN2 = Math.log(2);
@@ -104,7 +104,7 @@ public class LevelAB {
     System.out.println("candidate " + cand.source);
     if (base.bigArg || !cand.bigArg) { System.out.println("VERDICT VOID reflection control: expected base log2(double), candidate log2(BigInt)"); System.exit(3); }
 
-    // 1. boundary rows (E-011 Level.java: six targets, k = 1..40, 4097 doubles around T_f / 2^k)
+    // 1. boundary rows (six targets, k = 1..40, 4097 doubles around T_f / 2^k)
     long[] nbits = {121307964L, 117500483L, 83925251L, 71994085L};
     List<BigInteger> targets = new ArrayList<>();
     for (long n : nbits) targets.add(Q.divide(decodeCompact(n)));

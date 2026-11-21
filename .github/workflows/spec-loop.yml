@@ -83,8 +83,10 @@ jobs:
             fail="$(grep -A1 -m1 '\*\*\* FAILED \*\*\*' "$log" | tail -1 | sed 's/^\[info\] *//' | cut -c1-240 | tr '\t' ' ' || true)"
             printf '%s\t%s\t%s\t%s\t%s\n' "$LABEL" "$i" "$rc" "${tests:-none}" "$fail" | tee -a out/RESULTS.tsv
           done
-          pass=$(awk -F'\t' 'NR>1 && $4=="Tests: succeeded 1, failed 0"' out/RESULTS.tsv | wc -l)
-          fail=$(awk -F'\t' 'NR>1 && $4=="Tests: succeeded 0, failed 1"' out/RESULTS.tsv | wc -l)
+          # a run passed when sbt ran at least one test and none failed; it failed when any test failed (whole specs
+          # report many tests per run, not one: the earlier exact match counted those as "other")
+          pass=$(awk -F'\t' 'NR>1 && $4 ~ /^Tests: succeeded [1-9][0-9]*, failed 0$/' out/RESULTS.tsv | wc -l)
+          fail=$(awk -F'\t' 'NR>1 && $4 ~ /^Tests: succeeded [0-9]+, failed [1-9][0-9]*$/' out/RESULTS.tsv | wc -l)
           other=$(( REPEATS - pass - fail ))
           { echo "**$LABEL: $pass passed, $fail failed, $other other (of $REPEATS)**"; echo '```'; cat out/RESULTS.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

@@ -21,8 +21,8 @@
 #
 # Needs: git, sbt, curl, JDKs 8/11/17/21 (JAVA_HOME_<v>_X64 on a GitHub-hosted runner, else JDK<v>_HOME), network
 # access to github.com and to sbt's repositories. JDK 25 is Temurin 25.0.5.1+2, fetched and checked by sha256 unless
-# JDK25_HOME is set. Two cold sbt builds plus 15 harness runs (a few seconds each). Writes only
-# under WORKDIR (default: a new temporary directory, printed at the start and kept), apart from sbt's own caches.
+# JDK25_HOME is set or the runner has one (JAVA_HOME_25_X64). Two cold sbt builds plus 15 harness runs (a few seconds
+# each); about 9 minutes on a hosted runner. Writes only under WORKDIR (default: a new temporary directory, printed at the start and kept), apart from sbt's own caches.
 # Stop: Ctrl-C at any point; nothing runs in the background and nothing outside WORKDIR needs cleaning up. Quick mode:
 # none. After the builds, the 15 harness runs take a few minutes together.
 set -uo pipefail
@@ -71,6 +71,7 @@ for v in 8 11 17 21 25; do
     flag=(); [[ $mode != default ]] && flag=("$mode")
     out="$WORKDIR/ab-jdk$v$mode.txt"
     "${J[$v]}/bin/java" ${flag[@]+"${flag[@]}"} -cp "$WORKDIR/cls" LevelAB "$BASE_JAR" "$CAND_JAR" > "$out" 2>&1; rc=$?
+    sed 's/^/   | /' "$out"
     line="$(grep '^VERDICT' "$out" || echo "VERDICT MISSING (exit $rc)")"; echo "JDK $v $mode: $line"
     thl="$(grep '^threshold' "$out" || echo "threshold line missing")"; echo "   $thl"
     [[ $thl == *"977 == candidate: ok"* ]] || bad+=("JDK $v $mode: the 977 replica differs from the candidate")

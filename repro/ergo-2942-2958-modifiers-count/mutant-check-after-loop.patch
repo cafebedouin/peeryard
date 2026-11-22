@@ -1,0 +1,11 @@
+--- a/ergo-core/src/main/scala/org/ergoplatform/network/message/ModifiersSpec.scala
++++ b/ergo-core/src/main/scala/org/ergoplatform/network/message/ModifiersSpec.scala
+@@ -73,6 +73,8 @@
+       resMap += (id -> obj)
+       newMsgSize
+     }
++    // mutant for the test check only: the cap checked after every entry was read
++    require(count <= InvSpec.maxInvObjects, s"$count elements in a message while limit is ${InvSpec.maxInvObjects}")
+     ModifiersData(typeId, resMap.result())
+   }
+ }

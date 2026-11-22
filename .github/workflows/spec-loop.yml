@@ -6,6 +6,8 @@
 #
 #   gh workflow run spec-loop.yml -f sha=<ergo commit> -f spec=org.ergoplatform.mining.CandidateGeneratorSpec \
 #     -f filter='ignore cached candidate when forced = true' -f repeats=20 [-f patch_b64="$(base64 -w0 x.patch)"] -f label=pr-stress
+# A spec in a sub-module needs its sbt project (`-f project=avldb`, `ergoCore`, `ergoWallet`): ergo's root project does
+# not aggregate them, so a bare testOnly of such a spec reports `No tests to run` (counted as "other").
 name: spec loop
 run-name: "spec loop ${{ inputs.label }}: ${{ inputs.spec }} x${{ inputs.repeats }} @ ${{ inputs.sha }}"
 on:
@@ -13,6 +15,7 @@ on:
     inputs:
       sha: { description: 'ergoplatform/ergo commit (full sha; a pull request head is fine)', required: true }
       spec: { description: 'spec class for testOnly', required: true }
+      project: { description: 'optional sbt project of the spec (avldb, ergoCore, ergoWallet); empty = the root project', default: '' }
       filter: { description: 'optional test-name substring (ScalaTest -z)', default: '' }
       repeats: { description: 'runs (1-30)', default: '10' }
       patch_b64: { description: 'optional unified diff to apply first, base64', default: '' }
@@ -28,9 +31,10 @@ jobs:
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
       - name: Check the inputs
-        env: { SHA: '${{ inputs.sha }}', SPEC: '${{ inputs.spec }}', REPEATS: '${{ inputs.repeats }}', LABEL: '${{ inputs.label }}' }
+        env: { SHA: '${{ inputs.sha }}', SPEC: '${{ inputs.spec }}', PROJECT: '${{ inputs.project }}', REPEATS: '${{ inputs.repeats }}', LABEL: '${{ inputs.label }}' }
         run: |
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "sha: a full 40-hex commit"; exit 1; }
+          [[ -z "$PROJECT" || "$PROJECT" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]] || { echo "project: an sbt project id"; exit 1; }
           [[ "$SPEC" =~ ^[A-Za-z0-9_.]+$ ]] || { echo "spec: a class name"; exit 1; }
           [[ "$REPEATS" =~ ^([1-9]|[12][0-9]|30)$ ]] || { echo "repeats: 1-30"; exit 1; }
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "label: [A-Za-z0-9._-]{1,40}"; exit 1; }
@@ -71,10 +75,10 @@ jobs:
       - name: Compile the tests once
         run: cd ergo && sbt -Denv=test Test/compile > "$RUNNER_TEMP/compile.log" 2>&1 || { tail -50 "$RUNNER_TEMP/compile.log"; exit 1; }
       - name: Loop
-        env: { SPEC: '${{ inputs.spec }}', FILTER: '${{ inputs.filter }}', REPEATS: '${{ inputs.repeats }}', LABEL: '${{ inputs.label }}' }
+        env: { SPEC: '${{ inputs.spec }}', PROJECT: '${{ inputs.project }}', FILTER: '${{ inputs.filter }}', REPEATS: '${{ inputs.repeats }}', LABEL: '${{ inputs.label }}' }
         run: |
           mkdir -p out; printf 'arm\trun\texit\ttests\tfirst_failure\n' > out/RESULTS.tsv
-          cmd="testOnly $SPEC"; [[ -n "$FILTER" ]] && cmd="$cmd -- -z \"$FILTER\""
+          cmd="${PROJECT:+$PROJECT/}testOnly $SPEC"; [[ -n "$FILTER" ]] && cmd="$cmd -- -z \"$FILTER\""
           echo "command: sbt -Denv=test '$cmd'" | tee -a "$GITHUB_STEP_SUMMARY"
           for i in $(seq 1 "$REPEATS"); do
             log="out/run-$i.log"; rc=0; ( cd ergo && sbt -Denv=test "$cmd" ) > "$log" 2>&1 || rc=$?   # the step runs under bash -e

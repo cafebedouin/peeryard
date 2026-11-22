@@ -91,15 +91,24 @@ say "WITHOUT tree: $(git -C "$WT_WITHOUT" diff --stat "$HEAD_SHA" | tail -1)"
 
 # spec classes from the files themselves (package line + first class/object declaration); a package that differs from
 # the directory (PR 2546's DigestSnapshotNetworkSpecification) would be missed by a path-derived name
-classes=(); for f in "${TESTS[@]}"; do
+# The sbt project a test file belongs to, read from the PR tree's build.sbt (`lazy val <id> = (project in file("<dir>"))`,
+# longest directory prefix wins): ergo's root project does not aggregate avldb, ergo-core or ergo-wallet, so a bare
+# `testOnly` of a spec there finds no tests. Empty for the root project.
+sbt_project(){ local f="$1" best="" bestlen=-1 id dir
+  while read -r id dir; do [[ "$dir" == "." ]] && dir=""
+    if [[ -z "$dir" || "$f" == "$dir/"* ]] && (( ${#dir} > bestlen )); then best="$id"; bestlen=${#dir}; [[ -z "$dir" ]] && best=""; fi
+  done < <(sed -nE 's/^lazy val ([A-Za-z0-9_]+) *= *\(project in file\("([^"]*)"\)\).*/\1 \2/p' "$WT_WITH/build.sbt" 2>/dev/null)
+  echo "$best"; }
+classes=(); projects=(); for f in "${TESTS[@]}"; do
   src="$WT_WITH/$f"; [[ -f "$src" ]] || continue
   if ! grep -qE '^(class|object|final class|abstract class) +[A-Za-z0-9_]+' "$src" && grep -qE '^trait ' "$src"; then say "skipped $f: a trait (test helpers), no spec class to run"; continue; fi
   pkg="$(grep -m1 -oE '^package [A-Za-z0-9_.]+' "$src" | awk '{print $2}')"
   name="$(grep -m1 -oE '^(class|object|final class|abstract class) +[A-Za-z0-9_]+' "$src" | awk '{print $NF}')"
   [[ -n "$name" ]] || { name="$(basename "$f" .scala)"; say "no class declaration found in $f; using the file name"; }
-  classes+=("${pkg:+$pkg.}$name"); done
-run_one(){ local wt="$1" cls="$2" tag="$3"; local log="$OUT/sbt-$tag-${cls##*.}.log"
-  ( cd "$wt" && timeout "$TIMEOUT" "$SBT" -java-home "$J8" -batch "testOnly $cls" ) > "$log" 2>&1; local rc=$?
+  classes+=("${pkg:+$pkg.}$name"); proj="$(sbt_project "$f")"; projects+=("$proj")
+  [[ -n "$proj" ]] && say "$f: sbt project $proj ($proj/testOnly)"; done
+run_one(){ local wt="$1" cls="$2" tag="$3" proj="${4:-}"; local log="$OUT/sbt-$tag-${cls##*.}.log"
+  ( cd "$wt" && timeout "$TIMEOUT" "$SBT" -java-home "$J8" -batch "${proj:+$proj/}testOnly $cls" ) > "$log" 2>&1; local rc=$?
   if grep -qE '\[error\].*(Compilation failed|compilation failed|not found: (value|type)|does not conform|error\] .*\.scala:[0-9]+)' "$log"; then echo compile-error
   elif grep -qE 'Tests: succeeded [0-9]+, failed 0|All tests passed|No tests to run' "$log" && [[ $rc -eq 0 ]]; then
     grep -qE 'No tests (were executed|to run)' "$log" && echo not-found || echo pass
@@ -107,8 +116,8 @@ run_one(){ local wt="$1" cls="$2" tag="$3"; local log="$OUT/sbt-$tag-${cls##*.}.
   else echo fail; fi; }
 G=0; PB=0; FB=0; CE=0; NF=0
 say ""; say "class | with change | without change | verdict"
-for cls in "${classes[@]}"; do
-  w="$(run_one "$WT_WITH" "$cls" with)"; wo="$(run_one "$WT_WITHOUT" "$cls" without)"
+for i in "${!classes[@]}"; do cls="${classes[$i]}"; proj="${projects[$i]}"
+  w="$(run_one "$WT_WITH" "$cls" with "$proj")"; wo="$(run_one "$WT_WITHOUT" "$cls" without "$proj")"
   case "$w/$wo" in
     pass/fail) v="fails-without/passes-with"; G=$((G+1)) ;;
     pass/pass) v="passes-both"; PB=$((PB+1)) ;;

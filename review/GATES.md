@@ -19,7 +19,8 @@ posts and to text an agent prepared for them.
 
 And, before all three: **private routing.** Anything that could be a security problem in a released version
 goes through the project's private channel (`SECURITY.md`), never to a public thread. When unsure, file it as a lead:
-keep it off the thread until it is worked to a fix and its route, public or private, is decided.
+keep it off the thread until it is worked to a fix and its route, public or private, is decided. The route is judged on
+the fix, not the lead: most fixes stand on their own correctness argument and go out publicly (`AGENTS.md`).
 
 A draft that got longer after review is a reason to check for scope drift, not a sign of progress.
 

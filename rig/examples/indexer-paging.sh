@@ -127,6 +127,14 @@ after="$(settle_rec)"
 [[ "$before" == "$after" ]] || { inconclusive "moved during the reads: before $before after $after" SETUP_SYNC; return 0; }
 $setup_ok || { inconclusive "a one-page listing did not hold the expected mempool outputs" SETUP_SYNC; return 0; }
 
+# Summary, printed last so it survives a caller that keeps only the tail of this output: page sizes per node and
+# (direction, unconfirmed) at L = 1, 2, 3; then the node logs' ERROR/WARN messages (ids and numbers masked) that
+# appear on only one of X and Y.
+for n in X Y; do for dir in asc desc; do for unc in true false; do
+  say "SUMMARY $n $dir unconf=$unc $(for L in 1 2 3; do printf 'L%s=%s ' "$L" "$(jq -c 'map(length)' "$OUT/$n-$dir-$unc-L$L-pages.json" 2>/dev/null)"; done)"
+done; done; done
+logsig(){ grep -E ' (ERROR|WARN) ' "$RIG_LOG_DIR/node_$1.log" 2>/dev/null | sed -E 's/^[0-9:.]+ +//; s/\[[^]]*\]//; s/[0-9a-f]{16,}/<h>/g; s/[0-9]+/<n>/g' | sort -u; }
+say "LOGS ERROR/WARN lines: X=$(grep -cE ' (ERROR|WARN) ' "$RIG_LOG_DIR/node_X.log") Y=$(grep -cE ' (ERROR|WARN) ' "$RIG_LOG_DIR/node_Y.log"); only on X: $(comm -23 <(logsig X) <(logsig Y) | paste -sd'|' - | cut -c1-300); only on Y: $(comm -13 <(logsig X) <(logsig Y) | paste -sd'|' - | cut -c1-300)"
 say "verdict: X paging ok ${OK[X]} (confirmed-only ok ${CONF_OK[X]}, pool order ok ${ORD_OK[X]}); Y paging ok ${OK[Y]} (confirmed-only ok ${CONF_OK[Y]}, pool order ok ${ORD_OK[Y]}); listings same $same"
 if [[ ${OK[X]} == true && ${OK[Y]} == true && $same == true && ${ORD_OK[X]} == true && ${ORD_OK[Y]} == true ]]; then rig_verdict=PASS; else rig_verdict=FAIL; fi
 echo "RESULT_JSON $(jq -cn --arg X "$VX" --arg Y "$VY" --argjson xo "${OK[X]}" --argjson yo "${OK[Y]}" --argjson xc "${CONF_OK[X]}" --argjson yc "${CONF_OK[Y]}" \

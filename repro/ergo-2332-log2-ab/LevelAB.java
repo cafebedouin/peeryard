@@ -150,6 +150,15 @@ public class LevelAB {
     classes.put("11,30,25", "A"); classes.put("10,31,25", "B"); classes.put("11,30,24", "C");
     String cls = classes.getOrDefault(triple, "UNRECORDED");
     System.out.println("canary   base=(" + tb.substring(0, tb.length() - 1) + ") candidate=(" + triple + ") class=" + cls);
+    // the same three pairs: exact level (integers: largest k with h*2^k <= t) and StrictMath.log
+    StringBuilder te = new StringBuilder(), ts = new StringBuilder();
+    for (BigInteger[] p : cp) {
+      int k = p[0].bitLength() - p[1].bitLength() + 1;
+      while (k >= 0 && p[1].shiftLeft(k).compareTo(p[0]) > 0) k--;
+      te.append(k).append(',');
+      ts.append((int) (ctlLog2(p[0]) - ctlLog2(p[1]))).append(',');
+    }
+    System.out.println("canary   exact=(" + te.substring(0, te.length() - 1) + ") strictmath=(" + ts.substring(0, ts.length() - 1) + ")");
 
     Double ln2 = cand.ln2();
     double hot = 0; long hotBits = 0; boolean hotSame = true;

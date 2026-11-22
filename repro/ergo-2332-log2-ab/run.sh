@@ -14,9 +14,10 @@
 # replica must equal the candidate on every row.
 #
 # Claim: no row differs between the jars, in level or in the bits of log2, on any runtime or mode; and the canary
-# triple is class A (11,30,25) on JDK 8, class B (10,31,25) on JDK 11, 17 and 21, and one of A, B, C on JDK 25.
-# What counts against it: any row that differs, any runtime whose triple is not as stated, or a 977 replica that differs
-# from the candidate.
+# triple is class A (11,30,25) on JDK 8, class B (10,31,25) on JDK 11, 17 and 21, and one of A, B, C on JDK 25. The same
+# three pairs' exact levels (integer arithmetic) and StrictMath.log levels are both 11,30,24 on every runtime and mode.
+# What counts against it: any row that differs, any runtime whose triple is not as stated, an exact or StrictMath triple
+# other than 11,30,24, or a 977 replica that differs from the candidate. The runner's CPU model is printed.
 # The last line is "VERDICT: as claimed" (exit 0) or "VERDICT: NOT as claimed" (exit 1); exit 2 is a setup failure.
 #
 # Needs: git, sbt, curl, JDKs 8/11/17/21 (JAVA_HOME_<v>_X64 on a GitHub-hosted runner, else JDK<v>_HOME), network
@@ -64,6 +65,7 @@ CAND_JAR="$(bash "$py/diffrun/build.sh" "$MB" "$MB...pr2332-tested" -- src/main 
   || { echo "candidate build failed" >&2; exit 2; }
 sha256sum "$BASE_JAR" "$CAND_JAR"
 
+echo "CPU: $(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -1)"
 mkdir -p "$WORKDIR/cls"; "${J[8]}/bin/javac" -d "$WORKDIR/cls" "$here/LevelAB.java" || exit 2
 bad=()
 for v in 8 11 17 21 25; do
@@ -74,6 +76,8 @@ for v in 8 11 17 21 25; do
     sed 's/^/   | /' "$out"
     line="$(grep '^VERDICT' "$out" || echo "VERDICT MISSING (exit $rc)")"; echo "JDK $v $mode: $line"
     thl="$(grep '^threshold' "$out" || echo "threshold line missing")"; echo "   $thl"
+    cxl="$(grep '^canary   exact' "$out" || echo "canary exact line missing")"; echo "   $cxl"
+    [[ $cxl == "canary   exact=(11,30,24) strictmath=(11,30,24)" ]] || bad+=("JDK $v $mode: exact or StrictMath canary triple is not 11,30,24")
     [[ $thl == *"977 == candidate: ok"* ]] || bad+=("JDK $v $mode: the 977 replica differs from the candidate")
     [[ $line == "VERDICT SAME "* ]] || { bad+=("JDK $v $mode: rows differ or the run failed"); tail -5 "$out"; }
     cls="$(sed -n 's/.* class=\([A-Z]*\) .*/\1/p' <<<"$line")"

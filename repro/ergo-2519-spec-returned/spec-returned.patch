@@ -1,5 +1,5 @@
 diff --git a/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala b/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala
-index 6f524fea5..a8986d609 100644
+index 6f524fea5..806e2c864 100644
 --- a/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala
 +++ b/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala
 @@ -83,7 +83,7 @@ class LDBVersionedStoreSnapshotSpec extends AnyPropSpec with Matchers {
@@ -11,3 +11,12 @@ index 6f524fea5..a8986d609 100644
        processed shouldBe false
        calls.acquisitions shouldBe 1
        calls.closes shouldBe 0
+@@ -115,7 +115,7 @@ class LDBVersionedStoreSnapshotSpec extends AnyPropSpec with Matchers {
+       val primary = new IllegalStateException("processing failed")
+       val secondary = new java.io.IOException("snapshot close failed")
+       calls.closeFailure = Some(secondary)
+-      Try(store.processSnapshot(_ => throw primary)).flatten shouldBe Failure(primary)
++      store.processSnapshot(_ => throw primary) shouldBe Failure(primary)
+       primary.getSuppressed.toSeq shouldBe Seq(secondary)
+       calls.closes shouldBe 1
+     }

@@ -2,10 +2,11 @@
 # Test of a one-line change to the spec of ergoplatform/ergo pull request #2519, head
 # 214b2dcc2b8ae414e741b883513510fe22c3af7c (merge base c1a69f65df2228ce26b7d1c2360b472ef79fc55c).
 #
-# The spec's test "snapshot acquisition failure is returned without processing or closing an absent snapshot" checks
-# `Try(store.processSnapshot(...)).flatten shouldBe Failure(failure)`. Try.apply catches a thrown non-fatal exception,
-# so the check also passes when processSnapshot throws the acquisition failure instead of returning it. The change
-# (spec-returned.patch) calls processSnapshot directly, as the spec's close-failure tests already do.
+# Two of the spec's tests check their result through `Try(store.processSnapshot(...)).flatten shouldBe Failure(...)`:
+# line 86 ("snapshot acquisition failure is returned without processing or closing an absent snapshot") and line 118
+# ("snapshot processing failure remains primary when closing also fails"). Try.apply catches a thrown non-fatal
+# exception, so each check also passes when processSnapshot throws the failure instead of returning it. The change
+# (spec-returned.patch) calls processSnapshot directly on both lines, as the tests at lines 96, 106 and 128 do.
 # A mutant shows the difference: mutation-acquisition-outside-try.patch moves the snapshot acquisition (with its
 # lock release) above the method's outer try, so an acquisition failure is thrown after the lock is released.
 #
@@ -13,8 +14,10 @@
 #   A  head + change                         claim: 15 passed, 0 failed
 #   B  head + mutant, spec unchanged         claim: 15 passed, 0 failed (the unchanged test accepts a thrown failure)
 #   C  head + mutant + change                claim: 14 passed, 1 failed, the failed test being the one changed
-#   D  merge-base LDBVersionedStore.scala + change   claim: 6 passed, 9 failed, the same nine tests that fail
-#      with the unchanged spec on that file (the change keeps the test failing on the old code)
+#   D  merge-base LDBVersionedStore.scala + change   claim: 6 passed, 9 failed
+#   E  merge-base LDBVersionedStore.scala, spec unchanged   claim: 6 passed, 9 failed, the same nine as D
+#      (the change keeps both tests failing on the old code)
+# The Scala version each run compiled for is printed (the build's default).
 # What counts against it: any other count or failed test. Last line "VERDICT: as claimed" (exit 0) or
 # "VERDICT: NOT as claimed" (exit 1); exit 2 is a setup failure.
 #
@@ -74,6 +77,8 @@ arm A spec-returned.patch
 arm B mutation-acquisition-outside-try.patch
 arm C mutation-acquisition-outside-try.patch spec-returned.patch
 arm D mb-prod spec-returned.patch
+arm E mb-prod
+echo "Scala: $(cat "$WORKDIR"/[A-E].log | grep -oE 'target/scala-2\.1[0-9]+/(test-)?classes' | sed -E 's#target/(scala-[0-9.]+)/.*#\1#' | sort | uniq -c | tr '\n' ' ')"
 git -C "$R" worktree remove --force "$T"
 
 bad=()
@@ -83,5 +88,7 @@ grep -q 'Tests: succeeded 14, failed 1' "$WORKDIR/C.log" || bad+=("C: not 14 pas
 cmp -s "$WORKDIR/C.failed" <(echo "$CHANGED") || bad+=("C: the failed test is not the changed one")
 grep -q 'Tests: succeeded 6, failed 9' "$WORKDIR/D.log" || bad+=("D: not 6 passed, 9 failed")
 cmp -s "$WORKDIR/D.failed" <(printf '%s\n' "${NINE[@]}" | sort) || bad+=("D: the failed tests are not the nine")
+grep -q 'Tests: succeeded 6, failed 9' "$WORKDIR/E.log" || bad+=("E: not 6 passed, 9 failed")
+cmp -s "$WORKDIR/E.failed" "$WORKDIR/D.failed" || bad+=("E: the failed tests differ from D's")
 if [[ ${#bad[@]} == 0 ]]; then echo "VERDICT: as claimed"; exit 0; fi
 printf '   %s\n' "${bad[@]}"; echo "VERDICT: NOT as claimed"; exit 1

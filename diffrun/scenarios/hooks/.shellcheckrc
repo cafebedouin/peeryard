@@ -1,0 +1,6 @@
+# shellcheck settings for diffrun/scenarios/hooks/ (this file replaces the repository's .shellcheckrc for this directory).
+#   SC2117  scan-upgrade.sh logs through a function it defines, `su` (scan-upgrade); shellcheck reads each call as the
+#           `su` command. The hook's bytes are what the scan-upgrade scenarios ran, so the note is disabled here
+#           instead of renaming the function.
+# The repository-wide exceptions, kept so a hook added here later is checked the same way:
+disable=SC2117,SC2086,SC2015,SC2016,SC2012,SC2317,SC2034

@@ -1,0 +1,6 @@
+# shellcheck settings for repro/ergo-2332-log2-ab/ (this file replaces the repository's .shellcheckrc for this directory).
+#   SC2004  run.sh:51 indexes an array as `J[$v]`; an index is arithmetic, so the `$` is unnecessary. The script's
+#           bytes are cited by a posted review (repro-script.yml prints their sha256), so the style note is disabled
+#           here instead of editing it. A dotfile, so repro-script.yml's `sha256sum repro/<dir>/*` is unchanged.
+# The repository-wide exceptions, kept so a script added here later is checked the same way:
+disable=SC2004,SC2086,SC2015,SC2016,SC2012,SC2317,SC2034

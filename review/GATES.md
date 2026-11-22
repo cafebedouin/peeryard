@@ -18,7 +18,8 @@ posts and to text an agent prepared for them.
    gate; "review passed" is necessary, never sufficient. `post.sh` asks for it and saves what was posted.
 
 And, before all three: **private routing.** Anything that could be a security problem in a released version
-goes through the project's private channel (`SECURITY.md`), never to a public thread. When unsure, private.
+goes through the project's private channel (`SECURITY.md`), never to a public thread. When unsure, file it as a lead:
+keep it off the thread until it is worked to a fix and its route, public or private, is decided.
 
 A draft that got longer after review is a reason to check for scope drift, not a sign of progress.
 

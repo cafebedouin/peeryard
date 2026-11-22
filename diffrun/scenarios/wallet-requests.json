@@ -1,0 +1,18 @@
+{
+  "name": "wallet-requests",
+  "description": "Valid and malformed wallet requests on two wallet nodes (X on this role's jar, Y on the other's), each holding one token it issued: payments, issuance and burns through /wallet/transaction/generate, box collection through /wallet/boxes/collect, payments through /wallet/payment/send. Per node, every valid request builds the expected outputs and every malformed one (1-, 31-, 33-byte or non-hex token ids, a corrupted address, a missing value, an empty object) is refused; across the jars, the valid requests give the same request-derived outputs. Written for ergoplatform/ergo#2390 (wallet request token ids decoded only at 32 bytes; the transaction request subtype chosen by its fields, with no fallback after a decoding error).",
+  "script": "wallet-requests.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {},
+  "metrics": { "x_valid_ok": "boolean", "y_valid_ok": "boolean", "x_malformed_refused": "boolean", "y_malformed_refused": "boolean",
+               "x_malformed_built": "number", "y_malformed_built": "number", "valid_same": "boolean", "x_pass": "boolean",
+               "x_malformed_sent": "boolean", "y_malformed_sent": "boolean" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1500,
+  "expect": {
+    "base":      { "all": { "key": "x_malformed_refused", "op": "==", "value": false } },
+    "candidate": { "all": { "key": "x_pass", "op": "==", "value": true } }
+  }
+}

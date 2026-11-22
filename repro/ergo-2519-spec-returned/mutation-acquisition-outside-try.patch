@@ -1,0 +1,24 @@
+diff --git a/avldb/src/main/scala/scorex/db/LDBVersionedStore.scala b/avldb/src/main/scala/scorex/db/LDBVersionedStore.scala
+index 607073ba3..e4b90dd36 100644
+--- a/avldb/src/main/scala/scorex/db/LDBVersionedStore.scala
++++ b/avldb/src/main/scala/scorex/db/LDBVersionedStore.scala
+@@ -423,13 +423,13 @@ class LDBVersionedStore(protected val dir: File, val initialKeepVersions: Int)
+     */
+   def processSnapshot[T](logic: SnapshotReadInterface => T): Try[T] = {
+     val ro = new ReadOptions()
++    lock.writeLock().lock()
++    val snapshot = try {
++      db.getSnapshot
++    } finally {
++      lock.writeLock().unlock()
++    }
+     try {
+-      lock.writeLock().lock()
+-      val snapshot = try {
+-        db.getSnapshot
+-      } finally {
+-        lock.writeLock().unlock()
+-      }
+       var processingFailure: Throwable = null
+       try {
+         ro.snapshot(snapshot)

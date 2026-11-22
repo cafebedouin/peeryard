@@ -1,0 +1,13 @@
+diff --git a/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala b/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala
+index 6f524fea5..a8986d609 100644
+--- a/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala
++++ b/avldb/src/test/scala/scorex/db/LDBVersionedStoreSnapshotSpec.scala
+@@ -83,7 +83,7 @@ class LDBVersionedStoreSnapshotSpec extends AnyPropSpec with Matchers {
+       val failure = new DBException("snapshot acquisition failed")
+       calls.acquisitionFailure = Some(failure)
+       var processed = false
+-      Try(store.processSnapshot(_ => processed = true)).flatten shouldBe Failure(failure)
++      store.processSnapshot(_ => processed = true) shouldBe Failure(failure)
+       processed shouldBe false
+       calls.acquisitions shouldBe 1
+       calls.closes shouldBe 0

@@ -1,0 +1,17 @@
+{
+  "name": "indexer-paging",
+  "description": "Paging of /blockchain/box/unspent/byAddress with and without includeUnconfirmed, on two indexing nodes (X on this role's jar, Y on the other's) that hold 5 confirmed and 3 mempool boxes at one address: every page at most `limit` boxes, and consecutive pages equal to the one-page listing with no box twice; the one-page listings equal across the jars. Written for ergoplatform/ergo#2538 (offset and limit applied after confirmed and mempool boxes are combined).",
+  "script": "indexer-paging.sh",
+  "tier": "public",
+  "mixed_jars": true,
+  "env": {},
+  "metrics": { "x_paging_ok": "boolean", "y_paging_ok": "boolean", "x_confirmed_only_ok": "boolean", "y_confirmed_only_ok": "boolean",
+               "listings_same": "boolean", "x_pool_order_ok": "boolean", "y_pool_order_ok": "boolean", "x_pass": "boolean", "mempool_outputs": "number", "pause_tries": "number" },
+  "n": 1,
+  "min_valid_runs": 1,
+  "timeout_seconds": 1500,
+  "expect": {
+    "base":      { "all": { "key": "x_paging_ok", "op": "==", "value": false } },
+    "candidate": { "all": { "key": "x_pass", "op": "==", "value": true } }
+  }
+}

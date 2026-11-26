@@ -20,6 +20,8 @@ err(){ echo "diffrun: ERROR: $*" >&2; exit 2; }
 refuse(){ echo "diffrun: REFUSED: $1" >&2; exit "${2:-4}"; }
 jql(){ jq -L "$LIB" "$@"; }
 usage(){ echo "usage: $0 <manifest.json> --base <jar> --candidate <jar> [-n N] [--out DIR]" >&2; exit 2; }
+# an option given last has no value: `shift 2` would fail without shifting and the loop would never end
+need_value(){ [[ $1 -ge 2 ]] || usage; }
 
 # ---------------- arguments ----------------
 [[ $# -ge 1 ]] || usage
@@ -27,10 +29,10 @@ MAN_ARG="$1"; shift
 BASE=""; CAND=""; N_OVR=""; OUT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --base) BASE="${2:-}"; shift 2 ;;
-    --candidate) CAND="${2:-}"; shift 2 ;;
-    -n) N_OVR="${2:-}"; shift 2 ;;
-    --out) OUT="${2:-}"; shift 2 ;;
+    --base) need_value "$#"; BASE="$2"; shift 2 ;;
+    --candidate) need_value "$#"; CAND="$2"; shift 2 ;;
+    -n) need_value "$#"; N_OVR="$2"; shift 2 ;;
+    --out) need_value "$#"; OUT="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -164,7 +166,7 @@ launch(){ local to="$1" wd="$2" script="$3" j="$4" so="$5" se="$6"
   TIMED_OUT=0; [[ $RC == 124 || ( $RC == 137 && $((T1 - T0)) -ge $to ) ]] && TIMED_OUT=1
 }
 # settle <workdir> <pgid> <run dir> <label>: a surviving process keeps its network namespace alive, so any process
-# left after 20 s is killed and stops the suite (runner ERROR, no verdict).
+# left after DIFFRUN_SETTLE_SECONDS (default 60 s) is killed and stops the suite (runner ERROR, no verdict).
 settle(){ local wd="$1" pg="$2" d="$3" label="$4" end=$((SECONDS + ${DIFFRUN_SETTLE_SECONDS:-60})) left
   while left="$(leftovers "$wd" "$pg")"; [[ -n "$left" && $SECONDS -lt $end ]]; do sleep 1; done
   [[ -z "$left" ]] && return 0

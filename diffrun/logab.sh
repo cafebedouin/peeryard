@@ -7,14 +7,17 @@
 # A/A run (the same jar in both roles) it shows how much two identical arms differ by chance.
 # DIFFRUN_LOG_SOURCE=<node source checkout>: name the code line behind each message (diag/logmap.py).
 set -uo pipefail
-OUT="$(realpath -e "${1:?usage: logab.sh <diffrun out dir>}")"; HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# a bad path is an error (exit 2), not "nothing to compare": an empty OUT would also put the labels file at /
+[[ $# -eq 1 && -n "$1" ]] || { echo "usage: logab.sh <diffrun out dir>" >&2; exit 2; }
+OUT="$(realpath -e -- "$1" 2>/dev/null)" && [[ -d "$OUT" ]] || { echo "logab: not a directory: $1" >&2; exit 2; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIAG="$HERE/../diag"; command -v python3 >/dev/null || { echo "logab: python3 not found; skipped" >&2; exit 0; }
-labels="$OUT/logab_labels.tsv"; : > "$labels"; nb=0; nc=0
+labels="$OUT/logab_labels.tsv"; : > "$labels" || { echo "logab: cannot write $labels" >&2; exit 2; }; nb=0; nc=0
 for d in "$OUT"/runs/*/; do
   d="${d%/}"; role="$(basename "$d")"; role="${role%%-*}"
   [[ $role == base || $role == candidate ]] || continue
   find "$d" \( -name 'node_*.log' -o -name 'node_*.log.gz' \) -print -quit | grep -q . || continue
-  printf '%s\t%s\n' "$d" "$role" >> "$labels"; [[ $role == base ]] && nb=$((nb+1)) || nc=$((nc+1))
+  printf '%s\t%s\n' "$d" "$role" >> "$labels" || { echo "logab: cannot write $labels" >&2; exit 2; }; [[ $role == base ]] && nb=$((nb+1)) || nc=$((nc+1))
 done
 if [[ $nb -eq 0 || $nc -eq 0 ]]; then echo "logab: node logs for $nb base and $nc candidate runs; nothing to compare" >&2; exit 0; fi
 # One run per role separates nothing from chance: every line one run logged and the other did not is "novel", and a

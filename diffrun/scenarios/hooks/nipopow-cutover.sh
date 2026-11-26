@@ -13,7 +13,9 @@
 # The servers keep one UTXO snapshot (storingUtxoSnapshots = 1 in the topology). With two, a joiner that hears the
 # snapshot list before it has synced the headers up to the newer snapshot can settle on the older one, below its
 # proof's suffix, and stay there (seen on the base jar too); that is another question than this scenario's.
-nc_die(){ echo "[nipopow-cutover] INCONCLUSIVE: $1"; echo "RESULT_JSON $(jq -cn --arg r "$1" '{schema_version:1,scenario:"nipopow-cutover",inconclusive:$r}')"; rig_verdict=FAIL; }
+# a setup failure: INCONCLUSIVE with no RESULT_JSON (rig-scenario.sh then exits 3, run.sh classes the run setup);
+# the caller returns from the hook after it
+nc_die(){ echo "[nipopow-cutover] INCONCLUSIVE: $1"; rig_verdict=INCONCLUSIVE; rig_cause=SETUP; }
 role="${DIFFRUN_ROLE:-candidate}"; base_jar="$(readlink -f "${DIFFRUN_BASE_JAR:?}")"; role_jar="$(readlink -f "${PEERYARD_JAR:?}")"
 upgrade="${UPGRADE:-A B}"; [ "$upgrade" = none ] && upgrade=""
 newver=""; [ "$role" = candidate ] && newver="${NEWVER:-6.0.12}"

@@ -54,6 +54,7 @@ def validate_manifest:
         ((keys - ["name", "script", "tier", "env", "metrics", "n", "max_n", "stop_when", "min_valid_runs", "timeout_seconds", "expect", "mixed_jars", "description",
                   "precheck", "precheck_timeout_seconds", "smoke"])
            | select(length > 0) | "unknown top-level fields \(tojson)"),
+        (if has("mixed_jars") and (.mixed_jars | type) != "boolean" then "mixed_jars: must be a boolean (true: the topology puts both jars on one network)" else empty end),
         (if has("smoke") and (.smoke | type) != "boolean" then "smoke: must be a boolean (true marks a one-pair completion check whose verdict is not about the change)" else empty end),
         (if (.name | type) != "string" or (.name | test("^[a-z0-9][a-z0-9-]*$") | not) then "name: required, [a-z0-9-]" else empty end),
         (if (.script | type) != "string" or .script == "" then "script: required string" else empty end),
@@ -98,6 +99,13 @@ def validate_manifest:
                   else check_predicate($m; $m.expect[$r]; "expect.\($r)") end)
          end)
       end ];
+
+# ---- shards pooled into one verdict or one rate ----
+# shard_identity: what must be equal across the verdict.json files pooled together (pool.sh; diffrun/aa_pool.py mirrors
+# it in Python): the same jars (each role's sha256 and expected appVersion) under the same manifest env. A pool across
+# different jars or env would quote one rate for two experiments. pool.sh also requires the same manifest snapshot,
+# same_jar and provenance other than the host.
+def shard_identity: {jars: (.jars // null), env: (.provenance.env // null)};
 
 # ---- one run's RESULT_JSON ----
 def validate_result($m):

@@ -122,7 +122,8 @@ HEAD_SHA="$(git -C "$WT" rev-parse HEAD)"
 
 # ---- cache hit: never overwritten; the re-derived commit must match the entry ----
 if [[ -e "$ENTRY" ]]; then
-  sc="$(ls "$ENTRY"/*.jar.json 2>/dev/null | head -1)"; [[ -n "$sc" ]] || die "cache entry has no sidecar: $ENTRY"
+  # no sidecar: ls exits 2, which under pipefail and -e would end the script here with no message; reach the die
+  sc="$(ls "$ENTRY"/*.jar.json 2>/dev/null | head -1 || true)"; [[ -n "$sc" ]] || die "cache entry has no sidecar: $ENTRY"
   jq -e --arg b "$BASE_SHA" --arg p "$PATCH_SHA" --arg h "$HEAD_SHA" \
      '.source_sha == $b and .patch.sha256 == $p and .build_commit == $h' "$sc" >/dev/null \
     || die "cache entry $ENTRY exists with different metadata (source, patch or commit); not overwriting"

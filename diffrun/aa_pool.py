@@ -4,8 +4,8 @@ boolean or numeric condition, how many VALID runs meet it, with an exact (Cloppe
 
   python3 diffrun/aa_pool.py --when 'switched==false' shard1/verdict.json shard2/verdict.json ...
 
-Every file must be an A/A control (same_jar true) of one scenario; both roles count, since they ran the same jar.
-Standard library only."""
+Every file must be an A/A control (same_jar true) of one scenario, on the same jars under the same manifest env
+(shard_identity below); both roles count, since they ran the same jar. Standard library only."""
 import argparse, json, math, sys
 
 OPS = {"==": lambda a, b: a == b, "!=": lambda a, b: a != b, ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
@@ -35,20 +35,33 @@ def clopper_pearson(k, n, alpha=0.05):
     lower = 0.0 if k == 0 else 1 - solve(lambda q: binom_cdf(n - k, n, q))  # by symmetry: 1 - upper(n-k, n)
     return lower, upper
 
+def shard_identity(v):
+    """What must be equal across the pooled files: mirrors `shard_identity` in diffrun/lib/diffrun.jq (pool.sh uses
+    that one): the whole .jars object (each role's sha256 and expected appVersion) and provenance.env."""
+    return {"jars": v.get("jars"), "env": (v.get("provenance") or {}).get("env")}
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--when", action="append", required=True, help="metric condition, e.g. switched==false")
     ap.add_argument("files", nargs="+")
     a = ap.parse_args()
-    runs, scen = [], set()
+    runs, scen, ident = [], set(), {}
     for f in a.files:
-        v = json.load(open(f))
+        try:   # an unmatched shell glob arrives as its literal pattern: name it, not a traceback
+            with open(f) as fh:
+                v = json.load(fh)
+        except (OSError, ValueError) as e:
+            sys.exit(f"aa_pool: cannot read {f}: {e}")
         if not v.get("same_jar"):
             sys.exit(f"aa_pool: {f} is not an A/A control (same_jar is not true)")
+        ident.setdefault(json.dumps(shard_identity(v), sort_keys=True), []).append(f)
         scen.add(v.get("scenario", {}).get("name") if isinstance(v.get("scenario"), dict) else v.get("scenario"))
         runs += [dict(r, _file=f) for r in v.get("runs", [])]
     if len(scen) != 1:
         sys.exit(f"aa_pool: files mix scenarios: {sorted(map(str, scen))}")
+    if len(ident) != 1:
+        sys.exit("aa_pool: files differ in jars or env (one rate needs one experiment): "
+                 + "; ".join(f"{files} {k}" for k, files in ident.items()))
     valid = [r for r in runs if r.get("class") == "VALID"]
     print(f"scenario {scen.pop()}: {len(a.files)} shard(s), {len(runs)} runs, {len(valid)} VALID "
           f"({len(runs) - len(valid)} not: {sorted({r.get('class') for r in runs if r.get('class') != 'VALID'})})")

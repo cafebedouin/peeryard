@@ -3,6 +3,7 @@ Run: python3 -m unittest tests/health_test.py"""
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,7 +58,7 @@ class Controls(unittest.TestCase):
 
 class NodeLogs(unittest.TestCase):
     def setUp(self):
-        self.d = tempfile.mkdtemp()
+        self.d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, self.d)
 
     def log(self, node, text):
         write(self.d, f"node_{node}.log", text)
@@ -116,7 +117,7 @@ class Watcher(unittest.TestCase):
     """The rig's exit watcher, on real processes: an unplanned exit is recorded, a planned one is not."""
 
     def test_unplanned_and_planned(self):
-        d = tempfile.mkdtemp()
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d)
         a = subprocess.Popen(["sleep", "30"]); b = subprocess.Popen(["sleep", "30"])
         try:
             with open(os.path.join(d, "events.jsonl"), "w") as f:
@@ -141,7 +142,7 @@ class Watcher(unittest.TestCase):
         self.assertEqual(health.analyze(d)["unhealthy"], {"A": ["NODE_EXIT"]})
 
     def test_partial_line_waits(self):
-        d = tempfile.mkdtemp()
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d)
         p = subprocess.Popen(["sleep", "30"])
         try:
             line = json.dumps({"t": 1, "kind": "launch", "node": "A", "pid": p.pid})

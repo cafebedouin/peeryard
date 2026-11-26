@@ -6,21 +6,24 @@
 # so base and candidate are the two directions of a proof-form change.
 # RESULT_JSON carries pass (the hook's PASS under EXPECT), a_served_proof, proof_applied, rejected, penalties, no_peers_logged, c_headers, and both
 # appVersions. rig_verdict is PASS when the served proof is rejected (the reproduction), FAIL otherwise.
+# a setup failure: INCONCLUSIVE with no RESULT_JSON (rig-scenario.sh then exits 3, run.sh classes the run setup);
+# the caller returns from the hook after it
+nm_die(){ echo "[nipopow-mixed] INCONCLUSIVE: $1"; rig_verdict=INCONCLUSIVE; rig_cause=SETUP; }
 echo "[nipopow-mixed] waiting for A's first rewards to mature, then minting boxes"
-wait_balance A 30000000000 300 >/dev/null || { echo "[nipopow-mixed] INCONCLUSIVE: A never had a spendable balance"; echo "RESULT_JSON $(jq -cn '{schema_version:1,scenario:"nipopow-mixed",inconclusive:"no A balance"}')"; rig_verdict=FAIL; return; }
+wait_balance A 30000000000 300 >/dev/null || { nm_die "A never had a spendable balance"; return; }
 h_mint0=$(full_height A); echo "[nipopow-mixed] minting from height $h_mint0: $(mint_boxes A 120 200)"
 h_mint1=$(full_height A); snap=$(( (h_mint1 / 128 + 1) * 128 - 1 )); echo "[nipopow-mixed] minted by height $h_mint1; next snapshot at $snap"
 end=$((SECONDS + 400)); while [ $SECONDS -lt $end ]; do h=$(full_height A); [ "${h:-0}" -ge $((snap + 8)) ] && break; sleep 3; done
 echo "[nipopow-mixed] A at $(full_height A), B at $(full_height B)"
 snap_a=no; grep -q 'dump utxo set snapshot' "$RIG_LOG_DIR/node_A.log" && snap_a=yes
 start_mining A 3s >/dev/null
-gen=$(genesis_id A) || { echo "[nipopow-mixed] INCONCLUSIVE: A gave no well-formed genesis id"; echo "RESULT_JSON $(jq -cn '{schema_version:1,scenario:"nipopow-mixed",inconclusive:"no genesis id"}')"; rig_verdict=FAIL; return; }
+gen=$(genesis_id A) || { nm_die "A gave no well-formed genesis id"; return; }
 CONF_OVR[C]="ergo.chain.genesisId=\"$gen\""
 # proofs built/served by A and B (the serving side has something to offer)
 a_proofs=$(grep -c -i 'nipopow proof' "$RIG_LOG_DIR/node_A.log" 2>/dev/null || true)
 b_proofs=$(grep -c -i 'nipopow proof' "$RIG_LOG_DIR/node_B.log" 2>/dev/null || true)
 echo "[nipopow-mixed] genesis ${gen:0:16}; nipopow-proof log lines A/B: $a_proofs/$b_proofs"
-launch C; wait_up C || { echo "[nipopow-mixed] INCONCLUSIVE: C never came up"; echo "RESULT_JSON $(jq -cn '{schema_version:1,scenario:"nipopow-mixed",inconclusive:"C did not come up"}')"; rig_verdict=FAIL; return; }
+launch C; wait_up C || { nm_die "C never came up"; return; }
 # C asks each reachable peer for a proof once; a cross-version proof is rejected within ~50 ms. Poll a few minutes
 # to let the exchange happen and to confirm C does not recover by another path within the window.
 t0=$SECONDS; end=$((SECONDS + 360))

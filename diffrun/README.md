@@ -285,6 +285,9 @@ Known limits:
   count proves nothing about whether traffic flows; the scenarios measure chain state, not peer lists.
 - `fork-convergence` runs its `main` mode unless a manifest sets `FC_MODE: reverse` in `env` (the mode is `argv[2]`,
   which the contract does not pass, or `FC_MODE`); no shipped manifest sets it, so no A/A rate exists for `reverse`.
+  In reverse mode the result names the scenario `fork-convergence-reverse`, and `run.sh` rejects a result whose
+  `scenario` is not the manifest's `name`: a reverse manifest must be named `fork-convergence-reverse` (its runs are
+  otherwise all INCONCLUSIVE, malformed).
 - `fork-convergence`'s followers L and S run `stateType=utxo` unless `FC_FOLLOWER_STATE: digest` (declared in both
   manifests, so `pr-scenario.yml`'s `scenario_env` can set it): then both are digest nodes and the follower that switches
   rolls back a DigestState. Both, because a digest node needs each block's ADProofs, the switching follower can

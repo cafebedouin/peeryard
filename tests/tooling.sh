@@ -150,6 +150,7 @@ else bad "logab.sh: a candidate-only line is novel" "see $LA/logab_novelty.txt";
 LB="$T/logab-same"; mkrun "$LB/runs/base-1"; mkrun "$LB/runs/candidate-1"; DIFFRUN_LOGAB_MIN=1 bash diffrun/logab.sh "$LB" 2>/dev/null
 if grep -q "new message" "$LB/logab_novelty.txt" 2>/dev/null; then bad "logab.sh: identical logs give no new message" "see $LB/logab_novelty.txt"
 else ok "logab.sh: identical logs give no new message"; fi
+expect_rc "logab.sh: a path that does not resolve -> exit 2 (not 'nothing to compare')" 2 "$(bash diffrun/logab.sh "$T/no-such-out" > /dev/null 2>&1; echo $?)"
 
 # diffrun/aa_pool.py: pooled A/A rates with an exact interval (tests/aa_pool_test.py)
 if python3 tests/aa_pool_test.py > "$T/aa_pool.txt" 2>&1; then ok "aa_pool.py: exact interval and pooling"
@@ -160,6 +161,10 @@ inval=""; for m in $(find diffrun/scenarios -name '*.json' | sort); do
   [[ "$(jq -r 'has("script") and has("expect")' "$m")" == true ]] || continue   # topologies under hooks/ are not manifests
   e="$(jq -L diffrun/lib -c 'include "diffrun"; validate_manifest' "$m")"; [[ "$e" == "[]" ]] || inval+="$m: $e; "; done
 [[ -z "$inval" ]] && ok "diffrun manifests: all validate" || bad "diffrun manifests: all validate" "$inval"
+# a mistyped mixed_jars is rejected: run.sh reads it with `// false`, so "true" would count as true and 1 as false
+for v in '"true"' 1; do jq --argjson v "$v" '.mixed_jars = $v' diffrun/scenarios/interop.json > "$T/mj.json"
+  e="$(jq -L diffrun/lib -c 'include "diffrun"; validate_manifest' "$T/mj.json")"
+  [[ "$e" == *'mixed_jars: must be a boolean'* ]] && ok "validate_manifest: mixed_jars = $v rejected" || bad "validate_manifest: mixed_jars = $v" "$e"; done
 
 # diffrun/pool.sh: one verdict over sharded run.sh outputs (tests/diffrun_pool.sh: synthetic shards, no node)
 if T="$T/pool" bash tests/diffrun_pool.sh > "$T/pool.txt" 2>&1; then ok "pool.sh: $(grep ' ok$' "$T/pool.txt" | grep -vc '^pool tests') cases (verdicts, lost shards, refusals, falsifier)"

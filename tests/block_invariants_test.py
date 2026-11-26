@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -44,15 +45,16 @@ def chain(nodes=("A", "B"), top=8, t0=1000):
 
 
 def run(recs, *args):
-    d = tempfile.mkdtemp(); p = os.path.join(d, "blocks.jsonl")
-    with open(p, "w") as f:
-        for r in recs:
-            f.write(json.dumps(r) + "\n")
-    out = io.StringIO()
-    with redirect_stdout(out):
-        rc = bi.main([p, "--json", os.path.join(d, "inv.json")] + list(args))
-    with open(os.path.join(d, "inv.json")) as f:
-        js = json.load(f)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "blocks.jsonl")
+        with open(p, "w") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = bi.main([p, "--json", os.path.join(d, "inv.json")] + list(args))
+        with open(os.path.join(d, "inv.json")) as f:
+            js = json.load(f)
     return rc, out.getvalue(), js
 
 
@@ -67,7 +69,7 @@ class Clean(unittest.TestCase):
         self.assertIn("INVARIANTS: OK blocks=8 nodes=2 pools=2", out)
 
     def test_no_input(self):
-        d = tempfile.mkdtemp()
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d)
         with redirect_stdout(io.StringIO()):
             self.assertEqual(bi.main([os.path.join(d, "none.jsonl")]), 2)
 
@@ -145,7 +147,7 @@ class Contract(unittest.TestCase):
         self.assertEqual([v["h"] for v in js["violations"]["contract:deliberate-fail.sh"]], [3, 6])
 
     def test_contract_gets_the_block(self):
-        d = tempfile.mkdtemp(); c = os.path.join(d, "two-txs.sh")
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d); c = os.path.join(d, "two-txs.sh")
         with open(c, "w") as f:
             f.write('#!/usr/bin/env bash\nn=$(jq ".blockTransactions.transactions | length")\n'
                     '[[ $n -le 1 ]] || { echo "$BLOCK_NODE $BLOCK_HEIGHT has $n transactions"; exit 1; }\n')

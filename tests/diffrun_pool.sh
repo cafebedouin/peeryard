@@ -92,6 +92,8 @@ for k in 1 2; do shard rbase "$k" "$T/M5.json" 1 0 "$([[ $k == 2 ]] && echo x)";
 refused "shards with different base jars -> refused" rbase 2 1
 for k in 1 2; do shard rcand "$k" "$T/M5.json" 1 0 "" "$([[ $k == 2 ]] && echo '.jars.candidate.jar_sha256="d"' || echo '.x=1')"; done
 refused "shards with different candidate jars -> refused" rcand 2 1
+for k in 1 2; do shard rappv "$k" "$T/M5.json" 1 0 "" "$([[ $k == 2 ]] && echo '.jars.base.expected_app_version="2"' || echo '.x=1')"; done
+refused "shards that differ in a jar's expected appVersion (the whole .jars object) -> refused" rappv 2 1
 for k in 1 2; do shard rsame "$k" "$T/M5.json" 1 0 "" ".same_jar=$([[ $k == 2 ]] && echo true || echo false)"; done
 refused "shards that differ in same_jar -> refused" rsame 2 1
 for k in 1 2; do shard rprov "$k" "$T/M5.json" 1 0 "" ".provenance.runner_rev=\"$k\""; done
@@ -102,6 +104,17 @@ for k in 1 2; do shard rseq "$k" "$T/M5.json" 1 0 "" "$([[ $k == 2 ]] && echo '.
 refused "a shard that ran the sequential rule -> refused" rseq 2 1
 for k in 1 2; do shard rmore "$k" "$T/M5.json" "1 1" "0 0"; done
 refused "a shard with more than K pairs -> refused" rmore 2 1
+
+# ---- output lint: a listed term in the pooled verdict -> exit 5, nothing written (as run.sh) ----
+for k in 1 2; do shard lint "$k" "$T/M5.json" 1 0; done; printf 'pooltest\n' > "$T/terms.txt"
+rc="$(DIFFRUN_TERMS="$T/terms.txt" pool lint 2 1)"
+[[ $rc == 5 && ! -e "$T/lint/pooled/verdict.json" && ! -e "$T/lint/pooled/table.txt" && ! -e "$T/lint/pooled/.pending" ]] \
+  && ok "output lint hit -> exit 5, no verdict.json, no table.txt, no .pending" || bad "output lint refusal" "exit $rc, $(ls -A "$T/lint/pooled" 2>/dev/null)"
+# ---- an error after .pending is made (a run whose metrics jq cannot read) leaves nothing in --out ----
+shard perr 1 "$T/M5.json" 1 0 "" '.runs[0].metrics="x"'
+rc="$(pool perr 1 1)"
+[[ $rc == 2 && -z "$(ls -A "$T/perr/pooled" 2>/dev/null)" ]] && ok "verdict evaluation error -> exit 2, --out left empty (no .pending)" \
+  || bad "verdict evaluation error" "exit $rc, $(ls -A "$T/perr/pooled" 2>/dev/null)"
 
 # ---- falsifier: a vote over shard verdicts gives NULL; pooling the runs gives SUPPORTS ----
 for k in 1 2; do shard fal "$k" "$T/MF.json" "1 0" "0 0"; done

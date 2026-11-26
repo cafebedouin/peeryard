@@ -12,22 +12,25 @@
 # counts against min_valid_runs instead of shrinking the denominator.
 #
 # Refused (exit 2, nothing written): no shard present; shards that differ in the manifest snapshot (sha256), in the
-# base or candidate jar sha256, in same_jar, or in provenance other than the host (the pool is one experiment on one
-# pair of artifacts); a shard that ran the sequential rule or more than K pairs (the K-pairs accounting would be false).
+# jars (each role's sha256 and expected appVersion), in same_jar, or in provenance other than the host (the pool is
+# one experiment on one pair of artifacts); a shard that ran the sequential rule or more than K pairs (the K-pairs
+# accounting would be false).
 # Exit codes as run.sh: 0 verdict written (whatever the verdict); 2 refused or error; 5 output lint hit.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$HERE/lib"
 err(){ echo "pool: REFUSED: $*" >&2; exit 2; }
 usage(){ echo "usage: $0 --out DIR --shards S --pairs K <dir>" >&2; exit 2; }
+# an option given last has no value: `shift 2` would fail without shifting and the loop would never end
+need_value(){ [[ $1 -ge 2 ]] || usage; }
 jql(){ jq -L "$LIB" "$@"; }
 
 OUT=""; S=""; K=""; DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --out) OUT="${2:-}"; shift 2 ;;
-    --shards) S="${2:-}"; shift 2 ;;
-    --pairs) K="${2:-}"; shift 2 ;;
+    --out) need_value "$#"; OUT="$2"; shift 2 ;;
+    --shards) need_value "$#"; S="$2"; shift 2 ;;
+    --pairs) need_value "$#"; K="$2"; shift 2 ;;
     -*) usage ;;
     *) [[ -z "$DIR" ]] || usage; DIR="$1"; shift ;;
   esac
@@ -38,7 +41,8 @@ done
 P=$((S * K))
 
 # ---- shards: present (verdict.json parses, manifest.json exists, >= K pairs) or lost ----
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# PEND (OUT/.pending, set below) goes too: an error after it is made must not leave a half-written verdict in --out
+PEND=""; TMP="$(mktemp -d)"; trap 'rm -rf "$TMP" ${PEND:+"$PEND"}' EXIT
 : > "$TMP/present"; MAN=""
 for ((k = 1; k <= S; k++)); do
   d="$DIR/shard-$k"; v="$d/verdict.json"
@@ -50,13 +54,14 @@ for ((k = 1; k <= S; k++)); do
   most="$(jq '[([.runs[] | select(.role == "base")] | length), ([.runs[] | select(.role == "candidate")] | length)] | max' "$v")"
   [[ $most -le $K ]] || err "shard $k ran $most pairs, --pairs is $K"
   if [[ $pairs -lt $K ]]; then echo "pool: shard $k lost ($pairs of $K pairs)" >&2; continue; fi
-  jq -c --argjson k "$k" --arg msha "$(sha256sum "$d/manifest.json" | cut -d' ' -f1)" \
-    '{k: $k, manifest_sha256: $msha, base: .jars.base.jar_sha256, candidate: .jars.candidate.jar_sha256, same_jar,
+  jql -c --argjson k "$k" --arg msha "$(sha256sum "$d/manifest.json" | cut -d' ' -f1)" \
+    'include "diffrun"; {k: $k, manifest_sha256: $msha, identity: shard_identity, same_jar,
       prov: (.provenance | del(.host)), host: .provenance.host, verdict: .}' "$v" >> "$TMP/present"
   [[ -n "$MAN" ]] || MAN="$d/manifest.json"
 done
 [[ -s "$TMP/present" ]] || err "no shard present (nothing ran); no verdict"
-for f in manifest_sha256 base candidate same_jar prov; do
+# identity: shard_identity in lib/diffrun.jq (the whole .jars object and the manifest env)
+for f in manifest_sha256 identity same_jar prov; do
   n="$(jq -s --arg f "$f" '[.[][$f]] | unique | length' "$TMP/present")"
   [[ $n == 1 ]] || err "shards differ in $f: $(jq -sc --arg f "$f" '[.[] | {k, v: .[$f]}]' "$TMP/present")"
 done

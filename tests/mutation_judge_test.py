@@ -3,6 +3,7 @@ Run: python3 -m unittest tests/mutation_judge_test.py"""
 import gzip
 import io
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -39,7 +40,7 @@ def judge(root):
 
 class Verdicts(unittest.TestCase):
     def setUp(self):
-        self.d = tempfile.mkdtemp()
+        self.d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, self.d)
 
     def test_killed(self):
         for i in (1, 2):

@@ -15,7 +15,7 @@ if [[ "${rig_verdict:-}" != FAIL ]]; then
   if bal=$(wait_balance A "$need" 300); then echo "[txload] A balance $bal nanoERG at height $(full_height A)"
   else echo "[txload] FAIL: A never reached $need nanoERG spendable (balance $bal at height $(full_height A))"; rig_verdict=FAIL; fi
 fi
-sent=0; failed=0; bb=0; total=0
+sent=0; failed=0; bb=0; total=0; unread=""
 if [[ "${rig_verdict:-}" != FAIL ]]; then
   h0=$(full_height A)
   for i in $(seq 1 "$N"); do
@@ -27,10 +27,16 @@ if [[ "${rig_verdict:-}" != FAIL ]]; then
   if bb=$(wait_balance B $((AMT * sent)) 240); then echo "[txload] B confirmed balance $bb nanoERG (expected >= $((AMT * sent)))"
   else echo "[txload] B confirmed balance only $bb nanoERG (expected >= $((AMT * sent)))"; fi
   h1=$(full_height A)
-  for ((h = h0; h <= h1; h++)); do t=$(block_txs A "$h"); total=$((total + t - 1)); done   # minus one coinbase per block
-  echo "[txload] non-coinbase transactions in A's blocks $h0..$h1: $total"
+  # minus one coinbase per block. A block always holds its coinbase, so a read that is not a count of at least 1 (a
+  # timeout's empty body, a missing header) is unknown, read once more and else left out of the count, not taken as 0
+  for ((h = h0; h <= h1; h++)); do t=$(block_txs A "$h"); [[ "$t" =~ ^[1-9][0-9]*$ ]] || { sleep 1; t=$(block_txs A "$h"); }
+    if [[ "$t" =~ ^[1-9][0-9]*$ ]]; then total=$((total + t - 1)); else unread+=" $h"; fi; done
+  echo "[txload] non-coinbase transactions in A's blocks $h0..$h1: $total${unread:+ (blocks not read, left out:$unread)}"
   echo "[txload] same_chain(A,B): $(same_chain A B)"
-  if [[ "${bb:-0}" -ge $((AMT * sent)) && $sent -ge $((N * 9 / 10)) && $total -ge $sent ]]; then rig_verdict=PASS; else rig_verdict=FAIL; fi
+  if [[ "${bb:-0}" -ge $((AMT * sent)) && $sent -ge $((N * 9 / 10)) && $total -ge $sent ]]; then rig_verdict=PASS
+  elif [[ "${bb:-0}" -ge $((AMT * sent)) && $sent -ge $((N * 9 / 10)) && -n "$unread" ]]; then
+    rig_verdict=INCONCLUSIVE; rig_cause=BLOCK_UNREAD; echo "[txload] INCONCLUSIVE: $total of $sent counted, and blocks$unread were not read"
+  else rig_verdict=FAIL; fi
 fi
 echo "[txload] === TXLOAD: ${rig_verdict:-FAIL} (sent=$sent rejected=$failed B-balance=${bb:-0} txs-in-blocks=$total) ==="
 echo "TXLOAD-DONE"

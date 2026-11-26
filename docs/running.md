@@ -36,7 +36,9 @@ You need:
   ergo-node-rust binary (`rig/README.md`); `rig/run-suite.sh` skips what is not set;
 - about 1.5 GB of free RAM for a four-node scenario (`rig/README.md`: about 350 MB per node at `-Xmx512m`).
 
-`rig/preflight.sh` checks the list and fails closed.
+`rig/preflight.sh` checks the first item (namespaces, netem, every command named there, the Java runtime) and the
+free memory, and fails closed on any miss; JDK 8, sbt, `taskset` (a topology node with `cpus`) and `tar` (fixture
+snapshots) it reports without failing; it does not look for the Matrix or Rust node binaries.
 
 **Docker is optional, two ways.**
 - `bash docker/run.sh` builds an image with the whole run card and starts a shell in it at `/peeryard`, with the flags

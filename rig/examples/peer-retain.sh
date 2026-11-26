@@ -114,7 +114,7 @@ peer_retain(){
   # 2. stop A; wait for B's failed dial
   boff=$(wc -l < "$RIG_LOG_DIR/node_B.log"); t_stop=$(date +%s%3N); mark "peer-retain: stop A"; crash A
   end=$((SECONDS + DIALW))
-  while [[ $SECONDS -lt $end ]]; do lines_after B "$boff" | grep -q -F "Failed to connect to /$A_ADDR" && break; sleep 1; done
+  while [[ $SECONDS -lt $end ]]; do grep -q -F "Failed to connect to /$A_ADDR" <(lines_after B "$boff") && break; sleep 1; done
   T0=$(first_ms "Failed to connect to /${A_ADDR//./\\.}" "$(lines_after B "$boff")")
   if [[ -z "$T0" ]]; then touch "$STOPF"; note "check failed-dial: MISSING (no 'Failed to connect to /$A_ADDR' in B's log within ${DIALW}s of the stop)"
     retain_end INCONCLUSIVE "B made no failed dial to A while A was down"; return; fi

@@ -34,6 +34,13 @@ alive(){ local d="$1" pid
 enter(){ # enter <dir> <node> <cmd...>: run inside the rig's user+mount+net namespaces, then the node's netns
   local d="$1" n="$2"; shift 2; local pid; pid="$(cat "$d/rig.pid")"
   nsenter --preserve-credentials -U -m -n -t "$pid" -- ip netns exec "ns_$n" "$@"; }
+# forwarder <pidfile>: the pid in an expose pid file (expose_<node>_<hostport>.pid) is still that forwarder, i.e.
+# its /proc cmdline is `python3 - <hostport> <rigpid> <node> ...` as `expose` starts it. A pid reused by another
+# process after the forwarder died must not be signalled.
+forwarder(){ local pf="$1" pid b n hp; b="$(basename "$pf" .pid)"; b="${b#expose_}"; n="${b%_*}"; hp="${b##*_}"
+  pid="$(cat "$pf" 2>/dev/null)"; [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  local -a a; mapfile -d '' -t a < "/proc/$pid/cmdline" 2>/dev/null || return 1
+  [[ ${#a[@]} -ge 5 && "$(basename "${a[0]}")" == python3* && "${a[1]}" == - && "${a[2]}" == "$hp" && "${a[4]}" == "$n" ]]; }
 nodes_of(){ jq -r '.nodes[].name' "$1/topology.json"; }
 rest_of(){ jq -r --arg n "$2" 'first(.nodes[]|select(.name==$n).rest) // 9052' "$1/topology.json"; }
 
@@ -69,7 +76,7 @@ case "$cmd" in
     n="${1:?usage: devnet.sh logs <node> [name]}"; setdir "${2:-}"; tail -n "${LINES_TO_SHOW:-40}" "$d/out/node_$n.log" ;;
   down)
     setdir "${1:-}"; alive "$d" || { echo "already down"; exit 0; }
-    for pf in "$d"/expose_*.pid; do [[ -f "$pf" ]] && { kill "$(cat "$pf")" 2>/dev/null; rm -f "$pf"; }; done
+    for pf in "$d"/expose_*.pid; do [[ -f "$pf" ]] && { forwarder "$pf" && kill "$(cat "$pf")" 2>/dev/null; rm -f "$pf"; }; done
     touch "$d/stop"; for _ in $(seq 1 60); do alive "$d" || break; sleep 1; done
     alive "$d" && { echo "rig did not stop on request; sending TERM"; kill "$(cat "$d/rig.pid")" 2>/dev/null; sleep 3; }
     alive "$d" && die "still up (pid $(cat "$d/rig.pid"))"; echo "down; chain kept in $d (up again with the same name to continue)" ;;
@@ -81,7 +88,8 @@ case "$cmd" in
     # bytes both ways. No root, no socat; the forwarder dies with `unexpose` or `down`.
     n="${1:?usage: devnet.sh expose <node> <hostport> [name]}"; hp="${2:?hostport}"; setdir "${3:-}"; alive "$d" || die "devnet is down"
     command -v python3 >/dev/null || die "expose needs python3"
-    pf="$d/expose_${n}_${hp}.pid"; [[ -f "$pf" ]] && kill -0 "$(cat "$pf")" 2>/dev/null && die "already exposed (pid $(cat "$pf"))"
+    [[ "$hp" =~ ^[0-9]+$ ]] || die "bad host port '$hp'"
+    pf="$d/expose_${n}_${hp}.pid"; [[ -f "$pf" ]] && forwarder "$pf" && die "already exposed (pid $(cat "$pf"))"
     nohup python3 - "$hp" "$(cat "$d/rig.pid")" "$n" "$(rest_of "$d" "$n")" > "$d/expose_${n}_${hp}.log" 2>&1 <<'PY' &
 import socket, subprocess, sys, threading
 hostport, rigpid, node, rest = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
@@ -95,10 +103,12 @@ print("exposing node %s REST %s on 127.0.0.1:%d" % (node, rest, hostport), flush
 while True:
     conn, _ = srv.accept(); threading.Thread(target=serve, args=(conn,), daemon=True).start()
 PY
-    echo $! > "$pf"; sleep 1; kill -0 "$(cat "$pf")" 2>/dev/null || { cat "$d/expose_${n}_${hp}.log"; die "forwarder exited"; }
+    echo $! > "$pf"; sleep 1; kill -0 "$(cat "$pf")" 2>/dev/null || { cat "$d/expose_${n}_${hp}.log"; rm -f "$pf"; die "forwarder exited"; }
     echo "node $n REST on http://127.0.0.1:$hp (pid $(cat "$pf")); unexpose with: devnet.sh unexpose $n $hp ${3:-}" ;;
   unexpose)
     n="${1:?usage: devnet.sh unexpose <node> <hostport> [name]}"; hp="${2:?hostport}"; setdir "${3:-}"; pf="$d/expose_${n}_${hp}.pid"
-    [[ -f "$pf" ]] || die "not exposed"; kill "$(cat "$pf")" 2>/dev/null; rm -f "$pf"; echo "unexposed $n:$hp" ;;
+    [[ -f "$pf" ]] || die "not exposed"
+    if forwarder "$pf"; then kill "$(cat "$pf")" 2>/dev/null; echo "unexposed $n:$hp"
+    else echo "forwarder for $n:$hp had already exited (pid $(cat "$pf") is not it); pid file removed"; fi; rm -f "$pf" ;;
   *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

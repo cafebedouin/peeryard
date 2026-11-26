@@ -60,7 +60,7 @@ Each prints the value it read on one `[phases]` line. A token clause is true onl
 | `value expr <op> expr` | two expressions over recorded values compare as stated |
 | `synced n` | full height at least 1 and equal to `/info` `headersHeight` |
 | `topology` | `check_topology` returns 0 |
-| `settle` | the last `settle_follow` returned 0 (needs a `settle_follow` line before it) |
+| `settle` | the last `settle_follow` returned 0 (needs an unconditional `settle_follow` line before it) |
 | `fn NAME [args]` | the hook's function NAME returns 0: the escape hatch for one observation of the hook's own. The args are passed as literal words: no `@name` substitution, no evaluation |
 
 ## Records, conditions, actions
@@ -96,7 +96,7 @@ marker `<NAME>: PASS` and a row in `README.md`'s examples table.
 An unknown verb, clause, reader or node, a missing timeout, an `@name` with no earlier unconditional record, an
 expression that is not digits and operators or does not evaluate with every `@name` set to 1, a `fn` with no such
 function, a duplicate label, a label equal to a record name (`pay_sent` included), a `settle` before any
-`settle_follow`, a bad `when`, or a scenario with no `pass` and no `wait` makes the run INCONCLUSIVE with
+unconditional `settle_follow`, a bad `when`, or a scenario with no `pass` and no `wait` makes the run INCONCLUSIVE with
 `rig_cause=BAD_SCENARIO:<line>:<text>` and runs no phase. The message also gives the line in the file.
 `PHASES_CHECK=1` checks only; `tests/phases.sh` checks every hook under `rig/examples/` that sources the library.
 At run time an expression that cannot be evaluated (division by a recorded 0) stops the run INCONCLUSIVE

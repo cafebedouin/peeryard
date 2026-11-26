@@ -4,6 +4,8 @@ Call forms, printed lines and side effects for helpers a hook can use once `rig.
 
 The first group is every helper in `rig/lib/hook_api.sh` that a hook calls. The second is every helper in `rig.sh` that at least three examples call. A `[rig] HARNESS-FAIL <message>` line reports a failed change; the rig keeps the message and the verdict becomes INCONCLUSIVE. The call under each heading is only a shape.
 
+A hook runs under `set -uo pipefail` (`rig.sh`). Test a match in long output as `grep -q <pattern> <(<producer>)`, not `<producer> | grep -q <pattern>`: grep exits at the first match, the producer then dies of SIGPIPE, and the pipeline returns 141, so a match reads as a miss (a node log, or `mempool_ids` on a pool of a few thousand).
+
 ## rest
 
 `rest <node> <path>` runs `curl -s --max-time 4` in the node's namespace and prints the body. The status is curl's.
@@ -48,7 +50,7 @@ Used in: `matrix-pair.sh`, `soak.sh`, `loss.sh`.
 
 ## pruning_check
 
-`pruning_check <pruned> <full> <top> <k>` checks a node that prunes full blocks (`blocksToKeep` `<k>`) after it has settled at height `<top>`. The pruned node must serve none of the full blocks from height 2 to `<top> - 2<k>`, must serve each of the last `<k>`, and must keep every header; the full node must serve the lowest and the highest of the pruned heights. Height 1 is not judged, and neither are the `<k>` heights between: the floor trails the tip by a few heights more than `<k>` (23 blocks kept for `<k>` 20 on v6.0.9), so a height there may still be pruned. A height below `<top> - 2<k>` that is still served is kept for good. Heights still served are re-read every 5 seconds for up to `PRUNE_WAIT_S` (default 90) seconds, since pruning lands a step after a block is applied. It prints one `[prune]` line and returns 0. It sets `PRUNE_OK` (`yes`/`no`), `PRUNE_KEPT` (heights still served below the floor), `PRUNE_MISSING` (recent heights not served) and `PRUNE_NOHDR` (heights whose header is gone).
+`pruning_check <pruned> <full> <top> <k>` checks a node that prunes full blocks (`blocksToKeep` `<k>`) after it has settled at height `<top>`. The pruned node must serve none of the full blocks from height 2 to `<top> - 2<k>`, must serve each of the last `<k>`, and must keep every header; the full node must serve the lowest and the highest of the pruned heights. Height 1 is not judged, and neither are the `<k>` heights between: the floor trails the tip by a few heights more than `<k>` (23 blocks kept for `<k>` 20 on v6.0.9), so a height there may still be pruned. A height below `<top> - 2<k>` that is still served is kept for good. Heights still served are re-read every 5 seconds for up to `PRUNE_WAIT_S` (default 90) seconds, since pruning lands a step after a block is applied. It prints one `[prune]` line and returns 0. A read with no usable answer (curl failed, an empty body as a timeout gives, or not JSON) is neither served nor pruned: that height is re-read the same way (a recent height once), and one still unread goes to `PRUNE_UNREAD`, which keeps `PRUNE_OK` at `no`; a JSON error answer (404 not-found) is a pruned block. It sets `PRUNE_OK` (`yes`/`no`), `PRUNE_KEPT` (heights still served below the floor), `PRUNE_MISSING` (recent heights not served), `PRUNE_NOHDR` (heights whose header is gone) and `PRUNE_UNREAD`.
 
 `pruning_check C A "$ah" 20`
 Used in: `bootstrap-modes.sh` (rig example and diffrun hook).

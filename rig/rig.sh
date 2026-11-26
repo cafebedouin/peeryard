@@ -216,6 +216,14 @@ RIG_LOG_DIR="$(jq -r --arg d "$SCRATCH/out" '.log_dir // $d' "$CFG")"
 mkdir -p "$SCRATCH" "$RIG_LOG_DIR"
 RIG_AFFINITY="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/$$/status)"   # the CPUs this rig may use (a `taskset` around it narrows them)
 mapfile -t NODES < <(jq -r '.nodes[].name' "$CFG")
+# every knownPeers entry must name a node here: conf.sh and known_peer_addrs read IP[<peer>] under set -u, and an
+# unknown name kills that subshell, so it and every later peer of the node would drop out of its config unnoticed
+bad_peer="$(jq -r '[.nodes[].name] as $ns | .nodes[] | .name as $n | (.knownPeers // [])
+  | if type != "array" then [$n, "list", tojson] else .[] | select(type != "string" or (IN($ns[]) | not)) | [$n, "peer", tostring] end
+  | @tsv' "$CFG" | head -1)"
+if [[ -n "$bad_peer" ]]; then IFS=$'\t' read -r bp_node bp_kind bp_val <<< "$bad_peer"
+  if [[ "$bp_kind" == list ]]; then echo "FAIL: knownPeers in node '$bp_node' is not a list: $bp_val"
+  else echo "FAIL: unknown peer '$bp_val' in node '$bp_node' (knownPeers names nodes of this topology)"; fi; exit 2; fi
 # Per-node jar (nodes[].jar, else the top-level jar / PEERYARD_JAR; "${VAR}" expanded from the environment), and a
 # per-node working directory: the node resolves some fallback configs relative to its CWD, so each node gets its
 # own jar's *.conf copies unless the topology names a "runtime_cwd" for all of them.

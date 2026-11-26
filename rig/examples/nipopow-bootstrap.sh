@@ -51,7 +51,9 @@ while [ $SECONDS -lt $end ]; do
   case "$st" in SAME@*) h=${st#SAME@}; h=${h%%:*}; [ "${h:-0}" -ge "$snap" ] && { ok=yes; break; } ;; DIFF@*) break ;; esac
   sleep 10
 done
-hdr5=$(header_at C 5); txs5=$(block_txs C 5); txs5a=$(block_txs A 5)
+# C must not serve block 5: _prune_txs (rig/lib/hook_api.sh) reads a JSON error answer as 0 and a read with no answer
+# (a timeout's empty body) as err, which must not pass for "not served"; no header at 5 is not served either
+hdr5=$(header_at C 5); txs5=$(_prune_txs C 5); [ "$txs5" = nohdr ] && txs5=0; txs5a=$(block_txs A 5)
 grep -i 'snapshot' "$RIG_LOG_DIR/node_C.log" | grep -v 'checking snapshot' | tail -4 | cut -c1-170 | sed 's/^/    C: /'
 snap_c=no; grep -E 'Downloaded or waiting [0-9]+ chunks out of [1-9]' "$RIG_LOG_DIR/node_C.log" >/dev/null && snap_c=yes
 proof=no; grep -q 'Nipopow proof applied' "$RIG_LOG_DIR/node_C.log" && proof=yes
@@ -61,6 +63,6 @@ echo "[nipopow-bootstrap] C header@5=${hdr5:0:12} txs@5: C=$txs5 A=$txs5a; same_
 echo "[nipopow-bootstrap] peers vs topology:"; check_topology || echo "  (mismatch reported)"
 res=FAIL
 # a NiPoPoW-bootstrapped node holds a sparse prefix, so the header at height 5 is normally absent: reported, not judged
-if [ $ok = yes ] && [ "${txs5:-0}" = 0 ] && [ "${txs5a:-0}" -ge 1 ] && [ $snap_c = yes ] && [ $proof = yes ]; then res=PASS; fi
+if [ $ok = yes ] && [ "$txs5" = 0 ] && [ "${txs5a:-0}" -ge 1 ] && [ $snap_c = yes ] && [ $proof = yes ]; then res=PASS; fi
 echo "[nipopow-bootstrap] === NIPOPOW-BOOTSTRAP: $res (state=${st%%:*} proof=$proof hdr5=$([ -n "$hdr5" ] && echo yes || echo no) txs5=$txs5 C-snapshot=$snap_c C-headers=$(rest C /info | jq -r .headersHeight)) ==="; rig_verdict=$res
 echo "NIPOPOW-BOOTSTRAP-DONE"

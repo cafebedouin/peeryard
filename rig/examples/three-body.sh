@@ -1,5 +1,5 @@
 # three-body: three nodes, two close (A-B, 5 ms) and one far (C, 150 ms each way from both, no jitter: netem jitter
-# reorders packets, which TCP reads as loss), each pinned to its own CPUs ("cpus"). One hook, three topologies:
+# reorders packets, which TCP reads as loss), each pinned to its own CPUs ("cpus"). One hook, two topologies:
 #   three-body-close-strong.json    A (cpus 0-1) and B (2-3) mine; C (cpu 4) follows          needs 5 CPUs
 #   three-body-far-strong.json      C (cpus 0-3) mines; A (4) and B (5) follow                 needs 6 CPUs
 # A node on one CPU runs a different collector (JDK 21 picks SerialGC under a 1-CPU mask, G1 under 2): that is part of

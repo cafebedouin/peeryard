@@ -42,7 +42,7 @@ _ph_cl_chk(){ local c=${1:-}; shift
     synced) [[ $# == 1 ]] || { _ph_e "expected synced <node>"; return; }; _ph_node "$1" ;;
     topology) [[ $# == 0 ]] || _ph_e "topology takes no argument" ;;
     settle) [[ $# == 0 ]] || { _ph_e "settle takes no argument"; return; }
-      [[ $_PH_SEEN == *" settle_follow "* ]] || _ph_e "settle with no settle_follow line before it" ;;
+      [[ $_PH_SEEN == *" settle_follow "* ]] || _ph_e "settle with no unconditional settle_follow line before it" ;;
     fn) [[ -n ${1:-} ]] && declare -F "$1" >/dev/null || _ph_e "fn: no function '${1:-}' defined" ;;
   esac; }
 _ph_act_chk(){ local a=$1; shift
@@ -94,7 +94,8 @@ _ph_chk(){ # <line n> <words...>: one line; sets _PH_E and returns 1 on the firs
       _ph_act_chk "$v" "$@" || return
       if [[ $v == pay ]]; then [[ " $_PH_LABELS " != *" pay_sent "* ]] || { _ph_e "pay_sent collides with a label"; return; }
         _PH_RECS+=" pay_sent"; (( cond )) || _PH_KNOWN+=" pay_sent"; fi
-      [[ $v != settle_follow ]] || _PH_SEEN+=" settle_follow " ;;
+      # only an unconditional settle_follow lets `settle` be judged (a skipped one would read as a failed settle)
+      [[ $v != settle_follow ]] || (( cond )) || _PH_SEEN+=" settle_follow " ;;
   esac
   [[ $v != pass && $v != wait ]] || _PH_CLAIMS=$((_PH_CLAIMS + 1))
   (( cond )) && return 0   # _PH_TAIL: the first unconditional action after the last unconditional pass or wait

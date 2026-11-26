@@ -119,24 +119,38 @@ companions_stop_all(){ local f; for f in "$SCRATCH"/companions/*.pid; do [[ -f "
 # tip by a few heights more than K on the release (23 kept for K 20 on v6.0.9, 2026-10-26), so a height in that band
 # may still go. A height below TOP - 2K that is still served is kept for good. Pruning lands a step after a block is
 # applied, so heights still served are re-read for up to
-# PRUNE_WAIT_S (90) seconds; a removed height stays removed, so each pass re-reads only those. Sets PRUNE_OK (yes/no),
-# PRUNE_KEPT (heights still served below the floor), PRUNE_MISSING (recent heights not served) and PRUNE_NOHDR (heights
-# whose header is gone), and prints one line. A served full block carries at least one (coinbase) transaction.
-_prune_txs(){ local id; id=$(header_at "$1" "$2"); [[ -n "$id" ]] || { echo nohdr; return; }; rest "$1" "/blocks/$id" | jq -r '.blockTransactions.transactions | length' 2>/dev/null; }
+# PRUNE_WAIT_S (90) seconds; a removed height stays removed, so each pass re-reads only those. A read with no answer
+# (curl failed, an empty body, not JSON) proves nothing either way: that height is re-read like a served one, and one
+# still unread at the end goes to PRUNE_UNREAD, which keeps PRUNE_OK at no. Sets PRUNE_OK (yes/no), PRUNE_KEPT (heights
+# still served below the floor), PRUNE_MISSING (recent heights not served), PRUNE_NOHDR (heights whose header is gone)
+# and PRUNE_UNREAD, and prints one line. A served full block carries at least one (coinbase) transaction.
+# _prune_txs NODE H prints the transaction count of the full block NODE serves at height H: 0 when the node answers
+# without one (a JSON error answer such as 404 not-found, which is how a pruned block reads), "nohdr" when it has no
+# header at H, "err" when either read got no usable answer (a timeout gives an empty body, which must not read as
+# pruned).
+_prune_txs(){ local b id
+  b=$(rest "$1" "/blocks/at/$2") && [[ -n "$b" ]] || { echo err; return; }
+  id=$(jq -r 'if type == "array" then (.[0] // "") else error("not a list") end' <<< "$b" 2>/dev/null) || { echo err; return; }
+  [[ -n "$id" ]] || { echo nohdr; return; }
+  b=$(rest "$1" "/blocks/$id") && [[ -n "$b" ]] || { echo err; return; }
+  jq -r '.blockTransactions.transactions | if type == "array" then length else 0 end' <<< "$b" 2>/dev/null || echo err; }
 pruning_check(){
-  local c="$1" a="$2" top="$3" k="$4" lo=2 hi keep_lo h n end still a_lo a_hi
-  hi=$((top - 2 * k)); keep_lo=$((top - k + 1)); PRUNE_KEPT=""; PRUNE_MISSING=""; PRUNE_NOHDR=""; PRUNE_OK=no
+  local c="$1" a="$2" top="$3" k="$4" lo=2 hi keep_lo h n end still unread a_lo a_hi
+  hi=$((top - 2 * k)); keep_lo=$((top - k + 1)); PRUNE_KEPT=""; PRUNE_MISSING=""; PRUNE_NOHDR=""; PRUNE_UNREAD=""; PRUNE_OK=no
   a_lo=$(_prune_txs "$a" "$lo"); a_hi=$(_prune_txs "$a" "$hi")
   PRUNE_KEPT=$(seq "$lo" "$hi" | tr '\n' ' '); end=$((SECONDS + ${PRUNE_WAIT_S:-90}))
   while :; do
-    still=""
-    for h in $PRUNE_KEPT; do n=$(_prune_txs "$c" "$h"); if [[ "$n" == nohdr ]]; then PRUNE_NOHDR+=" $h"; elif [[ "${n:-0}" =~ ^[0-9]+$ ]] && (( n >= 1 )); then still+=" $h"; fi; done
-    PRUNE_KEPT="${still# }"
-    [[ -z "$PRUNE_KEPT" || $SECONDS -ge $end ]] && break; sleep 5
+    still=""; unread=""
+    for h in $PRUNE_KEPT $PRUNE_UNREAD; do n=$(_prune_txs "$c" "$h"); case "$n" in
+      nohdr) PRUNE_NOHDR+=" $h" ;; err) unread+=" $h" ;; *) [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )) && still+=" $h" ;; esac; done
+    PRUNE_KEPT="${still# }"; PRUNE_UNREAD="${unread# }"
+    [[ -z "$PRUNE_KEPT$PRUNE_UNREAD" || $SECONDS -ge $end ]] && break; sleep 5
   done
-  for h in $(seq "$keep_lo" "$top"); do n=$(_prune_txs "$c" "$h"); [[ "${n:-0}" =~ ^[0-9]+$ ]] && (( n >= 1 )) || PRUNE_MISSING+=" $h"; done
-  PRUNE_MISSING="${PRUNE_MISSING# }"; PRUNE_NOHDR="${PRUNE_NOHDR# }"
-  echo "[prune] $c (blocksToKeep $k) at $top: $lo..$hi pruned, $keep_lo..$top kept; $a serves $lo:${a_lo:-none} $hi:${a_hi:-none}; $c still serves below the floor: ${PRUNE_KEPT:-none}; lacks recent: ${PRUNE_MISSING:-none}; lacks headers: ${PRUNE_NOHDR:-none}"
-  (( hi >= lo )) && [[ -z "$PRUNE_KEPT$PRUNE_MISSING$PRUNE_NOHDR" && "${a_lo:-0}" =~ ^[0-9]+$ && "${a_hi:-0}" =~ ^[0-9]+$ ]] && (( a_lo >= 1 && a_hi >= 1 )) && PRUNE_OK=yes
+  # a recent height that does not answer gets one more read before it is judged
+  for h in $(seq "$keep_lo" "$top"); do n=$(_prune_txs "$c" "$h"); [[ "$n" == err ]] && { sleep 2; n=$(_prune_txs "$c" "$h"); }
+    if [[ "$n" == err ]]; then PRUNE_UNREAD+=" $h"; elif ! { [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )); }; then PRUNE_MISSING+=" $h"; fi; done
+  PRUNE_MISSING="${PRUNE_MISSING# }"; PRUNE_NOHDR="${PRUNE_NOHDR# }"; PRUNE_UNREAD="${PRUNE_UNREAD# }"
+  echo "[prune] $c (blocksToKeep $k) at $top: $lo..$hi pruned, $keep_lo..$top kept; $a serves $lo:${a_lo:-none} $hi:${a_hi:-none}; $c still serves below the floor: ${PRUNE_KEPT:-none}; lacks recent: ${PRUNE_MISSING:-none}; lacks headers: ${PRUNE_NOHDR:-none}; unread: ${PRUNE_UNREAD:-none}"
+  (( hi >= lo )) && [[ -z "$PRUNE_KEPT$PRUNE_MISSING$PRUNE_NOHDR$PRUNE_UNREAD" && "$a_lo" =~ ^[0-9]+$ && "$a_hi" =~ ^[0-9]+$ ]] && (( a_lo >= 1 && a_hi >= 1 )) && PRUNE_OK=yes
   return 0
 }

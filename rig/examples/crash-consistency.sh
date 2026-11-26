@@ -132,9 +132,9 @@ restart(){ local k=$1 t0 up ok
 restart_report(){ local f1 rec
   f1=$(log_heights "$RS_OFF" "$RE_FULL" | head -1); [ -n "$f1" ] && f1=$(( f1 - 1 )) || f1=-1
   # did the node find its state and history out of step at startup (its own recovery path), as its log says
-  rec=none; tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null | grep -q 'State and history are inconsistent' && rec=inconsistent
-  [ $rec = inconsistent ] && tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null | grep -q 'Recovering state' && rec=inconsistent-recovered-from-headers
-  [ $rec = inconsistent ] && tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null | grep -qE 'Rollback (UtxoState|Digest State) to version' && rec=inconsistent-rolled-back
+  rec=none; grep -q 'State and history are inconsistent' <(tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null) && rec=inconsistent
+  [ $rec = inconsistent ] && grep -q 'Recovering state' <(tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null) && rec=inconsistent-recovered-from-headers
+  [ $rec = inconsistent ] && grep -qE 'Rollback (UtxoState|Digest State) to version' <(tail -c +$(( RS_OFF + 1 )) "$LOG_S" 2>/dev/null) && rec=inconsistent-rolled-back
   cc "restart after kill $RS_K: resumed at full height $f1 (first block applied after the restart, minus one; last applied before the kill: $RS_PF); startup: $rec"
   jq -cn --argjson k "$RS_K" --argjson ok "$RESTART_OK" --argjson up "$RS_UP" --argjson h "$f1" --argjson pf "$RS_PF" --arg rec "$rec" \
     '{restart_after_kill: $k, came_back: $ok, rest_ms: $up, restored_full: $h, full_at_kill: $pf, startup: $rec}' >> "$KILLS_JSONL"; }

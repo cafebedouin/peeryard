@@ -43,10 +43,10 @@ case "$EV" in
   rescan) echo "[wo] rescan: $(wallet S /wallet/rescan '{"fromHeight":0}')" ;;
   rescan-from) echo "[wo] rescan from $((h - 20)): $(wallet S /wallet/rescan "{\"fromHeight\":$((h - 20))}")" ;;
 esac
-echo "[wo] after the event: pending ${WO_PENDING:0:8} in S's pool: $(mempool_ids S | grep -qx "$WO_PENDING" && echo yes || echo no), in R's: $(mempool_ids R | grep -qx "$WO_PENDING" && echo yes || echo no)"
+echo "[wo] after the event: pending ${WO_PENDING:0:8} in S's pool: $(grep -qx "$WO_PENDING" <(mempool_ids S) && echo yes || echo no), in R's: $(grep -qx "$WO_PENDING" <(mempool_ids R) && echo yes || echo no)"
 if [[ "$AT" == pending ]]; then
   WO_IGNORE_MEMPOOL=1 wallet_oracle S R 180
-  echo "[wo] compared before any block: pending ${WO_PENDING:0:8} in S's pool: $(mempool_ids S | grep -qx "$WO_PENDING" && echo yes || echo no)"
+  echo "[wo] compared before any block: pending ${WO_PENDING:0:8} in S's pool: $(grep -qx "$WO_PENDING" <(mempool_ids S) && echo yes || echo no)"
   case "$WO_RESULT" in SAME) rig_verdict=PASS ;; DIFF) rig_verdict=FAIL; rig_cause=WALLET_DIFF ;; *) rig_verdict=INCONCLUSIVE; rig_cause=NOT_SETTLED ;; esac
   wo_end; return 0
 fi

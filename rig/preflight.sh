@@ -5,7 +5,8 @@
 # namespace, where `ip netns` keeps its bind mounts (rig.sh does the same at start); `ip netns exec` inside such a
 # namespace, the way every node, curl and tc call is made (it remounts /sys, which a container's masked /sys paths can
 # refuse); an init as PID 1 when running in a container (orphans are reaped; else <defunct> children survive a run);
-# the commands the rig and devnet.sh call (procps pkill/pgrep/ps, util-linux nsenter/mount among them); the Java
+# the commands the rig and devnet.sh call (procps pkill/pgrep/ps, util-linux nsenter/mount among them, python3, git;
+# taskset and tar are reported but not failed, since only some runs use them); the Java
 # runtime (PEERYARD_JAVA, default `java`) and its version; free memory against [nodes] JVMs (default 4) at
 # about 350 MB each. Prints one line per check and exits 1 on any miss. No node is started; a few seconds.
 set -uo pipefail
@@ -35,7 +36,13 @@ if in_container; then
     *) ok "init as PID 1 (container)" "($p1)" ;;
   esac
 fi
-for c in jq curl unzip ip tc unshare nsenter mount pkill pgrep ps timeout sha256sum realpath; do command -v "$c" >/dev/null && ok "command $c" "($(command -v "$c"))" || miss "command $c" ""; done
+# python3: rig.sh runs diag/health.py, diagnose.py and costs.py on every run, blockwatch and the wire decode too; git:
+# the diffrun and review tools (provenance, builds, PR fetches)
+for c in jq curl unzip ip tc unshare nsenter mount pkill pgrep ps timeout sha256sum realpath python3 git; do command -v "$c" >/dev/null && ok "command $c" "($(command -v "$c"))" || miss "command $c" ""; done
+# needed only by some runs, so reported, not failed: taskset for a topology node with "cpus" (and wire capture
+# pinning), tar for the rig's fixture snapshots (PEERYARD_FIXTURES: fixture_save and the restore at start)
+command -v taskset >/dev/null && ok "command taskset (optional)" "($(command -v taskset))" || ok "command taskset (optional)" "(not found; a topology node with \"cpus\" will not launch)"
+command -v tar >/dev/null && ok "command tar (optional)" "($(command -v tar))" || ok "command tar (optional)" "(not found; PEERYARD_FIXTURES snapshots will fail)"
 j8=""; for c in "${JAVA8_HOME:-}" /usr/lib/jvm/java-8-* /usr/lib/jvm/java-1.8.0* /usr/lib/jvm/temurin-8-* /usr/lib/jvm/zulu8* /usr/lib/jvm/jdk1.8.0* /usr/lib/jvm/openjdk-8*; do [ -n "$c" ] && [ -x "$c/bin/java" ] && { j8="$c"; break; }; done
 if [ -n "$j8" ]; then ok "JDK 8 (candidate builds only)" "($j8)"; else ok "JDK 8 (candidate builds only)" "(not found under /usr/lib/jvm; set JAVA8_HOME before diffrun/build.sh; the rig does not need it)"; fi
 if command -v sbt >/dev/null; then ok "sbt (candidate builds only)" "($(command -v sbt))"; else ok "sbt (candidate builds only)" "(not found; needed by diffrun/build.sh and review/revert-check.sh only)"; fi

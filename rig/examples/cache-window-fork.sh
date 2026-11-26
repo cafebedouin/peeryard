@@ -94,7 +94,7 @@ while [ $SECONDS -lt $end ]; do
   ch=$(hdr_height C); cf=$(full_height C); cb=$(best_hdr C); af=$(full_height A); s=$(same_chain A C | cut -c1-4)
   tn=$(date +%s%3N); ts=$(( (tn - t_heal_ms) / 1000 ))
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$tn" "$ts" "$ch" "$cf" "${cb:0:16}" "$af" "$s" >> "$W/samples.tsv"
-  if [ -z "$switched" ] && tail -n +"$((cl0 + 1))" "$CLOG" | grep -q 'Chain switch:'; then switched=$tn; say "C's log has a chain switch by +$(( tn - t_heal_ms )) ms (C hdr=$ch full=$cf)"; fi
+  if [ -z "$switched" ] && grep -q 'Chain switch:' <(tail -n +"$((cl0 + 1))" "$CLOG"); then switched=$tn; say "C's log has a chain switch by +$(( tn - t_heal_ms )) ms (C hdr=$ch full=$cf)"; fi
   if [ -z "$on_a" ] && [ "$s" = SAME ] && [ "${cf:-0}" -gt "$hc" ] 2>/dev/null; then on_a=$tn; say "C on A's chain above hc at +$(( tn - t_heal_ms )) ms (C full=$cf, A=$af)"; fi
   [ -n "$on_a" ] && [ $(( (tn - on_a) / 1000 )) -ge "$TAIL_S" ] && break
   sleep 2

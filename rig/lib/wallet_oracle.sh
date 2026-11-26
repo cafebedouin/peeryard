@@ -172,7 +172,7 @@ wo_history(){ local s="$1" r="$2" p="$3" m="$4" b i id sent=0 got=0 h end
     for id in "${ids[@]}"; do wo_push "$m" "$id" "$s"; done
     b=$(wait_balance "$p" $((sent * 2000000000)) "${WO_HISTORY_WAIT:-300}"); fi
   if [[ "${b:-0}" -lt $((sent * 2000000000)) || $sent -lt 1 ]]; then
-    WO_WHY="$s -> $p payments: $sent sent, $p balance $b; pools: $s=$(mempool_size "$s") $m=$(mempool_size "$m"); $(for id in "${ids[@]}"; do printf '%s:%s=%s,%s=%s ' "${id:0:8}" "$s" "$(mempool_ids "$s" | grep -qx "$id" && echo pool || echo -)" "$m" "$(mempool_ids "$m" | grep -qx "$id" && echo pool || echo -)"; done)"; return 1; fi
+    WO_WHY="$s -> $p payments: $sent sent, $p balance $b; pools: $s=$(mempool_size "$s") $m=$(mempool_size "$m"); $(for id in "${ids[@]}"; do printf '%s:%s=%s,%s=%s ' "${id:0:8}" "$s" "$(grep -qx "$id" <(mempool_ids "$s") && echo pool || echo -)" "$m" "$(grep -qx "$id" <(mempool_ids "$m") && echo pool || echo -)"; done)"; return 1; fi
   for i in 1 2 3; do id=$(pay "$p" "$s" 500000000); [[ "$id" =~ ^[0-9a-f]{64}$ ]] && got=$((got + 1)) || echo "[wo]   $p -> $s $i rejected: $id"; sleep 1; done
   [[ $got -ge 1 ]] || { WO_WHY="no $p -> $s payment accepted"; return 1; }
   end=$((SECONDS + 120)); while [[ $SECONDS -lt $end && "$(mempool_size "$m")" != 0 ]]; do sleep 2; done
@@ -186,7 +186,7 @@ wo_history(){ local s="$1" r="$2" p="$3" m="$4" b i id sent=0 got=0 h end
 # the miner (it was relaunched, or a relay dropped it) would otherwise wait out the staging window.
 wo_push(){ local m="$1" id="$2" n tx r; shift 2
   [[ -n "$id" ]] || return 0
-  mempool_ids "$m" | grep -qx "$id" && return 0
+  grep -qx "$id" <(mempool_ids "$m") && return 0
   for n in "$@"; do
     # a node without it answers with an error object, so the answer must be the transaction itself
     tx=$(rest "$n" "/transactions/unconfirmed/byTransactionId/$id" | jq -c --arg id "$id" 'select(type == "object" and .id == $id)' 2>/dev/null)
@@ -231,7 +231,7 @@ wo_pending(){ local s="$1" r="$2" p="$3" end
   [[ "$WO_PENDING" =~ ^[0-9a-f]{64}$ ]] || { WO_WHY="pending payment rejected: $WO_PENDING"; return 1; }
   end=$((SECONDS + 30))
   while [[ $SECONDS -lt $end ]]; do
-    mempool_ids "$s" | grep -qx "$WO_PENDING" && mempool_ids "$r" | grep -qx "$WO_PENDING" && { echo "[wo] pending payment ${WO_PENDING:0:8} in $s's and $r's pools"; return 0; }
+    grep -qx "$WO_PENDING" <(mempool_ids "$s") && grep -qx "$WO_PENDING" <(mempool_ids "$r") && { echo "[wo] pending payment ${WO_PENDING:0:8} in $s's and $r's pools"; return 0; }
     sleep 1
   done
   WO_WHY="pending payment ${WO_PENDING:0:8} not in both pools"; return 1; }

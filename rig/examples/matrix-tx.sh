@@ -10,7 +10,7 @@
 N=${MATRIX_TX_N:-5}; AMT=${MATRIX_TX_NANOERG:-100000000}; WAIT=${MATRIX_TX_WAIT_S:-180}; fail=0
 in_ordering(){ local hid; hid=$(header_at "$1" "$2"); [ -n "$hid" ] && rest "$1" "/blocks/$hid" | jq -e --arg t "$3" '[.blockTransactions.transactions[].id] | index($t) != null' >/dev/null 2>&1; }
 # where_in_input <node> <txid>: the id of the input block in <node>'s best input chain that holds <txid>, or nothing
-where_in_input(){ local ib; for ib in $(input_chain_ids "$1"); do input_block_txids "$1" "$ib" | grep -qx "$2" && { echo "$ib"; return; }; done; }
+where_in_input(){ local ib; for ib in $(input_chain_ids "$1"); do grep -qx "$2" <(input_block_txids "$1" "$ib") && { echo "$ib"; return; }; done; }
 echo "[matrix-tx] A=$(rest A /info | jq -r .appVersion) B=$(rest B /info | jq -r .appVersion); waiting for A's reward to mature"
 wait_balance A $((AMT * N + 200000000)) 600 >/dev/null || { echo "[matrix-tx] FAIL: A never had a spendable balance"; rig_verdict=FAIL; return; }
 declare -A TIN_A TIN_B TORD IB; seen_in_a=0; seen_in_b=0
@@ -20,8 +20,8 @@ for i in $(seq 1 "$N"); do
   while [ $SECONDS -lt $end ]; do
     if [ -z "${TIN_A[$id]:-}" ]; then ib=$(where_in_input A "$id"); [ -n "$ib" ] && { TIN_A[$id]=$((SECONDS - t0)); IB[$id]=$ib; }; fi
     # the miner may not list transactions for its own input blocks: look the payment up on B's copy of A's chain too
-    if [ -z "${IB[$id]:-}" ]; then for ib in $(input_chain_ids A); do input_block_txids B "$ib" | grep -qx "$id" && { IB[$id]=$ib; break; }; done; fi
-    if [ -n "${IB[$id]:-}" ] && [ -z "${TIN_B[$id]:-}" ] && input_block_txids B "${IB[$id]}" | grep -qx "$id"; then TIN_B[$id]=$((SECONDS - t0)); fi
+    if [ -z "${IB[$id]:-}" ]; then for ib in $(input_chain_ids A); do grep -qx "$id" <(input_block_txids B "$ib") && { IB[$id]=$ib; break; }; done; fi
+    if [ -n "${IB[$id]:-}" ] && [ -z "${TIN_B[$id]:-}" ] && grep -qx "$id" <(input_block_txids B "${IB[$id]}"); then TIN_B[$id]=$((SECONDS - t0)); fi
     ih=$(wallet B "/wallet/transactionById?id=$id" | jq -r '.inclusionHeight // empty' 2>/dev/null)
     if [ -n "$ih" ] && in_ordering A "$ih" "$id"; then TORD[$id]=$((SECONDS - t0)); break; fi
     # every 5 s: how many of A's current input blocks each node can list transactions for, and which (diagnostic)

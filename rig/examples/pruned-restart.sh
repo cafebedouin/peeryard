@@ -37,23 +37,25 @@ ver(){ rest "$1" /info | jq -r '.appVersion // "null"'; }
 k_of(){ grep -h blocksToKeep "$SCRATCH/conf_$1.conf" | tail -1 | grep -oE '[0-9]+' | tail -1; }
 # the floor the node computes for its best full block at height $1 (FullBlockPruningProcessor.updateBestFullBlock)
 floor_at(){ local h=$(( $1 - K + 1 )); (( h < 1 )) && h=1; (( h > V )) && h=$(( h - h % V )); echo "$h"; }
-# full block served at height $2 by node $1: the transaction count, "nohdr" when the header is gone, 0 when not served
-served(){ local id; id=$(header_at "$1" "$2"); [[ -n "$id" ]] || { echo nohdr; return; }; rest "$1" "/blocks/$id" | jq -r '.blockTransactions.transactions | length // 0' 2>/dev/null || echo 0; }
+# full block served at height $2 by node $1: the transaction count, "nohdr" when the header is gone, 0 when not served,
+# "err" when a read got no answer (a timeout's empty body is not a pruned block; _prune_txs, rig/lib/hook_api.sh)
+served(){ _prune_txs "$1" "$2"; }
 # ranges "a-b c" from a list of heights
 ranges(){ tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | awk 'NR==1{s=$1;p=$1;next} $1==p+1{p=$1;next} {printf "%s ", (s==p?s:s"-"p); s=$1;p=$1} END{if(NR) printf "%s", (s==p?s:s"-"p)}'; }
 # prune_state NODE FLOOR TOP: sets KEPT (served below the floor, after re-reads), MISSING (not served from the floor
-# to TOP) and NOHDR (headers gone), as range lists
+# to TOP), NOHDR (headers gone) and UNREAD (no answer after re-reads), as range lists
 prune_state(){
-  local n="$1" fl="$2" top="$3" h s still list end
+  local n="$1" fl="$2" top="$3" h s still u unread="" list end
   list=$(seq 2 $((fl - 1)) | tr '\n' ' '); NOHDR=""; end=$((SECONDS + PWAIT))
   while :; do
-    still=""
-    for h in $list; do s=$(served "$n" "$h"); if [[ "$s" == nohdr ]]; then NOHDR+=" $h"; elif [[ "${s:-0}" =~ ^[0-9]+$ ]] && (( s >= 1 )); then still+=" $h"; fi; done
-    list="${still# }"; [[ -z "$list" || $SECONDS -ge $end ]] && break; sleep 5
+    still=""; u=""; for h in $list $unread; do s=$(served "$n" "$h"); case "$s" in
+      nohdr) NOHDR+=" $h" ;; err) u+=" $h" ;; *) [[ "$s" =~ ^[0-9]+$ ]] && (( s >= 1 )) && still+=" $h" ;; esac; done
+    list="${still# }"; unread="${u# }"; [[ -z "$list$unread" || $SECONDS -ge $end ]] && break; sleep 5
   done
   KEPT=$(echo "$list" | ranges); MISSING=""
-  for h in $(seq "$fl" "$top"); do s=$(served "$n" "$h"); [[ "${s:-0}" =~ ^[0-9]+$ ]] && (( s >= 1 )) || MISSING+=" $h"; done
-  MISSING=$(echo "$MISSING" | ranges); NOHDR=$(echo "$NOHDR" | ranges)
+  for h in $(seq "$fl" "$top"); do s=$(served "$n" "$h"); [[ "$s" == err ]] && { sleep 2; s=$(served "$n" "$h"); }
+    if [[ "$s" == err ]]; then unread+=" $h"; elif ! { [[ "$s" =~ ^[0-9]+$ ]] && (( s >= 1 )); }; then MISSING+=" $h"; fi; done
+  MISSING=$(echo "$MISSING" | ranges); NOHDR=$(echo "$NOHDR" | ranges); UNREAD=$(echo "$unread" | ranges)
 }
 
 pruned_restart(){
@@ -80,9 +82,9 @@ pruned_restart(){
   [[ "$(same_chain A C | cut -c1-4)" == SAME ]] || { pr_end INCONCLUSIVE "C was not on A's chain at the cut ($(same_chain A C))" NO_SYNC; return; }
 
   # 2. before the restart: C's store is clean below its floor
-  prune_state C "$(floor_at "$hc")" "$hc"; pre="kept below the floor: ${KEPT:-none}; missing: ${MISSING:-none}; headers gone: ${NOHDR:-none}"
+  prune_state C "$(floor_at "$hc")" "$hc"; pre="kept below the floor: ${KEPT:-none}; missing: ${MISSING:-none}; headers gone: ${NOHDR:-none}; unread: ${UNREAD:-none}"
   note "before the restart, C at $hc, floor $(floor_at "$hc"): $pre"
-  [[ -z "$KEPT$MISSING$NOHDR" ]] || { pr_end INCONCLUSIVE "C's store was not clean before the restart ($pre)" PRE_DIRTY; return; }
+  [[ -z "$KEPT$MISSING$NOHDR$UNREAD" ]] || { pr_end INCONCLUSIVE "C's store was not clean before the restart ($pre)" PRE_DIRTY; return; }
 
   # 3. restart C (upgrade: on the candidate jar) while it is cut, so its headers stay marked unsynced
   ver0=$(ver C)
@@ -117,8 +119,8 @@ pruned_restart(){
   # 6. the checks
   for n in D C; do
     prune_state "$n" "$fl" "$top"
-    note "$n at $top, floor $fl: kept below the floor: ${KEPT:-none}; missing from the floor up: ${MISSING:-none}; headers gone: ${NOHDR:-none}"
-    [[ -z "$KEPT$MISSING$NOHDR" ]] || fails+=" $n(kept ${KEPT:-none}; missing ${MISSING:-none}; nohdr ${NOHDR:-none})"
+    note "$n at $top, floor $fl: kept below the floor: ${KEPT:-none}; missing from the floor up: ${MISSING:-none}; headers gone: ${NOHDR:-none}; unread: ${UNREAD:-none}"
+    [[ -z "$KEPT$MISSING$NOHDR$UNREAD" ]] || fails+=" $n(kept ${KEPT:-none}; missing ${MISSING:-none}; nohdr ${NOHDR:-none}; unread ${UNREAD:-none})"
   done
   if [[ -z "$fails" ]]; then pr_end PASS "C ($ver0 -> $ver1) and D prune every height below $fl at $top"
   else pr_end FAIL "still served below the floor or lost:$fails" PRUNE; fi

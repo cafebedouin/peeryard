@@ -137,6 +137,11 @@ chk label-vs-pay-sent INCONCLUSIVE BAD_SCENARIO:2: 0 <<'EOF'
 pass pay_sent: topology
 pay C B 1000
 EOF
+# a settle_follow behind `when` may not run, so it does not satisfy `pass settle` (checked before anything runs)
+chk settle-follow-conditional INCONCLUSIVE BAD_SCENARIO:2: 0 <<'EOF'
+when PHASES_T_UNSET=1 settle_follow A B 5
+pass settled: settle
+EOF
 chk duplicate-label INCONCLUSIVE BAD_SCENARIO:2: 0 <<'EOF'
 pass x: topology
 pass x: synced A

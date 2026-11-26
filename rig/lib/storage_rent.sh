@@ -16,7 +16,7 @@ declare -A FEE_TREE
 fee_tree(){ local n="$1" tx h id t
   [[ -n "${FEE_TREE[$n]:-}" ]] && { echo "${FEE_TREE[$n]}"; return; }
   tx="$(pay "$n" "$n" 100000000)"; [[ "$tx" =~ ^[0-9a-f]{64}$ ]] || { echo "" ; return 1; }
-  for _ in $(seq 1 20); do mempool_ids "$n" | grep -q "$tx" || break; sleep 2; done; sleep 4
+  for _ in $(seq 1 20); do grep -q "$tx" <(mempool_ids "$n") || break; sleep 2; done; sleep 4
   for ((h=$(full_height "$n"); h > $(full_height "$n") - 25 && h > 0; h--)); do
     id="$(header_at "$n" "$h")"; [[ -n "$id" ]] || continue
     t="$(rest "$n" "/blocks/$id" | jq -r --arg tx "$tx" '.blockTransactions.transactions[]?|select(.id==$tx)|.outputs[].ergoTree' 2>/dev/null | grep -v '^0008cd' | head -1)"
@@ -43,7 +43,7 @@ rent_box(){ local n="$1" v="$2" a="${3:-}" assets="${4:-[]}" regs="${5:-}" req r
   r="$(wallet "$n" /wallet/payment/send "$req")"
   tx="$(jq -r 'if type=="string" then . else empty end' <<<"$r" 2>/dev/null)"
   [[ "$tx" =~ ^[0-9a-f]{64}$ ]] || { echo "[rent] rent_box refused: ${r:0:160}" >&2; return 1; }
-  for _ in $(seq 1 80); do mempool_ids "$n" | grep -q "$tx" || break; sleep 1; done
+  for _ in $(seq 1 80); do grep -q "$tx" <(mempool_ids "$n") || break; sleep 1; done
   for _ in $(seq 1 10); do
     r="$(wallet "$n" "/wallet/transactionById?id=$tx" \
       | jq -r --argjson v "$v" --arg t "$t" '.outputs[]?|select(.value==$v and .ergoTree==$t)|"\(.boxId) \(.creationHeight)"' 2>/dev/null | head -1)"
@@ -56,7 +56,7 @@ rent_issue(){ local n="$1" amt="$2" name="$3" r tx
     '{requests: [{address:$a, ergValue:1000000, amount:$m, name:$nm, description:"peeryard storage-rent test token", decimals:0}], fee:1000000}')")"
   tx="$(jq -r 'if type=="string" then . else empty end' <<<"$r" 2>/dev/null)"
   [[ "$tx" =~ ^[0-9a-f]{64}$ ]] || { echo "[rent] rent_issue refused: ${r:0:160}" >&2; return 1; }
-  for _ in $(seq 1 80); do mempool_ids "$n" | grep -q "$tx" || break; sleep 1; done
+  for _ in $(seq 1 80); do grep -q "$tx" <(mempool_ids "$n") || break; sleep 1; done
   for _ in $(seq 1 10); do
     r="$(wallet "$n" "/wallet/transactionById?id=$tx" | jq -r '[.outputs[]?.assets[]?.tokenId][0] // empty' 2>/dev/null)"
     [[ -n "$r" ]] && { echo "$r"; return 0; }; sleep 1
@@ -159,6 +159,7 @@ rent_bot(){ local label="$1" node="$2" bf="$3" lat="${4:-0}" bid="${5:-0}" poll=
   local won="$RIG_LOG_DIR/rent_won" out="$RIG_LOG_DIR/bot_${label}.jsonl" bt; mkdir -p "$won"
   bt="$(tree_of "$node" "$(address "$node")")"   # this bot collects to <node>'s address
   local strat="${RENT_BOT_STRATEGY:-race}"; local tried="$RIG_LOG_DIR/tried_${label}"; mkdir -p "$tried"
+  rm -f "$RIG_LOG_DIR/rent_stop"   # a marker left by an earlier rent_bots_stop would stop this bot at once
   ( while [[ ! -e "$RIG_LOG_DIR/rent_stop" ]]; do
       while read -r box ch val; do
         [[ -n "$box" ]] || continue
@@ -174,7 +175,8 @@ rent_bot(){ local label="$1" node="$2" bf="$3" lat="${4:-0}" bid="${5:-0}" poll=
       done < "$bf"
       sleep "$(awk -v m="$poll" 'BEGIN{printf "%.3f", m/1000}')"
     done ) &
-  RENT_BOT_PID[$label]=$!; echo "[rent] bot $label -> $node latency ${lat}ms bid $bid (pid ${RENT_BOT_PID[$label]})"; }
+  # in BG_PIDS so stop_all (rig.sh) kills the bot before its `wait`, if the hook ends without rent_bots_stop
+  RENT_BOT_PID[$label]=$!; BG_PIDS+=("$!"); echo "[rent] bot $label -> $node latency ${lat}ms bid $bid (pid ${RENT_BOT_PID[$label]})"; }
 # rent_bots_stop: stop all collector bots
 rent_bots_stop(){ : > "$RIG_LOG_DIR/rent_stop"; local l; for l in "${!RENT_BOT_PID[@]}"; do
     kill "${RENT_BOT_PID[$l]}" 2>/dev/null; wait "${RENT_BOT_PID[$l]}" 2>/dev/null; done; echo "[rent] bots stopped"; }

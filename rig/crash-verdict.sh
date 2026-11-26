@@ -25,8 +25,9 @@
 #     "indexer": null | { "line": "INDEXER-DIFF ..." } }
 #
 # Rules, first match wins:
-#   1. INCONCLUSIVE when the staging did not happen: a harness failure, fewer kills done than planned, fewer kills
-#      inside the apply window than min_in_window, or no sample at all.
+#   1. INCONCLUSIVE when the staging did not happen: a harness failure, no reference node (refs empty: every check
+#      below would hold vacuously), fewer kills done than planned, fewer kills inside the apply window than
+#      min_in_window, or no sample at all.
 #   2. REFUSED when the subject does not answer REST in the last sample (the detail says whether it ever answered).
 #   3. DIFF@h when any sample shows the subject and a reference at an equal full height with a different best full
 #      block id or a different state root, or the subject's best full block id differs from a reference's header id
@@ -62,6 +63,7 @@ line="$(jq -r '
       else empty end ) // null;
   ($st.harness_fail // []) as $hf |
   if ($hf | length) > 0 then "INCONCLUSIVE harness: \($hf | join("; "))"
+  elif ($refs | type) != "array" or ($refs | length) == 0 then "INCONCLUSIVE no reference node (refs \($refs | tojson)): nothing to compare the subject with"
   elif ($st.kills_done // 0) < ($st.kills_planned // 0) then "INCONCLUSIVE staging: \($st.kills_done // 0) of \($st.kills_planned) kills done"
   elif ($st.kills_in_window // 0) < ($st.min_in_window // 0) then "INCONCLUSIVE staging: \($st.kills_in_window // 0) kill(s) inside the apply window, \($st.min_in_window) required"
   elif ($o.samples | length) == 0 then "INCONCLUSIVE no sample taken"

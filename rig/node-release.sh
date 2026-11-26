@@ -2,7 +2,8 @@
 # node-release.sh: keep the rig on the current Ergo reference node, and know which local patches still apply.
 #
 #   rig/node-release.sh latest            the newest stable release tag on GitHub (pre-releases skipped), and what is cached
-#   rig/node-release.sh fetch [tag]       download that release's jar into ~/.peeryard/jars/ (sha256 recorded), and point
+#   rig/node-release.sh fetch [tag]       download that release's jar into ~/.peeryard/jars/ (sha256 in SHA256SUMS, the
+#                                         time in fetch.log; a cached jar is checked against SHA256SUMS), and point
 #                                         ~/.peeryard/jars/default.jar at it; rig.sh uses default.jar when no jar is given
 #   rig/node-release.sh jar               print the path of default.jar (for PEERYARD_JAR=$(rig/node-release.sh jar))
 #   rig/node-release.sh patches [tag]     for every entry in rig/patches/manifest.json: whether it still applies at that
@@ -22,8 +23,16 @@ vernum(){ echo "${1#v}" | awk -F. '{printf "%d%03d%03d\n", $1, $2, $3}'; }
 case "${1:-}" in
   latest) t="$(latest_tag)"; echo "latest stable: $t"; d="$(default_tag)"; echo "rig default:   ${d:-none} ($JARS/default.jar)"; for f in "$JARS"/ergo-*.jar; do [[ -e "$f" ]] || continue; echo "cached:        $(basename "$f")"; done ;;
   fetch) t="${2:-$(latest_tag)}"; jar="ergo-${t#v}.jar"
-    if [[ ! -f "$JARS/$jar" ]]; then gh release download "$t" -R "$REPO" -p "$jar" -D "$JARS"; fi
-    sha="$(sha256sum "$JARS/$jar" | cut -c1-64)"; echo "$sha  $jar  $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$JARS/SHA256SUMS"
+    # SHA256SUMS is in `sha256sum -c` form (`<sha256>  <file>`, one line per download, run it from $JARS); the
+    # download time goes to fetch.log. A cached jar is checked against its recorded line instead of recorded again.
+    if [[ ! -f "$JARS/$jar" ]]; then gh release download "$t" -R "$REPO" -p "$jar" -D "$JARS"
+      sha="$(sha256sum "$JARS/$jar" | cut -c1-64)"; echo "$sha  $jar" >> "$JARS/SHA256SUMS"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  $t  $jar  $sha" >> "$JARS/fetch.log"
+    else sha="$(sha256sum "$JARS/$jar" | cut -c1-64)"
+      rec="$(awk -v f="$jar" '$2 == f {s = $1} END {print s}' "$JARS/SHA256SUMS" 2>/dev/null || true)"
+      if [[ -z "$rec" ]]; then echo "note: cached $jar has no line in $JARS/SHA256SUMS (not downloaded by this script); sha256 $sha"
+      elif [[ "$rec" != "$sha" ]]; then echo "cached $jar has sha256 $sha, but SHA256SUMS records $rec: not pointing default.jar at it" >&2; exit 1; fi
+    fi
     ln -sfn "$JARS/$jar" "$JARS/default.jar"; echo "default.jar -> $jar (sha256 $sha)" ;;
   jar) [[ -L "$JARS/default.jar" ]] && readlink "$JARS/default.jar" || { echo "no default jar: run rig/node-release.sh fetch" >&2; exit 1; } ;;
   check) t="$(latest_tag)"; d="$(default_tag)"
@@ -34,11 +43,14 @@ case "${1:-}" in
     jq -c '.[]' "$MANIFEST" | while read -r e; do
       id=$(jq -r .id <<<"$e"); from=$(jq -r .applies_from <<<"$e"); until=$(jq -r '.applies_until // empty' <<<"$e"); up=$(jq -r '.upstream // empty' <<<"$e")
       applies=yes; [[ "$(vernum "$from")" -gt "$v" ]] && applies=no; [[ -n "$until" && "$(vernum "$until")" -le "$v" ]] && applies=no
-      state=""; if [[ "$up" =~ ^(pr|issue)/([0-9]+)$ ]]; then
+      # cleared: a merged PR (a PR closed unmerged did not land), or an issue closed as completed (not "not planned")
+      state=""; cleared=no; if [[ "$up" =~ ^(pr|issue)/([0-9]+)$ ]]; then
         if [[ "${BASH_REMATCH[1]}" == pr ]]; then state="$(gh pr view "${BASH_REMATCH[2]}" -R "$REPO" --json state,mergedAt --jq '.state + (if .mergedAt then " " + .mergedAt[:10] else "" end)' 2>/dev/null || echo unknown)"
-        else state="$(gh issue view "${BASH_REMATCH[2]}" -R "$REPO" --json state,closedAt --jq '.state + (if .closedAt then " " + .closedAt[:10] else "" end)' 2>/dev/null || echo unknown)"; fi; fi
+          [[ "$state" == MERGED* ]] && cleared=yes
+        else state="$(gh issue view "${BASH_REMATCH[2]}" -R "$REPO" --json state,stateReason,closedAt --jq '.state + (if .stateReason and .state == "CLOSED" then " (" + .stateReason + ")" else "" end) + (if .closedAt then " " + .closedAt[:10] else "" end)' 2>/dev/null || echo unknown)"
+          [[ "$state" == CLOSED* && "$state" != *NOT_PLANNED* ]] && cleared=yes; fi; fi
       printf '%-34s applies at %s: %-3s  upstream: %s %s\n' "$id" "$t" "$applies" "${up:-none}" "$state"
-      [[ -n "$up" && "$state" == MERGED* || "$state" == CLOSED* ]] && echo "    -> cleared upstream; check whether $t carries it and retire the entry" || true
+      [[ $cleared == yes ]] && echo "    -> cleared upstream; check whether $t carries it and retire the entry" || true
     done ;;
-  *) sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 2 ;;
+  *) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac

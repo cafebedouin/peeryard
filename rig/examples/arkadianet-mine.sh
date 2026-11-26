@@ -21,7 +21,7 @@ done
 solve_stop B
 # settle: with the solver stopped the heights meet, then compare state roots
 st=LAG; end=$((SECONDS + 60)); while [ $SECONDS -lt $end ]; do st=$(same_state A B); case "$st" in SAME@*|DIFF@*) break ;; esac; sleep 2; done
-acc=$(grep -c -- '-> accepted\|-> {}\|-> "' "$RIG_LOG_DIR/solver_B.log" 2>/dev/null || echo 0)
+acc=$(grep -c -- '-> accepted\|-> {}\|-> "' "$RIG_LOG_DIR/solver_B.log" 2>/dev/null || true); acc=${acc:-0}   # grep -c prints 0 itself on no match
 echo "[arkadianet-mine] solver submissions: $(wc -l < "$RIG_LOG_DIR/solver_B.log" 2>/dev/null || echo 0) (first: $(head -1 "$RIG_LOG_DIR/solver_B.log" 2>/dev/null | cut -c1-100))"
 echo "[arkadianet-mine] B mined to $(full_height B); A at $(full_height A); same_chain=${sc%%:*} same_state=${st%%:*}"
 echo "[arkadianet-mine] peers vs topology:"; check_topology && topo=ok || topo=mismatch

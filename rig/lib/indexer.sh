@@ -20,7 +20,7 @@
 #   /blockchain/transaction/range?limit=1, /transaction/byId/<id>, /transaction/byIndex/<i>, /transaction/range
 #                                                     the same for transactions
 #   /blockchain/token/byId/<id>                       every token id found in a box's assets
-#   /blockchain/box/byTokenId/<id>, /box/unspent/byTokenId/<id>   box ids (+ total) per token
+#   /blockchain/box/byTokenId/<id>, /box/unspent/byTokenId/<id>   box ids (+ total) per token, paged by IDX_PAGE
 #   POST /blockchain/balance                          per address: the confirmed balance (the unconfirmed half is the
 #                                                     node's mempool, not the index, and is left out)
 #   POST /blockchain/transaction/byAddress            per address: transaction ids in the order served, and total
@@ -30,7 +30,7 @@
 # Ranges are never asked past the end: v6.0.7 answers an index beyond the last with 500 (None.get).
 # A request that answers neither 200 nor 404 is listed in the snapshot's "errors" and makes the comparison
 # INCONCLUSIVE (the settle rule, rig/indexer-cmp.sh); a 404 is an answer and is compared as {"status":404}.
-IDX_PAGE=${IDX_PAGE:-2000}   # page size for the per-address listings (the node's cap is 16384)
+IDX_PAGE=${IDX_PAGE:-2000}   # page size for the per-address and per-token listings (the node's cap is 16384)
 
 # _idx_req <node> <dir> <path> [json body]: one GET (or POST with the body); prints the JSON answer on 200,
 # {"status":404} on 404, else {"status":<code>} and appends {path, status} to <dir>/errors.jsonl
@@ -70,8 +70,8 @@ idx_snapshot_global(){ local n="$1" d="$2" nb nt i t
   if [[ $nt -gt 0 ]]; then _idx_req "$n" "$d" "/blockchain/transaction/range?limit=$nt" > "$d/tx_range.json"; else echo '[]' > "$d/tx_range.json"; fi
   for t in $(jq -r '.value.assets[]?.tokenId' "$d/boxes.jsonl" | sort -u); do
     jq -cn --arg t "$t" --argjson info "$(_idx_req "$n" "$d" "/blockchain/token/byId/$t")" \
-      --argjson all "$(_idx_req "$n" "$d" "/blockchain/box/byTokenId/$t?limit=$IDX_PAGE" | jq -c 'if .items then {ids: [.items[].boxId], total} else . end')" \
-      --argjson uns "$(_idx_req "$n" "$d" "/blockchain/box/unspent/byTokenId/$t?limit=$IDX_PAGE" | jq -c 'if type == "array" then [.[].boxId] else . end')" \
+      --argjson all "$(_idx_paged "$n" "$d" "/blockchain/box/byTokenId/$t" "" '.boxId')" \
+      --argjson uns "$(_idx_list "$n" "$d" "/blockchain/box/unspent/byTokenId/$t" "" '.boxId')" \
       '{key: $t, value: {info: $info, boxes: $all, unspent: $uns}}' >> "$d/tokens.jsonl"
   done
   jq -n --slurpfile ih "$d/indexed.json" --slurpfile br "$d/box_range.json" --slurpfile tr "$d/tx_range.json" \
@@ -83,16 +83,33 @@ idx_snapshot_global(){ local n="$1" d="$2" nb nt i t
 
 idx_addresses(){ jq -r '.boxes[]?.address // empty' "$1/global.json" | sort -u; }
 
-# _idx_paged <node> <dir> <path> <address json> <ids jq>: page a {items,total} listing; prints {ids, total}
+# _idx_paged <node> <dir> <path> <address json, or "" for a GET> <ids jq>: page a {items,total} listing; prints
+# {ids, total}, or the first answer that is not a listing. The offset moves by the items actually served (a node may
+# serve fewer than asked), and paging stops at an empty page or once the offset reaches the total; with no numeric
+# total it stops at a short page.
 _idx_paged(){ local n="$1" d="$2" p="$3" a="$4" sel="$5" off=0 r tot ids='[]' got
   while :; do
     r="$(_idx_req "$n" "$d" "$p?offset=$off&limit=$IDX_PAGE" "$a")"
     jq -e 'has("items")' <<< "$r" >/dev/null 2>&1 || { echo "$r"; return; }
     tot="$(jq -r '.total' <<< "$r")"; ids="$(jq -c --argjson acc "$ids" "\$acc + [.items[] | $sel]" <<< "$r")"
-    got="$(jq -r '.items | length' <<< "$r")"; off=$((off + IDX_PAGE))
-    [[ "$got" -lt "$IDX_PAGE" || "$off" -ge "$tot" ]] && break
+    got="$(jq -r '.items | length' <<< "$r")"; off=$((off + got))
+    if [[ "$tot" =~ ^[0-9]+$ ]]; then [[ "$got" -eq 0 || "$off" -ge "$tot" ]] && break
+    else [[ "$got" -lt "$IDX_PAGE" ]] && break; fi
   done
-  jq -cn --argjson ids "$ids" --argjson t "${tot:-0}" '{ids: $ids, total: $t}'; }
+  jq -cn --argjson ids "$ids" --arg t "$tot" '{ids: $ids, total: ($t | tonumber? // null)}'; }
+
+# _idx_list <node> <dir> <path> <address json, or "" for a GET> <item jq>: page a plain-array listing (the unspent
+# box lists: no total; the node slices offset..offset+limit, Segment.retrieveUtxos), asking IDX_PAGE at a time until
+# a short page; prints the array of <item jq> of every item, or the first answer that is not an array.
+_idx_list(){ local n="$1" d="$2" p="$3" a="$4" sel="$5" off=0 r acc='[]' got
+  while :; do
+    r="$(_idx_req "$n" "$d" "$p?offset=$off&limit=$IDX_PAGE" "$a")"
+    jq -e 'type == "array"' <<< "$r" >/dev/null 2>&1 || { echo "$r"; return; }
+    acc="$(jq -c --argjson acc "$acc" "\$acc + [.[] | $sel]" <<< "$r")"
+    got="$(jq -r 'length' <<< "$r")"; off=$((off + got))
+    [[ "$got" -lt "$IDX_PAGE" ]] && break
+  done
+  echo "$acc"; }
 
 idx_snapshot_finish(){ local n="$1" d="$2" af="$3" out="$4" a aj bal txs boxes uns
   : > "$d/addr.jsonl"
@@ -101,8 +118,7 @@ idx_snapshot_finish(){ local n="$1" d="$2" af="$3" out="$4" a aj bal txs boxes u
     bal="$(_idx_req "$n" "$d" /blockchain/balance "$aj" | jq -c 'if has("confirmed") then .confirmed else . end')"
     txs="$(_idx_paged "$n" "$d" /blockchain/transaction/byAddress "$aj" '.id')"
     boxes="$(_idx_paged "$n" "$d" /blockchain/box/byAddress "$aj" '.boxId')"
-    uns="$(_idx_req "$n" "$d" "/blockchain/box/unspent/byAddress?limit=$IDX_PAGE" "$aj" \
-      | jq -c 'if type == "array" then [.[] | {boxId, value, assets, globalIndex, inclusionHeight}] else . end')"
+    uns="$(_idx_list "$n" "$d" /blockchain/box/unspent/byAddress "$aj" '{boxId, value, assets, globalIndex, inclusionHeight}')"
     jq -cn --arg a "$a" --argjson b "$bal" --argjson t "$txs" --argjson x "$boxes" --argjson u "$uns" \
       '{key: $a, value: {balance: $b, txs: $t, boxes: $x, unspent: $u}}' >> "$d/addr.jsonl"
   done < "$af"

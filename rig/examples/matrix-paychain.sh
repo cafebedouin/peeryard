@@ -49,7 +49,15 @@ scan(){ local h hid t; : > "$CONF_LOG"; CONF=()
     for t in $(rest B "/blocks/$hid" | jq -r '.blockTransactions.transactions[].id' 2>/dev/null); do
       [[ -n "${SEEN[$t]:-}" ]] && { CONF[$t]=$h; printf '{"id":"%s","height":%s}\n' "$t" "$h" >> "$CONF_LOG"; }; done; done; }
 while :; do scan; [[ ${#CONF[@]} -ge ${#IDS[@]} || $SECONDS -ge $end ]] && break; sleep 10; done
-mempool_ids A > "$RIG_LOG_DIR/a_pool_end.txt"
+# A's pool at the end. mempool_ids prints nothing for a failed read as for an empty pool, so read the answer once and
+# check it is a list: a failed read writes a_pool_end.err, which diag/matrix_paychain.py counts as pool_unknown
+pool_raw="$(rest A "/transactions/unconfirmed?limit=10000")"
+if jq -e 'type == "array"' > /dev/null 2>&1 <<< "$pool_raw"; then
+  jq -r '.[].id' <<< "$pool_raw" > "$RIG_LOG_DIR/a_pool_end.txt"
+else
+  : > "$RIG_LOG_DIR/a_pool_end.txt"; echo "pool read failed: ${pool_raw:0:200}" > "$RIG_LOG_DIR/a_pool_end.err"
+  echo "[paychain] A's pool at the end could not be read; unconfirmed payments are counted as pool_unknown"
+fi
 # dependent / lost, from the recorded inputs and outputs (diag/matrix_paychain.py)
 PC="$(dirname "$(readlink -f "$HOOK")")/../../diag/matrix_paychain.py"
 line=$(python3 "$PC" "$RIG_LOG_DIR") || line="classification failed"

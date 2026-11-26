@@ -33,7 +33,7 @@ COLLECT=true; EXPECT=claims; NAME=STORAGE-RENT-2598
 if [ "${SR2598_CONTROL:-}" = off ]; then COLLECT=false; EXPECT=none; NAME="STORAGE-RENT-2598 CONTROL"; fi
 if [ "${DIFFRUN_ROLE:-}" = base ]; then EXPECT=none; NAME="STORAGE-RENT-2598 (diffrun base)"; fi
 inconclusive(){ echo "$NAME: INCONCLUSIVE ($*)"; rig_verdict=INCONCLUSIVE; }
-CAN=true; unzip -p "${NODE_JAR[C]}" application.conf 2>/dev/null | grep -q 'storageRentCollection' || CAN=false
+CAN=true; grep -q storageRentCollection <(unzip -p "${NODE_JAR[C]}" application.conf 2>/dev/null) || CAN=false
 if [ "$CAN" = false ] && [ "$EXPECT" = claims ]; then
   if [ -n "${DIFFRUN_ROLE:-}" ]; then EXPECT=none; NAME="STORAGE-RENT-2598 (diffrun $DIFFRUN_ROLE, C's jar cannot collect)"
   else inconclusive "C's jar $(basename "${NODE_JAR[C]}") has no storageRentCollection setting: it cannot collect"; return 0; fi

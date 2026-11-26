@@ -16,6 +16,6 @@ if [[ -z "$ww_steps" ]]; then
   ww_steps=$(ww_preset_steps "${WW_PRESET:-full}") || { echo "[wallet-workload] INCONCLUSIVE: unknown WW_PRESET '${WW_PRESET:-}' (full | aa | posctl | conflict | ahead)"; rig_verdict=INCONCLUSIVE; return 0; }
   [[ "${WW_PRESET:-full}" == posctl ]] && WW_CONTROL=positive
 fi
-if ww_expand "$ww_steps" | grep -q '^BAD:'; then echo "[wallet-workload] INCONCLUSIVE: bad step list '$ww_steps'"; rig_verdict=INCONCLUSIVE; return 0; fi
+if grep -q '^BAD:' <(ww_expand "$ww_steps"); then echo "[wallet-workload] INCONCLUSIVE: bad step list '$ww_steps'"; rig_verdict=INCONCLUSIVE; return 0; fi
 ww_run "$ww_steps"
 echo "WALLET-WORKLOAD-DONE"

@@ -67,6 +67,20 @@ submit_all(){ local n="$1" line r acc=0 rej=0
   done < "$2"
   echo "$acc $rej"; }
 
+# ---- prerequisite: C's jar writes the two log lines the measurement reads ----
+# "Chain switch:" is the node's own line (ergo release branches from v6.0.9; absent from the v6.0.8 release) and
+# ROLLBACK-TXS comes from patches/test/cleanup-rollback-logging.patch (applies to v6.0.11). Without either, the run
+# would stage for most of an hour and end NO_SWITCH or NO_ROLLBACK_LINE, so check C's jar first, from its class strings.
+# grep reads through <(...), not a pipe: grep -q stops at the first match, unzip then dies of SIGPIPE, and under
+# pipefail (rig.sh) the pipeline would read as no match
+rim_jar_has(){ grep -a -q -F "$2" <(unzip -p "$1" 'org/ergoplatform/nodeView/ErgoNodeViewHolder*.class' 2>/dev/null); }
+if [[ "${KIND[C]:-jvm}" == jvm ]]; then
+  missing=""
+  rim_jar_has "${NODE_JAR[C]}" 'Chain switch:' || missing+=" the node's 'Chain switch:' line (ergo v6.0.9 or later)"
+  rim_jar_has "${NODE_JAR[C]}" 'ROLLBACK-TXS' || missing+="${missing:+ and} ROLLBACK-TXS (patches/test/cleanup-rollback-logging.patch)"
+  [[ -z "$missing" ]] || { rim_inconclusive NEEDS_INSTRUMENTED_JAR "C's jar ($(basename "${NODE_JAR[C]}")) does not log$missing"; return 0; }
+fi
+
 # ---- prefix ----
 say "K=$K V=$V fee=$FEE prefix>=$PREFIX_H fork_poll=$FPOLL; appVersion C=$(rest C /info | jq -r .appVersion) A=$(rest A /info | jq -r .appVersion)"
 need=$((K * V + 2000000000))
@@ -194,8 +208,9 @@ while [ $SECONDS -lt $end ]; do
   [ "$p1" -gt "$max1" ] && max1=$p1
   # the switch is taken from C's own log line, not from /info: /info shows the new best block a moment before the
   # view holder installs the updated pool, so a sample in between reads the old pool. A sample counts as after the
-  # switch only if it started after the line was seen.
-  if [ -z "$switched" ] && tail -n +"$((cl0 + 1))" "$CLOG" | grep -q 'Chain switch:'; then switched=$tn; say "C's log has its chain switch by +$(( tn - t_heal_ms )) ms (this sample: pool $p, tx1 pooled $p1, not counted)"
+  # switch only if it started after the line was seen. grep reads the log through <(...), not a pipe: under pipefail
+  # (rig.sh) `tail | grep -q` returns 141 once much log follows the match, and the switch would read as missed.
+  if [ -z "$switched" ] && grep -q 'Chain switch:' <(tail -n +"$((cl0 + 1))" "$CLOG"); then switched=$tn; say "C's log has its chain switch by +$(( tn - t_heal_ms )) ms (this sample: pool $p, tx1 pooled $p1, not counted)"
   elif [ -n "$switched" ] && [ -z "$t_clear" ] && [ "$p1" = 0 ]; then t_clear=$tn; say "no tx1 pooled at +$(( tn - t_heal_ms )) ms (max seen $max1), pool $p"; fi
   [ -n "$t_clear" ] && [ $(( (tn - t_clear) / 1000 )) -ge "$TAIL_S" ] && break
   sleep 1

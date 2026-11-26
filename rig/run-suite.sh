@@ -11,6 +11,8 @@
 #   arkadianet       PEERYARD_ARKADIANET_BIN
 #   arkadianet-magic PEERYARD_ARKADIANET_MAGIC_BIN (a build that accepts the magic override; defaults to the above)
 #   ergo-node-rust   PEERYARD_ERGO_NODE_RUST_BIN
+#   instrumented     PEERYARD_INSTRUMENTED_JAR  a node jar with patches/test/cleanup-rollback-logging.patch (v6.0.11);
+#                    the example then runs on it in place of PEERYARD_JAR (reorg-invalid-mempool)
 # PASS needs the marker and rig.sh's exit status 0 (a harness failure makes rig.sh exit 3).
 # Exit status: 0 when every example that ran passed, 1 otherwise.
 set -uo pipefail
@@ -26,7 +28,8 @@ done
 artifact(){ case "$1" in
   release) echo "${PEERYARD_JAR_RELEASE:-}" ;; matrix) echo "${PEERYARD_MATRIX_JAR:-}" ;;
   arkadianet) echo "${PEERYARD_ARKADIANET_BIN:-}" ;; arkadianet-magic) echo "${PEERYARD_ARKADIANET_MAGIC_BIN:-}" ;;
-  ergo-node-rust) echo "${PEERYARD_ERGO_NODE_RUST_BIN:-}" ;; *) echo "" ;; esac; }
+  ergo-node-rust) echo "${PEERYARD_ERGO_NODE_RUST_BIN:-}" ;; instrumented) echo "${PEERYARD_INSTRUMENTED_JAR:-}" ;;
+  *) echo "" ;; esac; }
 # rig/examples/experimental.txt: examples whose FAIL is reported but not counted (a documented reason, and a pass rate
 # below 100% on some hosts where one is measured; rig/README.md says which and why). They still run, and a PASS is still a PASS.
 experimental="$(grep -vE '^#|^$' "$HERE/examples/experimental.txt" 2>/dev/null | tr '\n' ' ')"
@@ -43,6 +46,7 @@ while IFS=$'\t' read -r name marker to envs needs; do
   extra=(); [[ "$envs" != - ]] && read -ra extra <<<"$envs"
   case ",$needs," in *,release,*) extra+=("PEERYARD_JAR_B=$PEERYARD_JAR_RELEASE") ;; esac
   case ",$needs," in *,arkadianet-magic,*) extra+=("PEERYARD_ARKADIANET_BIN=$PEERYARD_ARKADIANET_MAGIC_BIN") ;; esac
+  case ",$needs," in *,instrumented,*) extra+=("PEERYARD_JAR=$PEERYARD_INSTRUMENTED_JAR") ;; esac
   ran=$((ran + 1))
   ( cd "$ROOT" && env ${extra[@]+"${extra[@]}"} timeout "$to" bash rig/rig.sh "rig/examples/$name.json" "rig/examples/$name.sh" ) \
     > "$OUT/rig_$name.txt" 2>&1

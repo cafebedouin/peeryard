@@ -3,7 +3,7 @@
 # a 45 s poll (about one block per poll at the devnet's floor difficulty) and a 3-block reward delay, so it is
 # never restarted (a restart empties a node's in-memory pool) and there is a window of about 45 s between
 # blocks in which the pool can be filled and probed. B holds a separate wallet. A pays B once; right after the
-# block that confirms it, A fills its own pool with 20 self-payments whose fees DECREASE from 41 to 2 times the
+# block that confirms it, A fills its own pool with 20 self-payments whose fees DECREASE from 21 to 2 times the
 # minimum fee, so the lowest-weight transaction is the newest leaf of A's chain and evicting it invalidates
 # nothing. Then B submits (1) a payment at the minimum fee, whose fee per byte is below every pool transaction,
 # which the node must decline ("Transaction pays less than any other in the pool being full",
@@ -25,7 +25,7 @@ wait_balance B 3000000000 200 >/dev/null || { echo "[evict] FAIL: B's funding ne
 h_fund=$(full_height A); echo "[evict] funding confirmed at height $h_fund; the next block is due in <= 45 s: filling now"
 [ "$(mempool_size A)" = 0 ] || echo "[evict] note: pool not empty at start ($(mempool_size A))"
 toA=$(address A); low_id=""
-for ((k=1;k<=CAP;k++)); do fee=$(( (CAP + 2 - k) * F ))   # 41F .. 2F
+for ((k=1;k<=CAP;k++)); do fee=$(( (CAP + 2 - k) * F ))   # 21F .. 2F (k = 1 .. CAP)
   id=$(wallet A /wallet/transaction/send "{\"requests\":[{\"address\":\"$toA\",\"value\":100000000}],\"fee\":$fee}" | jq -r 'if type == "string" then . else "REJECT:" + (.detail // .reason // tojson) end')
   [ ${#id} = 64 ] || echo "[evict] self-payment $k (fee $fee) rejected at submission: $id"
   [ $k = "$CAP" ] && low_id=$id; sleep 0.2
@@ -39,17 +39,22 @@ r_high=$(send_fee B A 100000000 $((10 * F))); echo "[evict] B pays with fee $((1
 sleep 1; n2=$(mempool_size A); h_after=$(full_height A)
 # evicted = it was in the pool after the fill, is gone now, and no block landed in between (a block would remove it too)
 gone=no; [ $low_in0 = yes ] && [ "$h_after" = "$h_probe" ] && ! grep -qx "$low_id" <<< "$(mempool_ids A)" && gone=yes
-high_in=no; [ ${#r_high} = 64 ] && mempool_ids A | grep -q "^$r_high$" && high_in=yes
+high_in=no; [ ${#r_high} = 64 ] && grep -q "^$r_high$" <(mempool_ids A) && high_in=yes
 low_declined=no; case "$r_low" in *"pays less"*|*"less than any"*|*"being full"*) low_declined=yes ;; esac
 echo "[evict] pool sizes: after fill $n0, after the low-fee attempt $n1, after the high-fee one $n2; low-fee declined: $low_declined; A's lowest evicted: $gone; B's high-fee tx in pool: $high_in (height still $(full_height A), funding block $h_fund)"
 echo "[evict] waiting for the next blocks to confirm the pool"
 end=$((SECONDS + 200)); drained=no; while [ $SECONDS -lt $end ]; do [ "$(mempool_size A)" = 0 ] && [ "$(full_height A)" -gt "$h_fund" ] && { drained=yes; break; }; sleep 3; done
-hb=$(full_height A); txs=0; for ((h=h_fund+1; h<=hb; h++)); do c=$(block_txs A $h); txs=$((txs + c - 1)); done
-echo "[evict] drained: $drained at height $hb; non-coinbase txs confirmed in blocks $((h_fund + 1))..$hb: $txs; pool now $(mempool_size A)"
+# minus one coinbase per block; a read that is not a count of at least 1 (an empty body on a timeout) is read once more,
+# then left out and named, not taken as 0 (which would subtract one)
+hb=$(full_height A); txs=0; unread=""; for ((h=h_fund+1; h<=hb; h++)); do c=$(block_txs A $h); [[ "$c" =~ ^[1-9][0-9]*$ ]] || { sleep 1; c=$(block_txs A $h); }
+  if [[ "$c" =~ ^[1-9][0-9]*$ ]]; then txs=$((txs + c - 1)); else unread+=" $h"; fi; done
+echo "[evict] drained: $drained at height $hb; non-coinbase txs confirmed in blocks $((h_fund + 1))..$hb: $txs${unread:+ (blocks not read, left out:$unread)}; pool now $(mempool_size A)"
 res=FAIL
 if [ "$n0" -le $CAP ] && [ "$n2" = $CAP ] && [ $low_declined = yes ] && [ $high_in = yes ] && [ $gone = yes ] && [ $drained = yes ] && [ "$txs" -ge 20 ]; then res=PASS
 elif [ "$n0" -le $CAP ] && { [ "$n0" != $CAP ] || [ $low_in0 = no ] || [ "$h_after" != "$h_probe" ]; }; then
   res=INCONCLUSIVE; echo "[evict] INCONCLUSIVE: the probe did not start from a full pool holding A's lowest-fee tx with no block during it (fill=$n0/$CAP lowest-in-pool=$low_in0 height $h_probe -> $h_after)"
+elif [ "$n0" -le $CAP ] && [ "$n2" = $CAP ] && [ $low_declined = yes ] && [ $high_in = yes ] && [ $gone = yes ] && [ $drained = yes ] && [ -n "$unread" ]; then
+  res=INCONCLUSIVE; rig_cause=BLOCK_UNREAD; echo "[evict] INCONCLUSIVE: $txs of 20 confirmations counted, and blocks$unread were not read"
 fi
 echo "[evict] === MEMPOOL-EVICT: $res (fill=$n0/$CAP low-fee-declined=$low_declined high-fee-in=$high_in evicted-lowest=$gone drained=$drained confirmed=$txs) ==="; rig_verdict=$res
 echo "MEMPOOL-EVICT-DONE"

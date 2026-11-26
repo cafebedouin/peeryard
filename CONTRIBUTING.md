@@ -24,11 +24,13 @@ says in its description which side it is on and why.
 - `shellcheck -x` on every script you touched (the repository's `.shellcheckrc` lists the deliberate
   exceptions), and `bash -n`.
 - The no-node self-tests, the set `.github/workflows/checks.yml` runs on every push: the Python unit tests
-  (`python3 -m unittest discover -s tests -p '*_test.py'`), `bash tests/leakcheck.sh`, and ten shell tests run as
+  (`python3 -m unittest discover -s tests -p '*_test.py'`), `bash tests/leakcheck.sh`, and eleven shell tests run as
   `T=$(mktemp -d) bash tests/<name>.sh` (the loop is in [`docs/running.md`](docs/running.md#self-tests-no-node-seconds));
   each exits non-zero on a `MISMATCH`. `T` must be a fresh empty directory: each test deletes it first. A new test
   goes into `checks.yml` too.
 - `bash ci/export-workflows.sh --check` (a no-op in a standalone clone; `docs/workflows.md`, *ci/*).
+- `python3 ci/workflow-sizes.py --check` (after a workflow change, `--write` regenerates the size table in
+  `docs/workflows.md`).
 - If you added a scenario, a rig example, a repro or a workflow: its row in the catalog that lists it
   (`diffrun/README.md` and `diffrun/scenarios/FIT.md`, `rig/README.md`, `repro/README.md`, `docs/workflows.md`).
 - If you changed a scenario, a precheck or the rig: one real run of what you changed, and its output in the PR

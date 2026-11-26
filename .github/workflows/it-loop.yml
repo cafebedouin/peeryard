@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
+      - uses: actions/checkout@v4   # first: the input check sources peeryard/ci/lib.sh
+        with: { path: peeryard }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
@@ -38,8 +40,8 @@ jobs:
           # the job's limit is 150 min and the image build comes first: refuse a loop that could not finish inside it
           (( REPEATS * RUNMIN <= 120 )) || { echo "repeats x run_minutes = $(( REPEATS * RUNMIN )) min: at most 120 (the job limit is 150, less the image build)"; exit 1; }
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "label: [A-Za-z0-9._-]{1,40}"; exit 1; }
-          shopt -s nocasematch; idlike='(^|[^A-Za-z0-9])[abceklmprsx]-?[0-9]{3}([^0-9]|$)'
-          if [[ "$LABEL" =~ $idlike ]]; then
+          source peeryard/ci/lib.sh
+          if is_idlike "$LABEL"; then
             echo "label: '$LABEL' looks like a tracking id (a letter and three digits); use a descriptive label, and delete this run, whose name shows it"; exit 1
           fi
       - name: ergo at the commit (any ref, pull request heads included)
@@ -55,8 +57,6 @@ jobs:
           printf '%s' "$PATCH_B64" | base64 -d > "$RUNNER_TEMP/input.patch"
           git -C ergo apply --verbose "$RUNNER_TEMP/input.patch"
           { echo "patch sha256: $(sha256sum "$RUNNER_TEMP/input.patch" | cut -c1-64)"; echo '```diff'; cat "$RUNNER_TEMP/input.patch"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@v4
-        with: { path: peeryard }
       - uses: actions/cache@v4
         with:
           path: ~/.ivy2/local/org.scorexfoundation

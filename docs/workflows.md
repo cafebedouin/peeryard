@@ -29,13 +29,41 @@ smoke dispatch in `docs/release-check.md` is four jobs and about 25 minutes). Sm
 sums; without a `timeout-minutes` GitHub applies its own default limit [UNVERIFIED: the value is GitHub's, not in this
 repository]. All jobs run on `ubuntu-24.04`.
 
+**The sizes, generated.** The table below is written by `python3 ci/workflow-sizes.py --write` from the workflow files
+(each job's `timeout-minutes`, its matrix at the dispatch defaults, `max-parallel`), and `checks.yml` fails when it is
+stale (`--check`). A matrix built at run time is named in the bound (`examples`, `builds`, `arms`, `specs`, the
+`run_minutes` a job computes): the entries below say what those come to. "Largest" puts each dynamic count at the top of
+its input's documented range, and at a cap an input description states ("arms x repeats is at most 12").
+
+<!-- sizes:begin -->
+| workflow | jobs: timeout-minutes x jobs at the defaults | max-parallel | upper bound at the defaults, min | largest: input ranges and caps, min |
+|---|---|---|---|---|
+| `aa.yml` | build 120 x 0 (skipped at the defaults); aa 150 x 10; pool none | - | 1,500 | same |
+| `checks.yml` | no-node 20 | - | 20 | same |
+| `health-recheck.yml` | health 20 | - | 20 | same |
+| `indexer-bench.yml` | bench 150 | - | 150 | same |
+| `it-loop.yml` | loop 150 | - | 150 | same |
+| `matrix-relay.yml` | build 120; run 60 x 12; pool none | - | 840 | same |
+| `patch-compare.yml` | build 120; run 60 x 10 x builds (build dynamic; repeat: input repeats, default 5, 1-10); pool none | - | 120 + 60 x 10 x builds | 120 + 60 x 20 x builds |
+| `pr-scenario.yml` | build 120; run run_minutes x 5 (shard: input shards, default 5, 1-20); pool none | - | 120 + run_minutes x 5 | 120 + run_minutes x 20 |
+| `queue.yml` | build 30; deploy none | - | 30 | same |
+| `ref-specs.yml` | plan 5; arm 110 x arms (arm dynamic; repeat: input repeats, default 1, 1-3; at most 12 jobs); table 5 | - | 10 + 110 x arms | 1,330 |
+| `release-check.yml` | plan 15; build 120; example minutes x examples (include dynamic) (if); rate minutes x shards (include dynamic) (if); summary 10 | example 20 | 145 + minutes x examples + minutes x shards | same |
+| `release-watch.yml` | watch 20 | - | 20 | same |
+| `repro-script.yml` | run 60 | - | 60 | same |
+| `spec-compare.yml` | plan none; spec 120 x 2 x arms x specs (patch dynamic; spec dynamic; repeat: input repeats, default 2, 1-5; at most 12 jobs); judge none x 0 (skipped at the defaults) | - | 120 x 2 x arms x specs | 1,440 |
+| `spec-loop.yml` | loop 150 | - | 150 | same |
+| `sweep.yml` | build 120; example 60 x examples (example dynamic; repeat: input repeats, default 1, 1-99); diffrun 60 x 2 (repeat: input repeats, default 1, 1-99); summary none | example 10 | 240 + 60 x examples | 12,000 + 60 x 99 x examples |
+| `wallet-oracle.yml` | list none; run 40 x 9 (repeat: input repeats, default 1, 1-5); summary none | - | 360 | 1,800 |
+<!-- sizes:end -->
+
 ## Checks on push
 
 ### `checks.yml`
 - **Does**: the no-node checks: `shellcheck -x` on every bash script (and `-s bash` on the sourced hooks), `bash -n`,
   the Python unit tests under `tests/`, `tests/leakcheck.sh`, the shell self-tests (`lint`, `precheck`, `sequential`,
   `phases`, `indexer_diff`, `crash_consistency`, `wallet_oracle`, `wallet_workload`, `pr_path`, `tooling`), and
-  `ci/export-workflows.sh --check`. No node, no JDK 8. The script lists for `shellcheck` and `bash -n` are
+  `ci/export-workflows.sh --check`, and `ci/workflow-sizes.py --check` (the size table below). No node, no JDK 8. The script lists for `shellcheck` and `bash -n` are
   NUL-separated (a path with a space stays one path), and an empty list fails the step instead of passing it.
 - **Trigger**: push (any branch), pull request, dispatch. **Inputs**: none.
 - **Size**: one job, `timeout-minutes: 20`. A push to a branch with an open pull request in this repository triggers it
@@ -56,7 +84,7 @@ repository]. All jobs run on `ubuntu-24.04`.
   default 5), `pairs` (1-99, default 1), `aa`, `scenario_env`, `v4`, `test_patches`, `extra_patch`. `review/pr-line.sh
   --pr N` prints the line and the dispatch command.
 - **Size**: build 120 min, then one job per shard whose limit the build job computes from the manifest:
-  `floor(2 x pairs x (timeout_seconds (default 900) + precheck_timeout_seconds when there is a precheck) / 60) + 30`
+  `floor(2 x pairs x (timeout_seconds (default 900) + precheck_timeout_seconds (default 300) when there is a precheck) / 60) + 30`
   (`pr-scenario.yml:121`). At the defaults (`matrix-paychain.json` has `timeout_seconds` 1500, no precheck) that is 80
   min per shard, so the upper bound is 120 + 5 x 80 = 520 min (about 8.7 runner-hours). At 20 shards it holds all 20
   concurrent jobs. The `pool` job sets no limit; it writes its summary and then exits with `pool.sh`'s status (before
@@ -261,6 +289,13 @@ Not workflows themselves: the scripts some workflows call, and example workflow 
   (`../.github/workflows/peeryard-{sweep,aa}.yml`, where the tree sits under `peeryard/`); `--check` exits 1 when the
   exported files are stale, and `checks.yml` runs it; its temporary file is removed on every exit. In a standalone clone there is no source directory and it does
   nothing; the exported files are then the source (their headers say "if this repository is the source, edit here").
+- `ci/lib.sh`: shell helpers the workflows source after their checkout (`source ci/lib.sh`, or `peeryard/ci/lib.sh`
+  where peeryard is checked out under `peeryard/`): `build` and `stack` (`diffrun/build.sh` and `patches/stack.sh` with
+  one retry), `need_jar` (a jar checked before it is copied, under its own `::error::` line) and `is_idlike` (a label
+  that reads as a private tracking id). Used by `aa`, `sweep`, `patch-compare`, `matrix-relay`, `pr-scenario`,
+  `it-loop`, `spec-loop`, `ref-specs` and `indexer-bench`.
+- `ci/workflow-sizes.py`: the size table above, from the workflow files (standard library; a reader for the YAML
+  subset they use); `--write` updates this file, `--check` exits 1 when it is stale (`checks.yml` runs it).
 - `ci/build-ref.sh`: the build step of a hosted workflow for any ergo ref (commit, branch or tag), through
   `diffrun/build.sh <commit>` with one retry, after publishing the sigma-state snapshot the commit pins, if any. Used by
   `release-check.yml`.

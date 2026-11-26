@@ -13,7 +13,7 @@ run-name: "peeryard sweep (${{ inputs.node || 'reference' }}; ${{ inputs.example
 on:
   workflow_dispatch:
     inputs:
-      repeats: { description: 'runs per example', default: '1' }
+      repeats: { description: 'runs per example (1-99)', default: '1' }
       examples: { description: 'space-separated example names (default: every example in rig/examples/suite.tsv)', default: '' }
       v4: { description: 'Matrix line at block version 4 (early soft-fork activation, rig PEERYARD_V4)', type: boolean, default: false }
       node: { description: 'the node the examples run on: reference (the release plus the carried patches) or release (the release jar alone, for an A/B against the reference)', default: 'reference' }
@@ -79,12 +79,10 @@ jobs:
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME"
           out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
           put(){ cp "$2" "$out/$1.jar"; cp "$2.json" "$out/$1.jar.json"; cp "$2.stack.json" "$out/$1.stack.json" 2>/dev/null || true; }
-          # a cold sbt build can lose one dependency download to a transient repository error: one retry
-          stack(){ local j; for attempt in 1 2; do j="$(bash patches/stack.sh "$@" | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "stack $* failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
-          # each build is checked before put: a failed stack prints nothing, and cp '' would hide which one failed
-          j="$(stack --build ergo)" || { echo "::error::the reference stack build failed (patches/stack.sh --build ergo, two attempts)"; exit 1; }
+          source ci/lib.sh   # build, stack (one retry each), need_jar (each jar checked before it is copied)
+          need_jar j "the reference stack build failed (patches/stack.sh --build ergo, two attempts)" stack --build ergo
           put reference "$j"
-          j="$(stack --build --for sibling-fork ergo)" || { echo "::error::the sibling-fork stack build failed (patches/stack.sh --build --for sibling-fork ergo, two attempts)"; exit 1; }
+          need_jar j "the sibling-fork stack build failed (patches/stack.sh --build --for sibling-fork ergo, two attempts)" stack --build --for sibling-fork ergo
           put sibling-fork "$j"
           # the Matrix stack is optional: a build failure is a warning here, and the Matrix examples are then SKIPped
           if m="$(stack --build ergo-matrix)"; then put matrix "$m"

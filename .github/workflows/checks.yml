@@ -50,6 +50,8 @@ jobs:
         run: T=$(mktemp -d) bash tests/wallet_workload.sh
       - name: PR path (review/pr-line.sh on a fixture history; the rig-example scenario on a stub rig)
         run: T=$(mktemp -d) bash tests/pr_path.sh
+      - name: rig checks (topology validation, partition/heal flags, settle, the helper registry, hook env and verdict rules)
+        run: T=$(mktemp -d) bash tests/rig_checks.sh
       - name: tooling (check.sh, stack.sh, register.sh, provenance.sh, post.sh)
         run: |
           git config --global user.email ci@example.invalid
@@ -57,3 +59,5 @@ jobs:
           T=$(mktemp -d) bash tests/tooling.sh
       - name: exported workflows in step with their source (no-op in a standalone clone)
         run: bash ci/export-workflows.sh --check
+      - name: the size table in docs/workflows.md in step with the workflows (ci/workflow-sizes.py)
+        run: python3 ci/workflow-sizes.py --check

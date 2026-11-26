@@ -9,7 +9,8 @@ by hand or with a tool:
 
 **What it is.** A hint for maintainers, not a verdict. Two pull requests in one group made the same change, or work on
 the same issue; which one to keep, and whether either is right, is the maintainers' decision. The data comes from public
-GitHub data only, read by `queue/build.py` under `queue/rules.json`; every author is treated the same way.
+GitHub data only, read by `queue/build.py` (the entry point; the code is in the modules beside it: `ghapi.py`, `posts.py`,
+`samechange.py`, `rank.py`, `history.py`, `render.py`) under `queue/rules.json`; every author is treated the same way.
 
 **When it changes.** The queue workflow (`.github/workflows/queue.yml`) runs daily at 06:17 UTC, on a push to main that
 changes `queue/`, a `patches.json` or the workflow itself, and on a manual dispatch. A snapshot is per UTC day: a second run on one day replaces that day's file.

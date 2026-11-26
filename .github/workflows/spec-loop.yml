@@ -27,6 +27,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
+      - uses: actions/checkout@v4   # first: the input check sources peeryard/ci/lib.sh
+        with: { path: peeryard }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '8' }
       - uses: sbt/setup-sbt@v1
@@ -38,10 +40,9 @@ jobs:
           [[ "$SPEC" =~ ^[A-Za-z0-9_.]+$ ]] || { echo "spec: a class name"; exit 1; }
           [[ "$REPEATS" =~ ^([1-9]|[12][0-9]|30)$ ]] || { echo "repeats: 1-30"; exit 1; }
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "label: [A-Za-z0-9._-]{1,40}"; exit 1; }
-          # A letter, an optional dash and exactly three digits reads as a private tracking id, and the label is
-          # public in the run name: refuse it. Descriptive labels (pr2784-base, v609, arm) pass.
-          shopt -s nocasematch; idlike='(^|[^A-Za-z0-9])[abceklmprsx]-?[0-9]{3}([^0-9]|$)'
-          if [[ "$LABEL" =~ $idlike ]]; then
+          # a label that reads as a private tracking id (ci/lib.sh) is public in the run name: refuse it
+          source peeryard/ci/lib.sh
+          if is_idlike "$LABEL"; then
             echo "label: '$LABEL' looks like a tracking id (a letter and three digits); use a descriptive label, and delete this run, whose name shows it"; exit 1
           fi
       - name: ergo at the commit (any ref, pull request heads included)
@@ -57,8 +58,6 @@ jobs:
           printf '%s' "$PATCH_B64" | base64 -d > "$RUNNER_TEMP/input.patch"
           git -C ergo apply --verbose "$RUNNER_TEMP/input.patch"
           { echo "patch sha256: $(sha256sum "$RUNNER_TEMP/input.patch" | cut -c1-64)"; echo '```diff'; cat "$RUNNER_TEMP/input.patch"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@v4
-        with: { path: peeryard }
       - uses: actions/cache@v4
         with:
           path: ~/.ivy2/local/org.scorexfoundation

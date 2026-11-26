@@ -10,6 +10,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "queue"))
 import build  # noqa: E402
+import samechange  # noqa: E402
 
 REPO = "o/r"
 
@@ -90,15 +91,15 @@ class SameChange(unittest.TestCase):
                 pr(12, "gus", "2026-03-07T00:00:00Z", h[12], base="dev")]
 
     def run_view(self, kinds, cfg=None):
-        old = build.api
-        build.api = lambda path, *a, **k: {"html_url": "u", "title": "t", "state": "open",
+        old = samechange.api                     # same_change's lookup (queue/samechange.py)
+        samechange.api = lambda path, *a, **k: {"html_url": "u", "title": "t", "state": "open",
                                           **({"pull_request": {}} if kinds.get(int(path.rsplit("/", 1)[1])) == "pr" else {})}
         try:
             diffs = build.production_diffs(REPO, self.prs(), self.gdir)
             return (diffs,) + build.same_change(REPO, self.prs(), diffs, None,
                                                 {"same_change": {"release_head": "^v[0-9]", **(cfg or {})}})
         finally:
-            build.api = old
+            samechange.api = old
 
     def test_exact_group_earliest_first_draft_included(self):
         diffs, exact, related, meta = self.run_view({9: "issue", 8: "issue"})

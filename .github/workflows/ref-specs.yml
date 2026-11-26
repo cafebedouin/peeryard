@@ -52,13 +52,12 @@ jobs:
         run: |
           set -euo pipefail
           fail(){ echo "::error::$*"; exit 1; }
-          # a letter, an optional dash and exactly three digits reads as a private tracking id; names here are public
-          idlike='(^|[^A-Za-z0-9])[AaBbCcEeKkLlMmPpRrSsXx]-?[0-9]{3}([^0-9]|$)'
+          source ci/lib.sh   # is_idlike: a name that reads as a private tracking id; names here are public
           [[ "$REPO" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "repo: https://github.com/<owner>/<name>"
           [[ "$REPEATS" =~ ^[1-3]$ ]] || fail "repeats: 1-3"
           { [[ "$IT_MIN" =~ ^[0-9]{1,2}$ ]] && (( IT_MIN >= 5 && IT_MIN <= 40 )); } || fail "it_minutes: 5-40"
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || fail "label: [A-Za-z0-9._-]{1,40}"
-          if [[ "$LABEL" =~ $idlike ]]; then fail "label '$LABEL' looks like a tracking id; use a descriptive one"; fi
+          if is_idlike "$LABEL"; then fail "label '$LABEL' looks like a tracking id; use a descriptive one"; fi
           [[ -n "$SPECS$IT_SPEC" ]] || fail "specs, it_spec: give at least one"
           [[ -z "$PROJECT" || "$PROJECT" =~ ^(ergoCore|ergoWallet|avldb)$ ]] || fail "project: empty, ergoCore, ergoWallet or avldb"
           for s in $SPECS; do [[ "$s" =~ ^(org\.ergoplatform|scorex)\.[A-Za-z0-9_.]+$ ]] || fail "spec: $s"; done
@@ -68,7 +67,7 @@ jobs:
             IFS=: read -r name sha patch extra <<< "$a"
             [[ -z "${extra:-}" ]] || fail "arm $a: name:sha[:patch]"
             [[ "$name" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || fail "arm name '$name': [A-Za-z0-9._-]{1,40}"
-            if [[ "$name" =~ $idlike ]]; then fail "arm name '$name' looks like a tracking id"; fi
+            if is_idlike "$name"; then fail "arm name '$name' looks like a tracking id"; fi
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || fail "arm $name: sha must be 40 lowercase hex"
             if [[ -n "${patch:-}" ]]; then
               [[ "$patch" =~ ^patches/[A-Za-z0-9/._-]+\.(patch|diff)$ && "$patch" != *..* && -f "$patch" ]] || fail "arm $name: patch '$patch' is not a .patch/.diff file under patches/"

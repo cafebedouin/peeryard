@@ -11,6 +11,9 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "queue"))
 import build  # noqa: E402
+import ghapi  # noqa: E402
+import history  # noqa: E402
+import posts  # noqa: E402
 
 
 def snap(at, groups):
@@ -48,9 +51,9 @@ class History(unittest.TestCase):
     def test_published_site(self):
         served = {"https://s/history/index.json": {"dates": ["2026-10-18", "../x"]},
                   "https://s/history/2026-10-18.json": {"date": "2026-10-18"}}
-        old = build.fetch_json
+        old = history.fetch_json                 # load_history's lookup (queue/history.py)
         try:
-            build.fetch_json = lambda url: served.get(url.split("?")[0])
+            history.fetch_json = lambda url: served.get(url.split("?")[0])
             self.assertEqual(build.load_history("https://s/"), {"2026-10-18": {"date": "2026-10-18"}})  # not a date: skipped
             del served["https://s/history/index.json"]
             self.assertEqual(build.load_history("https://s"), {})                 # no index yet: no history yet
@@ -58,7 +61,7 @@ class History(unittest.TestCase):
             with self.assertRaises(RuntimeError):                                  # listed but not served: never shorten
                 build.load_history("https://s")
         finally:
-            build.fetch_json = old
+            history.fetch_json = old
 
 
 
@@ -83,19 +86,20 @@ class AtHead(unittest.TestCase):
     an earlier review and pushed after it must not inherit that review)."""
 
     def setUp(self):
-        real = build.api
-        self.addCleanup(setattr, build, "api", real)
+        # head_push_time calls posts.api, search_numbers ghapi.api: each module's own lookup is the one replaced
+        for mod in (posts, ghapi):
+            self.addCleanup(setattr, mod, "api", mod.api)
 
     def test_push_time_sources(self):
         ts = build.parse_ts
-        build.api = fake_api({"/timeline": [{"event": "committed"}],
+        posts.api = fake_api({"/timeline": [{"event": "committed"}],
                               "/check-suites": {"check_suites": [{"created_at": "2026-11-10T00:00:00Z"}]}})
         self.assertEqual(build.head_push_time("o/r", 7, H, COMMIT, None), (ts("2026-11-10T00:00:00Z"), "check-suite"))
-        build.api = fake_api({"/timeline": [
+        posts.api = fake_api({"/timeline": [
             {"event": "head_ref_force_pushed", "commit_id": H, "created_at": "2026-11-12T00:00:00Z"},
             {"event": "head_ref_force_pushed", "commit_id": O, "created_at": "2026-11-13T00:00:00Z"}]})
         self.assertEqual(build.head_push_time("o/r", 7, H, COMMIT, None), (ts("2026-11-12T00:00:00Z"), "force-push"))
-        build.api = fake_api({"/timeline": RuntimeError("502"), "/check-suites": {"check_suites": []}})
+        posts.api = fake_api({"/timeline": RuntimeError("502"), "/check-suites": {"check_suites": []}})
         self.assertEqual(build.head_push_time("o/r", 7, H, COMMIT, None), (ts("2026-11-01T00:00:00Z"), "committer-date"))
 
     def test_reviews_by_commit_id(self):
@@ -118,14 +122,14 @@ class AtHead(unittest.TestCase):
 
     def test_search_pages_until_a_short_page(self):
         pages = {1: list(range(100)), 2: list(range(100, 200)), 3: list(range(200, 250))}
-        build.api = fake_api({"/search/issues": lambda p: {"items": [{"number": n} for n in pages[p["page"]]]}})
+        ghapi.api = fake_api({"/search/issues": lambda p: {"items": [{"number": n} for n in pages[p["page"]]]}})
         self.assertEqual(len(build.search_numbers("q", None)), 250)
 
         def flaky(p):
             if p["page"] == 2:
                 raise RuntimeError("HTTP 422")
             return {"items": [{"number": n} for n in pages[p["page"]]]}
-        build.api = fake_api({"/search/issues": flaky})
+        ghapi.api = fake_api({"/search/issues": flaky})
         with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(len(build.search_numbers("q", None)), 100)
 

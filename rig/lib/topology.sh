@@ -81,7 +81,9 @@ validate_topology(){ local cfg="$1" defjar="$2" errs=() preset raw_top n kind ra
   # the artifacts and the CPU mask, for each node whose structure passed (an object with a valid name and kind)
   raw_top="$(jq -r 'if type == "object" then (.jar // "") else "" end' "$cfg")"
   [[ -n "$raw_top" && -z "$defjar" ]] && errs+=("\"jar\" is '$raw_top' but expands to nothing (unset variable?)")
-  affinity="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/$$/status)"
+  # the CPUs this rig may use; a third argument names them instead (tests: a shipped topology's pins are checked
+  # against the host that runs it, not the one that tests the file)
+  affinity="${3:-$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/$$/status)}"
   for c in $(cpu_ids "$affinity"); do ok_cpu[$c]=1; done
   # shellcheck disable=SC2016  # jq programs: $ENV and $-names are jq's
   # fields joined by \x1f, not a tab: IFS whitespace (a tab) collapses empty fields, which would shift a bin into the jar's

@@ -80,7 +80,9 @@ cp "$base" "$V/valid.json"; rc=$(rigv valid)
   for f in rig/examples/*.json; do n=$((n + 1))
     # shellcheck disable=SC2016  # a jq program
     dj=$(jq -r --arg d "$PEERYARD_JAR" '(.jar // $d) | gsub("\\$\\{(?<v>[A-Za-z_][A-Za-z0-9_]*)\\}"; ($ENV[.v] // ""))' "$f")
-    validate_topology "$f" "$dj" 2>> "$T/shipped.err" || refused=$((refused + 1)); done
+    # a wide CPU mask: whether a pin fits is a property of the host that runs the topology (a 4-vCPU runner cannot
+    # hold three-body's CPU 4), checked by the affinity case above, not of the file
+    validate_topology "$f" "$dj" 0-1023 2>> "$T/shipped.err" || refused=$((refused + 1)); done
   echo "$n $refused" ) > "$T/shipped.out"
 read -r ns nr < "$T/shipped.out"
 [[ "$nr" == 0 && "$ns" -gt 50 ]] && ok "validate: all $ns shipped topologies pass" || bad "validate: shipped topologies" "$nr of $ns refused: $(head -3 "$T/shipped.err")"

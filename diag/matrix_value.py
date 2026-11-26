@@ -73,7 +73,6 @@ HEX = r"([0-9a-f]{64})"
 TS = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d{3}) ")
 FRAME_OVERHEAD = 9          # magic 4, code 1, length 4
 CHECKSUM = 4                # only when the payload is not empty
-MATRIX_CODES = {100, 102, 104, 105, 106}
 MATRIX_TYPES = {-123, -122, -121}
 SECTION_TYPES = {101, 102, 104, 108}
 
@@ -660,6 +659,8 @@ def load_section(txload, watch, chain, logs, ib, start, end):
 def node_kinds(msgs, frames, logs, matrix_arg=None):
     """Which nodes are Matrix: --matrix; else the handshakes (two versions on the network: the higher one is the
     Matrix line's); else any node whose log shows input blocks or that sent an InputBlock or OrderingBlock frame.
+    One handshake version says nothing: the Matrix line and the v6.5.0 release candidates both report 6.5.0, so a
+    mixed network can show one version; then each node is classed by its own traffic and log.
     The first two do not read the traffic, so the BYTES control (no Matrix-only message to or from a reference node)
     is a test only then."""
     if matrix_arg:
@@ -671,8 +672,6 @@ def node_kinds(msgs, frames, logs, matrix_arg=None):
     if len(set(ver.values())) == 2:
         hi = max(ver.values())
         return {n for n, v in ver.items() if v == hi}, "handshake versions"
-    if len(set(ver.values())) == 1 and any(r.get("code") in MATRIX_CODES for r in frames):
-        return set(ver), "handshake versions (one, with Matrix traffic)"
     return ({r.get("from") for r in frames if r.get("code") in (100, 106)} | {n for n, L in logs.items() if L["matrix"]},
             "traffic and logs")
 

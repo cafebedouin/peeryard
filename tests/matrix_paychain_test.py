@@ -34,6 +34,15 @@ PAYS = [{"id": "p1", "inputs": ["c1"], "outputs": ["b", "p1chg"]},
 
 
 class Classify(unittest.TestCase):
+    def test_a_missing_pool_file_is_unknown_not_lost(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = run_dir(d, "base-1", PAYS, ["p1", "p4"], [])
+            os.remove(os.path.join(p, "a_pool_end.txt"))
+            r = M.classify(p)
+            self.assertEqual((r["lost"], r["pending"], r["pool_unknown"]), (0, 0, 2))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(M.main([p, "--json"]), 3)
+
     def test_dependent_lost_pending(self):
         with tempfile.TemporaryDirectory() as d:
             r = M.classify(run_dir(d, "base-1", PAYS, ["p1", "p4"], ["p3"]))

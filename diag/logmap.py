@@ -49,7 +49,19 @@ def build(src: str) -> List[dict]:
             fn: Optional[str] = None
             with open(path, errors="replace") as fh:
                 lines = fh.readlines()
+            in_block = False
             for i, line in enumerate(lines, 1):
+                # commented-out code is not a source site: skip // lines and /* ... */ blocks (a block's first and last
+                # lines whole; code after a closing */ on the same line is skipped too: rare in this codebase)
+                code = line.lstrip()
+                if in_block:
+                    in_block = "*/" not in line
+                    continue
+                if code.startswith("//"):
+                    continue
+                if code.startswith("/*"):
+                    in_block = "*/" not in code[2:]
+                    continue
                 m = OWNER.match(line)
                 if m:
                     owner = m.group(2)

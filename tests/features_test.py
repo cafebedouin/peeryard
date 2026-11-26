@@ -41,6 +41,20 @@ def write(path, text, gz=False):
 
 
 class Extraction(unittest.TestCase):
+    def test_restarts_across_midnight_ordered_by_mtime(self):
+        # first timestamps are time of day only: 00:01 sorts before 23:50; the files' mtimes, 660 s apart as the
+        # last lines are, give the real order
+        with tempfile.TemporaryDirectory() as d:
+            early = os.path.join(d, "ci-logs", "ergo-itest-x-node10-bbbb.log")
+            late = os.path.join(d, "ci-logs", "ergo-itest-x-node10-aaaa.log")
+            write(early, header("23:50:00.000", 7) + header("23:59:00.000", 8))
+            write(late, header("00:01:00.000", 50) + header("00:10:00.000", 51))
+            os.utime(early, (1_000_000, 1_000_000))
+            os.utime(late, (1_000_660, 1_000_660))
+            r = F.run_features(d)
+            self.assertEqual(r["node10#1.final_header_height"], 8)
+            self.assertEqual(r["node10#2.final_header_height"], 51)
+
     def test_lead_and_switch(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "node_C.log")

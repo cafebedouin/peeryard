@@ -29,6 +29,13 @@ def tree(with_uncle):
 
 
 class Value(unittest.TestCase):
+    def test_one_shared_version_falls_through_to_traffic_and_logs(self):
+        # the Matrix line and the v6.5.0 RCs both report 6.5.0: one version must not make every node Matrix
+        hs = [{"kind": "handshake", "from": "A", "version": "6.5.0"}, {"kind": "handshake", "from": "B", "version": "6.5.0"}]
+        frames = [{"kind": "frame", "from": "A", "to": "B", "code": 100}]
+        self.assertEqual(mv.node_kinds(hs, frames, {"A": {"matrix": True}, "B": {"matrix": False}}),
+                         ({"A"}, "traffic and logs"))
+
     def test_uncle_split_into_duplicates_and_unique(self):
         ib, s = tree(True)
         v = mv.value_section(ib, {}, {"bb0000000004" + "0" * 60}, set(), {O}, 0, 100)
@@ -108,8 +115,8 @@ class Nodes(unittest.TestCase):
                      "org.ergoplatform.validation.MalformedModifierError: Double application of a modifier is prohibited. aa\n"
                      "\tat somewhere\n"
                      "05:26:46.200 INFO  [x] o.e.n.peer.PeerManager - /100.64.0.2:49900 penalized, penalty: MisbehaviorPenalty\n")
+        self.addCleanup(os.unlink, fh.name)                  # removed even when scan_log raises
         r = mv.scan_log(fh.name, mv.Clock(1791520000000))
-        os.unlink(fh.name)
         self.assertEqual((len(r["invalid"]), len(r["double"]), [p[1:] for p in r["penalties"]]),
                          (1, 1, [("100.64.0.2", "MisbehaviorPenalty")]))
 

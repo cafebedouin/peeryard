@@ -56,8 +56,14 @@ def template(line: str):
 
 def find_runs(roots: List[str]) -> Dict[str, List[str]]:
     runs: Dict[str, List[str]] = defaultdict(list)
+    seen = set()       # real paths walked: a symlink to a directory already walked (or to an ancestor) is not walked again
     for root in roots:
-        for d, _, files in os.walk(root, followlinks=True):
+        for d, dirs, files in os.walk(root, followlinks=True):
+            real = os.path.realpath(d)
+            if real in seen:
+                dirs[:] = []
+                continue
+            seen.add(real)
             logs = [os.path.join(d, f) for f in files if F.node_name(f) and re.search(r"\.log(\.gz)?$", f)]
             if logs:
                 run = os.path.dirname(d) if os.path.basename(d) in LOG_DIR_NAMES else d

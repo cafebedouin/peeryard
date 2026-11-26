@@ -99,7 +99,8 @@ a packet.
   run against the jar's source catches that (the line stops mapping).
 - A run dir is any directory holding `node_<X>.log(.gz)` or `...-node<NN>-<container>.log`; a log directory named
   `ci-logs`, `logs` or `out` stands for its parent. Several logs for one node (a restart per container) are keyed
-  `<node>#1`, `<node>#2` by first timestamp.
+  `<node>#1`, `<node>#2` in start order: the date on the rig's `(re)launch` line when each log has one, else the files'
+  mtimes when they agree with the logs' last timestamps, else the first timestamp (a time of day: wrong across midnight).
 - The wire capture has been measured at light load only: `txload` (about 40 packets/s) with 0 drops, the same verdict
   and about the same wall time as without it. Read a heavier run with its per-second drop series. The capture is
   Python, one packet per system call. Kernel receive time and the recorded time differed by under 1 ms there.

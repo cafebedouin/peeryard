@@ -13,7 +13,7 @@
 #   - credited uncles and how many of their transactions were already on the chain;
 #   - credit agreement between nodes, and per-node unanswered sibling body requests (BODYREQ);
 #   - the external miner's refused share of input-block submissions.
-# What counts against the issue's claims:
+# What counts against the issue's claims (read by hand from the printed table: the script does not test them):
 #   - p1 refused share near 0 in the external-miner arms (refusals are one part of the issue's waste figure);
 #   - ph credit agreement far from the published 0.9947 (1.000, or below 0.98);
 #   - BlockTransactions requests per received ordering block below 1.0;
@@ -21,6 +21,10 @@
 # Fixed before the runs: every input below. The published runs used the rig at peeryard commit 6003c57 (branch
 # matrix-value-instr). The refused share printed here is a whole-log count (warm-up included). The issue's waste
 # figure (refused + orphaned, in the window) and its bootstrap intervals come from a separate log analyzer.
+# Last line: `ARTIFACTS OK` (exit 0) when every dispatch left the expected runs, each with value.txt and the published
+# patch sha256s; `ARTIFACTS CHECK (<n> problems)` (exit 1) otherwise. It checks the artifacts, not the claims above.
+# Script version 2 (2026-11-26): version 1 printed that line as `VERDICT OK` / `VERDICT CHECK (...)`; nothing else
+# changed.
 #
 # Run card:
 #   needs:   bash 4+, gh (authenticated; dispatch permission on REPO), jq, python3, sha256sum; nothing local is built.
@@ -142,6 +146,6 @@ for rid, cell in cells.items():
                 print(f"  {f[9:10]}: input submissions {n}, refused {n - ok} ({(n - ok) / n if n else 0:.3f}, whole log)")
     if found != expect:
         print(f"== {cell.strip()} {rid}: {found} runs, expected {expect}"); bad += 1
-print("VERDICT", "OK" if bad == 0 else f"CHECK ({bad} problems)")
+print("ARTIFACTS", "OK" if bad == 0 else f"CHECK ({bad} problems)")   # the artifacts only; the claims are read by hand
 sys.exit(1 if bad else 0)
 PY

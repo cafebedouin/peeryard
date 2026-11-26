@@ -14,12 +14,17 @@ state in a test: network runs discover, forced-state tests prove.
 labels.tsv: one run per line, "<run dir><TAB><outcome>". A run dir holds node logs anywhere below it (*.log or
 *.log.gz, with an Ergo timestamp at the start of each line). A node is named by its file: "node_C.log" -> C,
 "...-node10-<container>.log" -> node10; when a node has several logs (one container per restart), they are ordered
-by their first timestamp and keyed node10#1, node10#2, ... (a single log is #1). Features are keyed
-"<node>#<n>.<feature>".
+by start and keyed node10#1, node10#2, ... (a single log is #1). Features are keyed "<node>#<n>.<feature>".
+Log times are times of day only, so a run that crosses midnight would order them wrongly by first timestamp; the
+order is, in turn: the date in the rig's "==== [rig] (re)launch <node> <ISO date>" line when every one of the node's
+logs has one; else the files' modification times, when they agree with the logs' last timestamps (each step between
+two files' mtimes over 10 s and within 10 s of the step between their last lines, modulo a day: files copied, unpacked
+or collected together fail this); else the first timestamp.
 
 Standard library only.
 """
 import argparse
+import datetime
 import glob
 import gzip
 import json
@@ -58,6 +63,9 @@ FEATURE_SOURCE.update({k: FEATURE_SOURCE["first_switch_apply"] for k in
 FEATURE_SOURCE.update({k: FEATURE_SOURCE["final_header_height"] for k in ("final_lead", "max_lead")})
 NODE_UNDERSCORE = re.compile(r"node_([A-Za-z0-9]+)\.log")
 NODE_DASH = re.compile(r"-(node\d+)-[0-9a-f]+\.log")
+LAUNCH_BANNER = re.compile(r"^==== \[rig\] \(re\)launch \S+ (\S+) ")
+DAY_MS = 86_400_000
+MTIME_SLACK_MS = 10_000
 
 
 def _open(path: str):
@@ -72,7 +80,18 @@ def node_name(path: str) -> Optional[str]:
 
 def log_features(path: str) -> Tuple[Optional[int], Dict[str, float]]:
     """(first timestamp in ms of the day, features) for one node log; None when it holds no Ergo log line."""
-    first = None
+    first, _, _, feats = scan_log(path)
+    return first, feats
+
+
+def _ms(m) -> int:
+    h, mi, s, ms = (int(x) for x in m.groups())
+    return ((h * 60 + mi) * 60 + s) * 1000 + ms
+
+
+def scan_log(path: str) -> Tuple[Optional[int], Optional[int], Optional[float], Dict[str, float]]:
+    """(first and last timestamp in ms of the day, epoch s of the first rig launch line or None, features)."""
+    first = last = launched = None
     header = full = 0
     max_lead = 0
     switches: List[Tuple[int, int, int]] = []   # (apply, remove, header lead just before the switch)
@@ -83,10 +102,16 @@ def log_features(path: str) -> Tuple[Optional[int], Dict[str, float]]:
         for line in f:
             m = TS.match(line)
             if not m:
+                b = LAUNCH_BANNER.match(line) if launched is None else None
+                if b:
+                    try:
+                        launched = datetime.datetime.fromisoformat(b.group(1)).timestamp()
+                    except ValueError:
+                        pass
                 continue
+            last = _ms(m)
             if first is None:
-                h, mi, s, ms = (int(x) for x in m.groups())
-                first = ((h * 60 + mi) * 60 + s) * 1000 + ms
+                first = last
             if LEVEL_ERROR.match(line):
                 counts["errors"] += 1
             m = BEST_HEADER.search(line)
@@ -113,7 +138,7 @@ def log_features(path: str) -> Tuple[Optional[int], Dict[str, float]]:
             if ROLLBACK.search(line):
                 counts["rollback"] += 1
     if first is None:
-        return None, {}
+        return None, None, None, {}
     feats: Dict[str, float] = {
         "final_header_height": header, "final_full_height": full, "final_lead": max(0, header - full),
         "max_lead": max_lead, "switches": len(switches), "miner_started": miner_started,
@@ -124,24 +149,49 @@ def log_features(path: str) -> Tuple[Optional[int], Dict[str, float]]:
         feats["first_switch_remove"] = switches[0][1]
         feats["first_switch_lead"] = switches[0][2]
         feats["max_switch_remove"] = max(r for _, r, _ in switches)
-    return first, feats
+    return first, last, launched, feats
+
+
+def mtimes_agree(entries: List[dict]) -> bool:
+    """True when the files' mtimes, in mtime order, step as their last log lines do (modulo a day, within 10 s), and
+    each step is longer than that slack: logs written out together (docker logs collected at the end, a copy or an
+    unpack) have mtimes milliseconds apart and fail, as two logs whose last lines are 10 s apart or less would."""
+    e = sorted(entries, key=lambda x: x["mtime_ms"])
+    for a, b in zip(e, e[1:]):
+        step = b["mtime_ms"] - a["mtime_ms"]
+        if step <= MTIME_SLACK_MS:
+            return False
+        d = abs(step % DAY_MS - (b["last"] - a["last"]) % DAY_MS)
+        if min(d, DAY_MS - d) > MTIME_SLACK_MS:
+            return False
+    return True
+
+
+def order_logs(entries: List[dict]) -> List[dict]:
+    """One node's logs in start order (see the module docstring)."""
+    if len(entries) > 1 and all(x["launched"] is not None for x in entries):
+        return sorted(entries, key=lambda x: x["launched"])
+    if len(entries) > 1 and mtimes_agree(entries):
+        return sorted(entries, key=lambda x: x["mtime_ms"])
+    return sorted(entries, key=lambda x: x["first"])
 
 
 def run_features(run_dir: str) -> Dict[str, float]:
-    logs: Dict[str, List[Tuple[int, Dict[str, float]]]] = {}
+    logs: Dict[str, List[dict]] = {}
     paths = sorted(set(glob.glob(os.path.join(run_dir, "**", "*.log"), recursive=True)
                        + glob.glob(os.path.join(run_dir, "**", "*.log.gz"), recursive=True)))
     for p in paths:
         name = node_name(p)
         if name is None:
             continue
-        first, feats = log_features(p)
+        first, last, launched, feats = scan_log(p)
         if first is not None:
-            logs.setdefault(name, []).append((first, feats))
+            logs.setdefault(name, []).append({"first": first, "last": last, "launched": launched, "feats": feats,
+                                              "mtime_ms": os.stat(p).st_mtime_ns // 1_000_000})
     out: Dict[str, float] = {}
     for name, entries in logs.items():
-        entries.sort(key=lambda e: e[0])
-        for i, (_, feats) in enumerate(entries, 1):
+        for i, e in enumerate(order_logs(entries), 1):
+            feats = e["feats"]
             key = f"{name}#{i}"   # always numbered, so runs with one container and runs with two share keys
             for k, v in feats.items():
                 out[f"{key}.{k}"] = v

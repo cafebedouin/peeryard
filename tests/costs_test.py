@@ -35,6 +35,12 @@ def run(samples, events):
 
 
 class AgreeS(unittest.TestCase):
+    def test_an_event_does_not_borrow_the_next_events_sample(self):
+        # heal 1 has no sample of its own; the row at 5000 is heal 2's, so heal 1 reports nothing at the event
+        s = [row(3000, n("A", "x"), n("B", "y")), row(5000, n("A", "q"), n("B", "q"), event="heal"),
+             row(6000, n("A", "q"), n("B", "q")), row(9000, n("A", "q"), n("B", "q"))]
+        self.assertIsNone(run(s, [heal(1000), heal(5000)])["recovery"][0]["tips_equal_at_event"])
+
     def test_1_agreement_at_sample_k(self):
         # heal at t=1000; regular samples at 3000 (differ), 6000 (equal), 9000 (equal): k = 6000 -> 5.0 s
         s = [row(1000, n("A", "x", full=5), n("B", "y", full=3), event="heal"),

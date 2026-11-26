@@ -11,9 +11,9 @@
 # `-SNAPSHOT`) needs nothing. Idempotent; cold about 3-4 minutes.
 #
 #   DIFFRUN_ERGO_CLONE=<ergo clone> bash patches/sigma-snapshot.sh [--dry-run] <ergo commit or ref>
-# Env: JAVA8_HOME, SBT as diffrun/build.sh; SIGMA_CLONE (a clone to reuse; default a fresh one under $TMPDIR);
-#      SIGMA_REPO (default https://github.com/ScorexFoundation/sigmastate-interpreter).
-# Prints the published directory on success. --dry-run prints what it would do and exits 0 without JDK, clone or sbt.
+# Env: JAVA8_HOME, SBT as diffrun/build.sh; SIGMA_CLONE (a clone to reuse, left in place at $HASH; default a fresh one
+#      under $TMPDIR, removed on exit); SIGMA_REPO (default https://github.com/ScorexFoundation/sigmastate-interpreter).
+# Prints the published directory on success; the sbt log is removed on success and kept (its path printed) on failure. --dry-run prints what it would do and exits 0 without JDK, clone or sbt.
 set -euo pipefail
 die(){ echo "sigma-snapshot: ERROR: $*" >&2; exit 1; }
 DRY=0; [[ "${1:-}" == --dry-run ]] && { DRY=1; shift; }
@@ -43,14 +43,18 @@ fi
 [[ -n "$J8" ]] || die "no JDK 8 found (set JAVA8_HOME; looked under /usr/lib/jvm)"
 is_jdk8 "$J8" || die "JAVA8_HOME=$J8 is not a JDK 8: $("$J8/bin/java" -version 2>&1 | head -1)"
 SBT="${SBT:-sbt}"
-SC="${SIGMA_CLONE:-}"
-if [[ -z "$SC" ]]; then SC="$(mktemp -d "${TMPDIR:-/tmp}/sigma-snapshot.XXXXXX")/sigmastate-interpreter"
+SC="${SIGMA_CLONE:-}"; TMPC=""; LOG=""; OK=0
+# the default clone goes on any exit; the sbt log only after a successful publish
+cleanup(){ [[ -z "$TMPC" ]] || rm -rf "$TMPC"; [[ $OK != 1 || -z "$LOG" ]] || rm -f "$LOG"; }
+trap cleanup EXIT
+if [[ -z "$SC" ]]; then TMPC="$(mktemp -d "${TMPDIR:-/tmp}/sigma-snapshot.XXXXXX")"; SC="$TMPC/sigmastate-interpreter"
   echo "sigma-snapshot: cloning $SIGMA_REPO (full history: dynver needs the tags)"
   git clone -q "$SIGMA_REPO" "$SC"
 elif ! git -C "$SC" cat-file -e "$HASH^{commit}" 2>/dev/null; then git -C "$SC" fetch -q --tags origin; fi
 git -C "$SC" cat-file -e "$HASH^{commit}" 2>/dev/null || die "commit $HASH is not in the sigmastate-interpreter clone ($SC)"
 git -C "$SC" checkout -q --detach "$HASH"
-DESC="$(git -C "$SC" describe --tags 2>/dev/null || true)"   # v<tag>-<distance>-g<hash>
+# v<tag>-<distance>-g<hash>, the hash abbreviated to at least the version's length (git's default is 7; dynver's 8)
+DESC="$(git -C "$SC" describe --tags --abbrev="${#HASH}" 2>/dev/null || true)"
 [[ "$DESC" == "v$TAGDIST-g$HASH"* ]] || die "git describe at $HASH gives '$DESC', not v$TAGDIST-g$HASH: dynver would not stamp $VER (shallow clone or missing tag?)"
 export JAVA_HOME="$J8" XDG_RUNTIME_DIR="${DIFFRUN_RUNTIME_DIR:-/tmp/sr-$(id -u)}"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
 LOG="$(mktemp "${TMPDIR:-/tmp}/sigma-snapshot.XXXXXX.log")"
@@ -58,4 +62,5 @@ echo "sigma-snapshot: sbt ++$SCALA sigma/publishLocal in $SC (log: $LOG)"
 ( cd "$SC" && "$SBT" -java-home "$J8" -batch "++$SCALA" sigma/publishLocal ) > "$LOG" 2>&1 \
   || { tail -30 "$LOG" >&2; die "sbt publishLocal failed (log: $LOG)"; }
 [[ -f "$IVY/jars/sigma-state_2.12.jar" ]] || die "publishLocal finished but $IVY/jars/sigma-state_2.12.jar is missing (log: $LOG)"
+OK=1
 echo "sigma-snapshot: published $IVY"

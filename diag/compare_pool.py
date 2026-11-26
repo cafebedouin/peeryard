@@ -33,7 +33,8 @@ def main(root):
         for x, y, mined, sent, got, ok, tot in re.findall(
                 r'relay (\w+)->(\w+): mined (\d+) sent (\d+) received (\d+); stale-height rule predicts (\d+)/(\d+)', log):
             if int(mined):
-                relay[(x, y)] = (int(mined), int(sent), int(got), int(ok))
+                # tot: the blocks the rule was applied to (matrix_compat.py leaves out those with a height unknown)
+                relay[(x, y)] = (int(mined), int(sent), int(got), int(ok), int(tot))
         errors = collections.Counter()
         for f in os.listdir(d):
             if f.startswith('errors-'):
@@ -63,10 +64,11 @@ def main(root):
         for p in pairs:
             vals = [r['relay'][p] for r in rs if p in r['relay']]
             mined = sum(v[0] for v in vals); sent = sum(v[1] for v in vals); got = sum(v[2] for v in vals)
-            ok = sum(v[3] for v in vals)
+            ok = sum(v[3] for v in vals); tot = sum(v[4] for v in vals)
             low = min(v[2] / v[0] for v in vals)
             print(f'   relay {p[0]}->{p[1]}: mined {mined} sent {sent} received {got} '
-                  f'(received/mined {got / mined:.3f}, lowest run {low:.3f}); stale-height rule agrees {ok}/{mined}')
+                  f'(received/mined {got / mined:.3f}, lowest run {low:.3f}); stale-height rule agrees {ok}/{tot}'
+                  + (f' (height unknown for {mined - tot})' if tot != mined else ''))
         err = sum((r['errors'] for r in rs), collections.Counter())
         sync_err = sum(c for k, c in err.items() if 'ErgoNodeViewSynchronizer' in k)
         print(f'   ERROR lines: {sum(err.values())}, of them ErgoNodeViewSynchronizer: {sync_err}')

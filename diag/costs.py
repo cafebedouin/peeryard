@@ -114,12 +114,19 @@ def window_end(events: List[dict], i: int) -> Tuple[Optional[int], Optional[dict
     return None, None
 
 
-def event_sample(samples: List[dict], ev: dict) -> Optional[dict]:
-    """The out-of-cycle sample taken right after the event (the first event row of its kind at or after it)."""
+def event_sample(samples: List[dict], ev: dict, next_t: Optional[int] = None) -> Optional[dict]:
+    """The out-of-cycle sample taken right after the event: the first event row of its kind in [ev t, next_t), next_t
+    being the next later event's t. The rig takes that row before it records the next event, so a row at or after
+    next_t is a later event's; when the event's own row is missing, None (not the next event's row)."""
     for row in samples:
-        if row.get("event") == ev["kind"] and row["t"] >= ev["t"]:
+        if row.get("event") == ev["kind"] and row["t"] >= ev["t"] and (next_t is None or row["t"] < next_t):
             return row
     return None
+
+
+def next_event_t(events: List[dict], i: int) -> Optional[int]:
+    """t of the first event after events[i] (sorted by t) with a later t; None when there is none."""
+    return next((e["t"] for e in events[i + 1:] if e["t"] > events[i]["t"]), None)
 
 
 def in_span(row: dict, t0: int, t1: Optional[int]) -> bool:
@@ -216,7 +223,7 @@ def recovery(samples: List[dict], events: List[dict], i: int, cfg_mining: Dict[s
     if ev["kind"] == "heal":
         a, b = ev["a"], ev["b"]
         out.update(a=a, b=b)
-        es = event_sample(samples, ev)
+        es = event_sample(samples, ev, next_event_t(events, i))
         sa, sb = (node_of(es, a), node_of(es, b)) if es else (None, None)
         ha = sa.get("fullHeight") if answered(sa) else None
         hb = sb.get("fullHeight") if answered(sb) else None
@@ -239,7 +246,7 @@ def recovery(samples: List[dict], events: List[dict], i: int, cfg_mining: Dict[s
     else:
         n = ev["node"]
         out["node"] = n
-        es = event_sample(samples, ev)
+        es = event_sample(samples, ev, next_event_t(events, i))
         all_names = [s["name"] for s in (samples[0]["nodes"] if samples else [])]
         restarted = {e.get("node") for e in events[i + 1:] if e.get("kind") in NODE_KINDS + ("launch",)
                      and e["t"] > t0 and (t1 is None or e["t"] < t1)}

@@ -38,7 +38,12 @@ out="${TMPDIR:-/tmp}/peeryard-stack-$d-$base${for_sc:+-for-$for_sc}.patch"; git 
 echo "stack: ${names[*]} on $base -> $out sha256 $(sha256sum "$out" | cut -c1-16)" >&2
 if [[ -z "$build" ]]; then echo "$out"; exit 0; fi
 jar="$(DIFFRUN_ERGO_CLONE="$clone" bash diffrun/build.sh "$base" "$out")"
-# name the stack beside the jar, once (a cache entry is never rewritten), for review/provenance.sh
-[[ -f "$jar.stack.json" ]] || jq --arg b "$base" --arg c "$(sha256sum "$out" | cut -d' ' -f1)" --arg for "$for_sc" \
-  "{repo, base: \$b, combined_sha256: \$c, for: (if \$for == \"\" then null else \$for end), patches: [$SEL | {id, file, upstream_pr, status, only_for}]}" "$MJ" > "$jar.stack.json"
+# name the stack beside the jar, once (a cache entry is never rewritten), for review/provenance.sh; written to a temp
+# file beside it and moved, so an interrupted or failed write never leaves a partial stack.json that "once" would keep
+if [[ ! -f "$jar.stack.json" ]]; then
+  st="$(mktemp "$jar.stack.json.XXXXXX")"
+  if jq --arg b "$base" --arg c "$(sha256sum "$out" | cut -d' ' -f1)" --arg for "$for_sc" \
+    "{repo, base: \$b, combined_sha256: \$c, for: (if \$for == \"\" then null else \$for end), patches: [$SEL | {id, file, upstream_pr, status, only_for}]}" "$MJ" > "$st"
+  then mv "$st" "$jar.stack.json"; else rm -f "$st"; echo "stack: could not write $jar.stack.json" >&2; exit 1; fi
+fi
 echo "$jar"

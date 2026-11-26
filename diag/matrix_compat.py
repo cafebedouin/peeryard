@@ -3,7 +3,8 @@
 mining; the end mark precedes the relaunches that stop mining).
   relay      per ordered pair of Matrix nodes X->Y: input blocks X mined, sent to Y, Y processed; and how many of X's
              sends are predicted by "Y eligible iff |X full height - Y's height at its last SyncInfo to X| <= 2" (the
-             relay filter's peer height is refreshed only by SyncInfo)
+             relay filter's peer height is refreshed only by SyncInfo); a block for which X's height, or Y's at that
+             SyncInfo, is unknown (no "New best header" line yet) is left out of the prediction and counted apart
   ordering   ordering blocks mined per node; reorgs (a new best header not above the previous one)
   rollbacks  input-chain rollbacks per Matrix node (input-block processing that rolled back > 0 blocks)
   penalties  peer penalties by penalizer->penalized and type (reported: peers on an all-Matrix network penalize each other too)
@@ -41,18 +42,21 @@ def main(argv):
     hs = {n: heights(n) for n in names}
 
     def h_at(n, t):
+        # None: no "New best header" line at or before t, so the height is unknown (not 0)
         v = [h for (x, h) in hs[n] if x <= t]
-        return v[-1] if v else 0
+        return v[-1] if v else None
 
     def remote(l):
         m = re.search(r'remote=/([0-9.]+):', l)
         return ip2n.get(m.group(1)) if m else None
 
     mat = [n for n in names if kinds.get(n) == 'M']
-    mined, sends, sync = {}, {}, {}
+    mined, mined_at, sends, sync = {}, {}, {}, {}
     for x in names:
-        mined[x] = [(i, ts(l[:12]), m.group(1)) for i, l in enumerate(logs[x]) if stamped(l) and t0 <= ts(l[:12]) <= t1
-                    for m in [re.search(r'Input-block ([0-9a-f]{12})\S* mined @ height', l)] if m]
+        allm = [(i, ts(l[:12]), m.group(1)) for i, l in enumerate(logs[x]) if stamped(l)
+                for m in [re.search(r'Input-block ([0-9a-f]{12})\S* mined @ height', l)] if m]
+        mined_at[x] = [i for (i, _, _) in allm]       # every mined line, in or out of the window: bounds each block's sends
+        mined[x] = [r for r in allm if t0 <= r[1] <= t1]
         sends[x] = [(i, remote(l)) for i, l in enumerate(logs[x]) if 'MessageSpec(100: SubBlock)' in l]
         for l in logs[x]:
             if stamped(l) and 'Send message MessageSpec(65' in l:
@@ -63,16 +67,22 @@ def main(argv):
     print('[matrix-compat] nodes %s; counting from %s' % (listing, argv[2] if len(argv) > 2 else 'start'))
     for x, y in itertools.permutations(mat, 2):
         mm, ss = mined[x], sends[x]
-        sent = got = ok = 0
-        for k, (i, t, ib) in enumerate(mm):
-            nxt = mm[k + 1][0] if k + 1 < len(mm) else len(logs[x])
+        sent = got = ok = unknown = 0
+        for (i, t, ib) in mm:
+            # a block's sends are the SubBlock lines up to X's next mined line, whether or not that one is in the window
+            nxt = next((j for j in mined_at[x] if j > i), len(logs[x]))
             s = any(i < j < nxt and r == y for (j, r) in ss)
             sent += s
             got += ib in processed[y]
             last = [u for u in sync.get((y, x), []) if u <= t]
-            rep = h_at(y, last[-1]) if last else None
-            ok += (rep is not None and h_at(x, t) - 2 <= rep <= h_at(x, t) + 2) == s
-        print(f'[matrix-compat] relay {x}->{y}: mined {len(mm)} sent {sent} received {got}; stale-height rule predicts {ok}/{len(mm)}')
+            hx = h_at(x, t)
+            rep = h_at(y, last[-1]) if last else None      # no SyncInfo from Y yet: Y not eligible (predicts no send)
+            if hx is None or (last and rep is None):
+                unknown += 1          # X's height, or Y's at its last SyncInfo, unknown: the rule cannot be applied
+                continue
+            ok += (rep is not None and hx - 2 <= rep <= hx + 2) == s
+        print(f'[matrix-compat] relay {x}->{y}: mined {len(mm)} sent {sent} received {got}; stale-height rule predicts '
+              f'{ok}/{len(mm) - unknown}; height unknown {unknown}')
     orders = {n: sum(1 for l in logs[n] if stamped(l) and 'New block mined, header' in l and t0 <= ts(l[:12]) <= t1) for n in names}
     reorgs = {}
     for n in names:

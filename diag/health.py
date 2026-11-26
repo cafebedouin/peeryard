@@ -22,8 +22,10 @@ reads what the run kept and names each such problem per node:
 Input, either layout:
   a rig log dir           node_<X>.log (and events.jsonl when present), as rig.sh writes them in $RIG_LOG_DIR;
   a patch-compare run     nodes/node_<X>.log.gz, or, without node logs, errors-node_<X>.txt (the workflow's
-                          `uniq -c` of each node's ERROR lines: counts only, no times, so --from/--to do not apply
-                          and NODE_OOM / JVM_FATAL are read only where they were logged at ERROR).
+                          `uniq -c` of each node's ERROR lines: counts only, no times, so --from/--to do not apply,
+                          NODE_OOM is read only where it was logged at ERROR, and JVM_FATAL is not read at all: the
+                          JVM writes its banner as `#` lines, not logger lines, so a counts file cannot carry it; it
+                          needs a full node log).
 --from/--to keep only timestamped log lines inside that clock window (node log times, HH:MM:SS), e.g. a hook's mining
 window. --report-only <node>: that node's problems are printed with `(report only)` and do not make the run unhealthy
 (a hook that damages a node on purpose and reports, rather than judges, what it then does: corruption).
@@ -123,7 +125,8 @@ def node_health(kind, path, window=(None, None)):
 
 
 def _event_exits(run):
-    """{node: [exit]} from events.jsonl (the watcher's `exit` events), for a dir without node logs."""
+    """{node: [exit]} from events.jsonl (the watcher's `exit` events), for a node whose log lacks the exit banner
+    (a counts file, or a log the banner did not reach)."""
     out = collections.defaultdict(list)
     p = os.path.join(run, 'events.jsonl')
     if os.path.exists(p):

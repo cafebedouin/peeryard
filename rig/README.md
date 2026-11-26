@@ -311,7 +311,8 @@ candidate jar, in `pr-scenario.yml` like any scenario (`diffrun/README.md`, *Any
 ## Experimental examples
 
 `rig/examples/experimental.txt` lists the examples whose FAIL `run-suite.sh` reports as `FAIL (experimental)` and does
-not count against the suite. Each has a measured pass rate below 100% and an open investigation; a PASS is still a
+not count against the suite. Each has a reason and an open investigation, and a measured pass rate below 100% where one
+is recorded (the `matrix-compat-*` family has none yet); a PASS is still a
 PASS, and an example leaves the list when it passes reliably on the reference node. In the three-repeat sweep on GitHub
 runners (2026-09-26), every example not listed here passed 3 of 3 (`bootstrap-modes` after its pruning read was made to
 retry). The runner counts below pool that sweep, on the public repository's runner class (4 vCPU, 16 GB), with an
@@ -505,7 +506,7 @@ are the pieces it needed, all reusable:
 - **`rig/node-release.sh`**: the latest stable node release, fetched with its sha256 as `~/.peeryard/jars/default.jar`
   (the jar `rig.sh` uses when none is given), and `rig/patches/manifest.json`, one entry per thing the rig must do
   differently because of the node version, with the upstream PR or issue that would clear it; `patches` reports
-  which have cleared. Current default: 6.0.7.
+  which have cleared. `rig/node-release.sh jar` prints which release the default is on a given host.
 
 ### A block the application built: `rig/examples/lithos-block.{json,sh}`
 
@@ -515,7 +516,7 @@ The second example goes further: from a wiped chain to a Lithos block that the c
 ```
 LITHOS_STAGE=<Lithos-Client target/universal/stage> LITHOS_KEYSTORE=<keystore.json> LITHOS_PASS=<pass> \
 LITHOS_MNEMONIC="<the keystore's mnemonic>" LITHOS_PUBKEY=<hex pk of EIP-3 index 0> \
-PEERYARD_JAR=~/bin/ergo-node/ergo-6.0.7.jar RIG_PROBE_TIMEOUT_S=180 \
+PEERYARD_JAR=~/ergo-6.0.7.jar RIG_PROBE_TIMEOUT_S=180 \
 bash rig/rig.sh rig/examples/lithos-block.json rig/examples/lithos-block.sh
 ```
 

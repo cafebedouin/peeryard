@@ -27,8 +27,8 @@ artifact(){ case "$1" in
   release) echo "${PEERYARD_JAR_RELEASE:-}" ;; matrix) echo "${PEERYARD_MATRIX_JAR:-}" ;;
   arkadianet) echo "${PEERYARD_ARKADIANET_BIN:-}" ;; arkadianet-magic) echo "${PEERYARD_ARKADIANET_MAGIC_BIN:-}" ;;
   ergo-node-rust) echo "${PEERYARD_ERGO_NODE_RUST_BIN:-}" ;; *) echo "" ;; esac; }
-# rig/examples/experimental.txt: examples whose FAIL is reported but not counted (a measured, documented pass rate
-# below 100% on some hosts; rig/README.md says which and why). They still run, and a PASS is still a PASS.
+# rig/examples/experimental.txt: examples whose FAIL is reported but not counted (a documented reason, and a pass rate
+# below 100% on some hosts where one is measured; rig/README.md says which and why). They still run, and a PASS is still a PASS.
 experimental="$(grep -vE '^#|^$' "$HERE/examples/experimental.txt" 2>/dev/null | tr '\n' ' ')"
 while IFS=$'\t' read -r name marker to envs needs; do
   [[ -z "$name" || "$name" == \#* ]] && continue

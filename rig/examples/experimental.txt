@@ -1,6 +1,6 @@
 # Examples run by run-suite.sh whose FAIL is reported as "FAIL (experimental)" and not counted against the suite.
-# One name per line. An example is listed here only with a measured pass rate and a reason in rig/README.md
-# (section "Experimental examples"); it leaves the list when it passes reliably on the reference node.
+# One name per line. An example is listed here only with a reason in rig/README.md (section "Experimental examples"),
+# and its measured pass rate there once one is recorded; it leaves the list when it passes reliably on the reference node.
 matrix-fork-deep
 corruption
 mining

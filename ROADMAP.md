@@ -12,15 +12,18 @@ withholding peers, eclipse set-ups, fuzzers), and none is planned.
 | layer | covered | examples |
 |---|---|---|
 | peers | isolation by magic, connectivity, peer sets against the topology, churn (late join, crash, rejoin) | `magic`, `churn`, `netsplit` |
-| chain sync | fork choice under delay and partition, digest and pruned followers, UTXO-snapshot and NiPoPoW bootstrap | `fork-convergence`, `sibling-fork`, `bootstrap-modes`, `utxo-bootstrap`, `nipopow-bootstrap` |
+| chain sync | fork choice under delay, partition and slow (not cut) links, digest and pruned followers through partitions and crashes, UTXO-snapshot and NiPoPoW bootstrap, NiPoPoW joiners against serving peers of another version and a proof-form change on a running network | `fork-convergence`, `sibling-fork`, `bootstrap-modes`, `utxo-bootstrap`, `nipopow-bootstrap`, `soft-partition-phases`, `mixed-roles-phases`, `nipopow-mixed`, `nipopow-cutover` |
 | block production | mining control, retarget, orphans under latency, sub-blocks on the Matrix line | `mining`, `soak`, `matrix-pair`, `matrix-mixed` |
-| transactions | payments, chained spends, mempool capacity and eviction, re-admission after a reorg | `txload`, `txchain`, `mempool-evict`, `reorg-mempool` |
-| state | state-root agreement at a height, recovery from damaged data directories | `same_state` in most examples, `corruption` |
+| transactions | payments, chained spends, mempool capacity and eviction, re-admission after a reorg, a deep reorg that returns transactions the winning chain made invalid, payments across links that reorder and duplicate packets, storage-rent collection | `txload`, `txchain`, `mempool-evict`, `reorg-mempool`, `reorg-invalid-mempool`, `reorder-dup-phases`, `storage-rent*` ([`docs/storage-rent.md`](docs/storage-rent.md)) |
+| state | state-root agreement at a height, recovery from damaged data directories, crash consistency, the pruning floor across a restart | `same_state` in most examples, `corruption`, `crash-consistency`, `pruned-restart` |
+| wallet | balances and boxes against an oracle across forks and restarts, payment workloads, valid and malformed wallet requests, scans across an upgrade | `wallet-oracle-*`, `wallet-workload*`, `wallet-requests`, `wallet-unlock-2828`, `scan-upgrade` ([`rig/WALLET-ORACLE.md`](rig/WALLET-ORACLE.md), [`rig/WALLET-WORKLOAD.md`](rig/WALLET-WORKLOAD.md)) |
+| indexer | the extra indexer's answers compared between two jars, paging with mempool boxes, its rebuild rate | `indexer-diff`, `indexer-paging`, `indexer-bench.yml` ([`rig/INDEXER-DIFF.md`](rig/INDEXER-DIFF.md)) |
+| upgrades | a data directory restarted on the new jar, a network part-way through an upgrade, a release candidate against the previous release | `upgrade-restart`, `upgrade-mixed`, `pruned-upgrade`, `scan-upgrade`, `release-check.yml` ([`docs/release-check.md`](docs/release-check.md)) |
 | implementations | the Scala node with two Rust implementations on one network | `arkadianet-*`, `ergo-node-rust-*` |
-| pull requests | before/after verdicts with A/A calibration, a review workflow, the fixes peeryard carries | `diffrun/`, `review/`, `patches/` |
+| pull requests | before/after verdicts with A/A calibration, a review workflow, the fixes peeryard carries, one reproduction script per issue or PR, upstream unit and integration specs looped on a commit | `diffrun/`, `review/`, `patches/`, `repro/`, `spec-loop.yml`, `it-loop.yml` ([`docs/workflows.md`](docs/workflows.md)) |
 | hosted runs | the example suite and one pair per scenario on GitHub-hosted runners (`.github/workflows/sweep.yml`, 2026-09-26: 29 of 33 jobs green, the rest in `rig/examples/experimental.txt` or fixed), the A/A calibration (`aa.yml`) | `.github/workflows/` |
 | cost | what recovery costs, not only whether it happens: per-node CPU pinning and JVM options in the topology, an event log and per-node REST time, CPU, memory and disk I/O on one clock, and per heal and revive the time to agree again (`diag/costs.py`, `costs.json`); a flapping link | `loss`, `flap`, `three-body-*`, `revive-headroom` |
-| scenarios as data | an optional runner: three example hooks re-expressed as phases, one phase per line, read by `rig/lib/phases.sh` ([`rig/PHASES.md`](rig/PHASES.md)); the other generic hooks not attempted; each pilot and its original agreed in 3 of 3 hosted runs ([sweep 36956276986](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)) | `bringup-phases`, `flap-phases`, `reorg-mempool-phases` |
+| scenarios as data | an optional runner: three example hooks re-expressed as phases, one phase per line, read by `rig/lib/phases.sh` ([`rig/PHASES.md`](rig/PHASES.md)); the other generic hooks not attempted; each pilot and its original agreed in 3 of 3 hosted runs ([sweep 36956276986](https://github.com/cafebedouin/peeryard/actions/runs/36956276986)); four later examples written as phases from the start | `bringup-phases`, `flap-phases`, `reorg-mempool-phases`; `mixed-roles-phases`, `reorder-dup-phases`, `soft-partition-phases`, `soft-partition-race-phases` |
 | diagnosis | a named cause for every INCONCLUSIVE or FAIL (node down, stalled, lighter fork not switching, setup step), in the verdict and the run log | `diag/diagnose.py`, `cause` in `verdict.json`; `diag/features.py` ranks per-run features from the kept node logs against the runs' outcomes; `diag/sweep.py` finds what is new in a batch of runs against earlier runs (novelty) or unusual within it; `diag/logmap.py` names the source line behind each log message (both tools take `--source`) |
 
 ## Next
@@ -69,13 +72,15 @@ Then the tooling that serves them:
 
 ## Scenario backlog (conditions not yet tested anywhere public)
 
-- Soft partitions: fork resolution when links are slow rather than cut.
-- Reorder and duplication at 1-5% on live links (loss has the `loss` example).
+Built since this list was written (2026-10-01/02): soft partitions (`soft-partition-phases`, and
+`soft-partition-race-phases` as a measurement; neither is in the suite), reorder and duplication on live links
+(`reorder-dup-phases`), and mixed node roles through a partition with a crash (`mixed-roles-phases`, 40 ms links).
+
 - Round-trip time near the block interval: sync-status classification under jitter.
 - Connect and handshake timeouts against high-latency peers.
 - Reorgs under load: repeated shallow reorgs with UTXO, mempool, wallet and indexer compared across nodes.
 - Propagation depth on a line topology with per-hop latency.
-- Mixed node roles (pruned, digest, snapshot-bootstrapped) under latency and partition.
+- Snapshot-bootstrapped nodes among the mixed roles, and mixed roles under higher latency than 40 ms.
 - Deep forks on young chains: forks deeper than the sync summaries reach (more than 16 blocks below 128, more than
   128 below 512), as on fresh test networks and CI.
 
@@ -112,10 +117,13 @@ timing (the node's own test fixtures), so a maintainer can run it in seconds, an
 
 ## Beyond the node
 
-- **The review queue page**: a daily, rules-as-data view of which open pull requests need a review and which need
-  a maintainer, with rules anyone can change by pull request.
+- **The review queue page** (built: [cafebedouin.github.io/peeryard](https://cafebedouin.github.io/peeryard/), data in
+  [`docs/queue-data.md`](docs/queue-data.md)): a daily, rules-as-data view of which open pull requests need a review
+  and which need a maintainer, with rules anyone can change by pull request.
 - **Application-layer protocols on the network**: running a protocol built on Ergo (its off-chain actors and
-  contracts) on a peeryard network, to test its liveness and safety assumptions under the same conditions.
+  contracts) on a peeryard network, to test its liveness and safety assumptions under the same conditions. The first
+  is the Lithos client (`lithos-block`, `lithos-keepalive`, `lithos-upkeep`; `rig/README.md`, *Applications under
+  test*).
 
 ## Out of scope
 

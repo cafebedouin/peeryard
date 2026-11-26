@@ -1,120 +1,96 @@
 # peeryard
 
 **Status: EXPERIMENTAL (alpha).** peeryard tests the node of Ergo, a proof-of-work blockchain, as a **network** on one
-Linux machine: several real node
-processes, one network namespace each, links you can delay, drop, partition and heal, nodes you can crash and revive,
-different versions and implementations side by side, real transactions in the blocks. A pull request gets a
-before/after measurement to read next to its code instead of an opinion. No root to run it (the host setup needs
-`sudo`; on Ubuntu 23.10+ one sysctl again after each reboot), and no Docker for the local track. Its author is not a Scala programmer: every review made with it says which of its
-statements were executed and which were read, and every number can be re-run from the command that produced it.
+Linux machine: several real node processes, one network namespace each, links you can delay, drop, partition and heal,
+nodes you can crash and revive, different versions and implementations side by side, real transactions in the blocks.
+A pull request gets a before/after measurement to read next to its code instead of an opinion. No root to run it (the
+host setup needs `sudo`; on Ubuntu 23.10+ one sysctl again after each reboot), and no Docker for the local track. Its
+author is not a Scala programmer: every review made with it says which of its statements were executed and which were
+read, and every number can be re-run from the command that produced it.
 
-**Worth your time if** you review or write Ergo node changes that touch sync, fork choice, the mempool, bootstrap or
-the network, and want a measured before/after; you have a Linux host (WSL2 works) or a GitHub runner, and about two
-hours per verdict. **Not if** you want a quick green check (a verdict is a rate over paired runs, 1.5 to 2.5 hours), or a
-judgment on design or protocol choices.
+**Worth your time if** you review or write Ergo node changes that touch sync, fork choice, the mempool, bootstrap, the
+wallet or the network, and want a measured before/after; you have a Linux host (WSL2 works) or a GitHub runner, and
+about two hours per verdict. **Not if** you want a quick green check (a verdict is a rate over paired runs, 1.5 to 2.5
+hours), or a judgment on design or protocol choices.
 
-**What a result looks like.** `fork-convergence` asks whether a follower holding a lighter fork switches to the heavier
-one once it can see it. On GitHub-hosted runners (4 vCPU / 16 GB, the class a public repository gets; workflow
-`aa.yml`):
+## What a result looks like
+
+`fork-convergence` asks whether a follower holding a lighter fork switches to the heavier one once it can see it. On
+GitHub-hosted runners (4 vCPU / 16 GB, the class a public repository gets; workflow `aa.yml`):
 
 | node | switched |
 |---|---|
 | release 6.0.6 | 23 of 40, and 39 of 80 in a second measurement |
-| release + [ergoplatform/ergo#2511](https://github.com/ergoplatform/ergo/pull/2511) alone | 80 of 80 |
-| reference node (release + the patches peeryard carries) | 40 of 40, and 80 of 80 |
+| release 6.0.6 + [ergoplatform/ergo#2511](https://github.com/ergoplatform/ergo/pull/2511) alone | 80 of 80 |
+| reference node on 6.0.6 (release + the patches peeryard carried) | 40 of 40, and 80 of 80 |
+| release 6.0.8 (carries [#2649](https://github.com/ergoplatform/ergo/pull/2649)) | 38 of 38 valid runs (2026-10-16) |
 
-The release's misses are the defect being measured, not noise in the rig: the same rig and scenario run a fixed build at
-the ceiling. The release's rate also depends on the machine (54 of 77 on the 2 vCPU / 8 GB class), so rates are compared
-only within one runner class, and a candidate is judged against the base measured on the same class. A `SUPPORTS` verdict means
-the base failed at least twice and the candidate switched every time; how often that happens for a candidate no better
-than the base depends on the base's rate: about 1% when the release switches 57% of the time, 13% when it switches 85%
-(the table in `diffrun/README.md`). Finished runs to look at before producing one: `diffrun/examples/`.
+The 6.0.6 misses were the defect being measured, not noise in the rig: the same rig and scenario ran a fixed build at
+the ceiling, and the release that shipped the fix sits there too. A rate depends on the machine (6.0.6 switched 54 of 77
+on the 2 vCPU / 8 GB class), so rates are compared only within one runner class, and a candidate is judged against the
+base measured on the same class. A `SUPPORTS` verdict means the base failed at least twice and the candidate passed
+every time; how often that happens for a candidate no better than the base depends on the base's rate (the table in
+`diffrun/README.md`). Against a base at the ceiling, as 6.0.8 is here, a scenario can still show a regression
+(`AGAINST`) but has no room to show an improvement. Finished runs to look at: `diffrun/examples/`.
 
-**First run** (about ten minutes, most of it setup; details in the quick start below; building a candidate jar also
-needs JDK 8 and sbt):
+## First run
+
+About ten minutes, most of it setup. The full host setup, and what the sysctl gives up, is in
+[`docs/running.md`](docs/running.md).
 ```
 sudo apt-get install -y jq iproute2 util-linux procps coreutils curl unzip git python3 default-jre-headless
-sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # Ubuntu 23.10+ only: turns off a host protection until reboot (see below)
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # Ubuntu 23.10+ only: turns off a host protection until reboot
 sudo modprobe sch_netem
-curl -fsSL -o ~/ergo-6.0.6.jar https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
-echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $HOME/ergo-6.0.6.jar" | sha256sum -c
+git clone https://github.com/cafebedouin/peeryard && cd peeryard   # every command below runs from here
+curl -fsSL -o ~/ergo-6.0.8.jar https://github.com/ergoplatform/ergo/releases/download/v6.0.8/ergo-6.0.8.jar
+echo "e1269f3c9b1c75d29f1f1bded720101792db41118757016123de113668353346  $HOME/ergo-6.0.8.jar" | sha256sum -c
 bash rig/preflight.sh                                             # can this host run the rig?
-PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh   # two nodes, about a minute
+PEERYARD_JAR=~/ergo-6.0.8.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh   # two nodes, about a minute
+```
+It ends with the example's verdict line and the rig's (heights vary):
+```
+  SYNC-OK: B is on A's chain at height 8 (B.h=8, A.h=27, A keeps mining)
+[rig] === hook done (verdict: PASS) ===
 ```
 In a container instead (macOS, or a host you would rather not change): `bash docker/run.sh` builds the image and opens a
 shell in it with the flags the rig needs; then the last two lines above, unchanged (`PEERYARD_JAR` set before `run.sh`
-is mounted in). Details under *What it needs* below.
+is mounted in). `rig/node-release.sh fetch` (needs `gh`) downloads the latest release jar and records its sha256 instead of the
+`curl` line.
 
-**Who it is for.**
-- Ergo node maintainers: not to run, unless you want to. What reaches you is the output: an issue with a reproduction,
-  a pull request whose test fails on the release and passes with the fix, a review that says what was executed. The
-  `regression/` track is the one part meant for your own tree: link shaping inside `src/it`, no image change.
-- Contributors with open pull requests: a before/after on your own change, built on its merge base, with the release's
-  own base rate beside it (`review/`, `diffrun/`).
-- Anyone who wants to help with node development and does not know where to start: `AGENTS.md` and `review/` are a
+## Who it is for
+
+- **Ergo node maintainers:** not to run, unless you want to. What reaches you is the output: an issue with a
+  reproduction, a pull request whose test fails on the release and passes with the fix, a review that says what was
+  executed. The `regression/` track is the one part meant for your own tree: link shaping inside `src/it`, no image
+  change.
+- **Contributors with open pull requests:** a before/after on your own change, built on its merge base, with the
+  release's own base rate beside it (`review/`, `diffrun/`).
+- **Anyone who wants to help with node development and does not know where to start:** `AGENTS.md` and `review/` are a
   procedure, not a skill. A laptop, a model and a public pull request produce a review a maintainer can act on, in a
   form that stays the same whoever runs it.
-- Models: an agent asked to review a pull request starts at `AGENTS.md`; a person starts at the quick start below.
+- **Models:** an agent asked to review a pull request starts at `AGENTS.md`; a person starts at *First run* above.
 
-**Review queue:** [cafebedouin.github.io/peeryard](https://cafebedouin.github.io/peeryard/) lists the open ergoplatform/ergo
-pull requests that need a review, ranked by public rules (`queue/rules.json`), and
+**Review queue:** [cafebedouin.github.io/peeryard](https://cafebedouin.github.io/peeryard/) lists the open
+ergoplatform/ergo pull requests that need a review, ranked by public rules (`queue/rules.json`), and
 [`/maintainers`](https://cafebedouin.github.io/peeryard/maintainers/) the ones waiting on a maintainer, opening with the
-PRs this test suite depends on. Both pages also list open PRs that make the same production change (same
-`git patch-id` of the changed lines) and open PRs by different authors on the same issue that touch the same production
-files. Generated daily from public GitHub data; a disagreement with a rank is a pull request against the rules. The same
-data, with a daily snapshot of the duplicate groups, is published as JSON for tools: fields, update times and the
-stability promise in [`docs/queue-data.md`](docs/queue-data.md).
+PRs this test suite depends on. Both pages also list open PRs that make the same production change (same `git
+patch-id` of the changed lines) and open PRs by different authors on the same issue that touch the same production
+files. Generated daily from public GitHub data; a disagreement with a rank is a pull request against the rules. The
+same data is published as JSON for tools: [`docs/queue-data.md`](docs/queue-data.md).
 
-**What it is not.** peeryard checks whether a change does what it says and whether it holds under bad network
-conditions. It does not judge whether a change is the right design, and it has nothing to say about cryptography or
-protocol choices; those stay with the maintainers. A verdict is evidence, not proof: read it with the base rate for its
-runner class beside it (above). Many node defects only appear with several nodes and imperfect links (forks that never
-resolve, followers that never switch to the heavier chain, sync that stalls after a reorg); they are hard to reproduce
-on one machine and flaky in CI, and peeryard makes them runnable and repeatable on a network that can mix the Scala
-node, the two Rust nodes and the Matrix line. It is a lab for a reviewer, not a replacement for one.
+## What it is not
+
+peeryard checks whether a change does what it says and whether it holds under bad network conditions. It does not judge
+whether a change is the right design, and it has nothing to say about cryptography or protocol choices; those stay with
+the maintainers. A verdict is **evidence, not proof**: it summarizes N runs of one scenario on one machine, and is read
+with the base rate for its runner class beside it and the known limits in each component's README. Many node defects
+only appear with several nodes and imperfect links (forks that never resolve, followers that never switch to the
+heavier chain, sync that stalls after a reorg); they are hard to reproduce on one machine and flaky in CI, and peeryard
+makes them runnable and repeatable on a network that can mix the Scala node, the two Rust nodes and the Matrix line. It
+is a lab for a reviewer, not a replacement for one.
 
 The name is meant like a railyard or a shipyard: a place where the vessels, here peers, are brought in, marshalled,
 split and rejoined, inspected, repaired and sent back out.
-
-**What runs today**
-- `rig/` — N nodes, shaped links, mining control, mixed versions, wallet payments, long runs; examples that check
-  the rig itself; `rig/devnet.sh` keeps a devnet up across sessions, its chain kept across `down` and `up`.
-  Every run records the network it actually ran (`effective.json`).
-- `diag/` — reading a run: named causes for a failure (`diagnose.py`), recovery costs (`costs.py`), and an opt-in
-  passive wire observer (`wire.py`: per-link pcaps, each Ergo message framed and six kinds parsed, `PEERYARD_WIRE=1`).
-- `diffrun/` — the scenario runner: build a candidate jar from a git ref, a patch, or part of a pull request
-  (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`.
-  The scenarios are the manifests under `diffrun/scenarios/`; `diffrun/README.md` (*Scenarios*) is the catalog, and
-  `diffrun/scenarios/FIT.md` maps production paths to the scenario that answers for them. Among them,
-  `fork-convergence`, `sibling-fork` and `matrix-paychain` reproduce behavior that is public in upstream issues or
-  PRs (`matrix-paychain` on the Matrix line), and `interop`, `txload` and `bootstrap-modes` check agreement; the
-  rest include the indexer, the wallet, crash consistency, storage rent and the relay floor.
-- `regression/` — the same link shaping inside ergo's own Docker integration suite (a sidecar with `NET_ADMIN`,
-  node image untouched), with three example specs and a failure classifier, as a patch on v6.0.6 meant to become
-  upstream pull requests.
-- `stack/` — a companion for the review queue: which open PRs share text and which one to land first. Git
-  only; triage, not authority (see its README's Known issue).
-- `patches/` — node fixes peeryard carries until they land upstream (ours and adopted PRs; nine open-PR patches on
-  6.0.6 today, eight in the default stack), the reference node built from the release plus those patches, and a check that flags a patch a new
-  release has made redundant. A pull-request review builds both jars on the PR's own merge base, never on this stack.
-- `ROADMAP.md` — what is covered by layer, what is planned next, the scenario backlog, and what is out of scope.
-- `review/` — reviewing a pull request with all of the above: pick a PR, run the recipes that fit it, write the
-  report in the house form (`review/GUIDE.md`, templates by kind), three reviews of the draft, four gates
-  (`review/GATES.md`), and a human who posts. `AGENTS.md` and `.claude/skills/review-pr` drive it for an agent.
-- `.github/workflows/` — the same suite on GitHub-hosted runners: `sweep.yml` (every rig example, and one pair each of
-  `fork-convergence` and `sibling-fork`, on the reference nodes) and `aa.yml` (the A/A calibration of those two); the
-  runs a published verdict is meant to rest on. `spec-loop.yml` runs one of ergo's own unit specs (or one test in it) N
-  times on a commit, with an optional patch applied first: a flaky test's count before and after a change.
-  `review/release-check.sh` dispatches the release-candidate set (interop, indexer, fork convergence, sibling fork:
-  previous release vs the release PR) through `pr-scenario.yml` and collects one table; `review/RELEASE-CHECK.md` reads it.
-  `release-check.yml` checks a release branch (or any ref) against the previous release in one workflow: what changed
-  since the tag, the multi-node rig examples on both jars, the upgrade path (a data dir restarted on the new jar, a
-  mixed-version network) and the two rates per role ([docs/release-check.md](docs/release-check.md)).
-- `audits/` — where a run's evidence lives (ignored by git except the layout and an example), so a reviewer
-  can answer follow-up questions from what actually ran.
-
-A verdict is **evidence, not proof**: it summarizes N runs of one scenario on one machine. Read the known limits
-in each component's README before citing one.
 
 ## Scope
 
@@ -123,6 +99,26 @@ control, honest votes, wallet payments (conflicting spends from one wallet inclu
 by side, then checks that the nodes guard and agree. It contains no tooling whose main gain is offensive (crafted or
 malformed messages, fuzzers, lying peers), and its scenarios reproduce node behavior that is already public. The rule
 and its reasoning: `CONTRIBUTING.md`.
+
+## What is in the tree
+
+| path | what it is | read |
+|---|---|---|
+| `rig/` | N nodes, shaped links, mining control, mixed versions and implementations, wallet payments, long runs; examples that check the rig itself; `rig/devnet.sh` keeps a devnet up across sessions. Every run records the network it actually ran (`effective.json`). | [`rig/README.md`](rig/README.md), [`rig/PHASES.md`](rig/PHASES.md), [`rig/HOOK_API.md`](rig/HOOK_API.md) |
+| `diffrun/` | the scenario runner: build a candidate jar from a git ref, a patch or part of a pull request (hunk isolation by file), run a scenario N paired times, get `SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`. `diffrun/scenarios/FIT.md` maps production paths to the scenario that answers for them. | [`diffrun/README.md`](diffrun/README.md) (*Scenarios* is the catalog) |
+| `review/` | reviewing a pull request with all of this: pick a PR, run the recipes that fit it, write the report in the house form, three reviews of the draft, four gates, and a human who posts. `AGENTS.md` and `.claude/skills/review-pr` drive it for an agent. | [`review/README.md`](review/README.md), [`review/GUIDE.md`](review/GUIDE.md), [`review/GATES.md`](review/GATES.md) |
+| `repro/` | one self-contained reproduction script per upstream issue or PR (a revert check, a mutant, an A/B of two jars or JDKs), run locally or on a hosted runner through `repro-script.yml`. | [`repro/README.md`](repro/README.md) |
+| `patches/` | node fixes peeryard carries until they land upstream (nine for the Scala node, on v6.0.8, all in the default stack), the reference node built from the release plus those patches, and a check that flags a patch a new release has made redundant. A pull-request review builds both jars on the PR's own merge base, never on this stack. | [`patches/README.md`](patches/README.md) |
+| `diag/` | reading a run: named causes for a failure (`diagnose.py`), recovery costs (`costs.py`), and an opt-in passive wire observer (`wire.py`, `PEERYARD_WIRE=1`). | [`diag/README.md`](diag/README.md) |
+| `regression/` | the same link shaping inside ergo's own Docker integration suite (a sidecar with `NET_ADMIN`, node image untouched), with example specs and a failure classifier, as a patch meant to become upstream pull requests. | [`regression/README.md`](regression/README.md) |
+| `stack/` | a companion for the review queue: which open PRs share text and which one to land first. Git only; triage, not authority. | [`stack/README.md`](stack/README.md) |
+| `queue/` | the review-queue builder behind the published pages: rules, claims, reviewers, the `next` command. | [`docs/queue-data.md`](docs/queue-data.md) |
+| `.github/workflows/`, `ci/` | the suite on GitHub-hosted runners: checks on every push, sweeps and A/A calibration, PR scenarios, upstream spec loops, the release check; `ci/` holds workflows to copy into an ergo fork. | [`docs/workflows.md`](docs/workflows.md), [`docs/release-check.md`](docs/release-check.md) |
+| `bench/` | `bench/indexer/ExtraIndexerRebuildRateSpec.scala`, an indexer rebuild-rate spec that `indexer-bench.yml` runs on a ref. | [`docs/workflows.md`](docs/workflows.md) |
+| `audits/` | where a run's evidence lives (ignored by git except the layout and an example), so a reviewer can answer follow-up questions from what actually ran. | [`audits/README.md`](audits/README.md) |
+| `tests/` | the no-node self-tests, seconds each. | [`docs/running.md`](docs/running.md#self-tests-no-node-seconds) |
+| `docs/` | host setup and run card, workflows, the release check, the queue data, storage rent. | [`docs/running.md`](docs/running.md), [`docs/storage-rent.md`](docs/storage-rent.md) |
+| `ROADMAP.md` | what is covered by layer, what is planned next, the scenario backlog, and what is out of scope. | |
 
 ## Two tracks
 
@@ -134,129 +130,52 @@ and its reasoning: `CONTRIBUTING.md`.
 | output | a verdict (`SUPPORTS` / `AGAINST` / `NULL` / `DEGENERATE`) over N paired runs | a ScalaTest spec that passes or fails, with a named failure cause |
 
 ## Quick start (local)
-All commands below run from the root of a peeryard clone:
+
+After the first run above. Exit codes, run times and where each command writes: [`docs/running.md`](docs/running.md).
+
+**More rig examples.** Real transactions: A pays B from its mining rewards and the payments confirm (a minute or two).
+`run-suite.sh` runs several and prints one line each; with no names it runs every example in `rig/examples/suite.tsv`,
+skipping those whose artifacts are not set.
 ```
-git clone https://github.com/cafebedouin/peeryard && cd peeryard
+PEERYARD_JAR=~/ergo-6.0.8.jar bash rig/rig.sh rig/examples/txload.json rig/examples/txload.sh
+PEERYARD_JAR=~/ergo-6.0.8.jar bash rig/run-suite.sh bringup txload     # rig bringup: PASS (SYNC-OK) ...
 ```
 
-**Host setup, once.** Installing the packages and two commands need `sudo`; nothing else in peeryard does.
-```
-sudo apt-get install -y jq iproute2 util-linux procps coreutils curl unzip git python3 default-jre-headless   # Debian/Ubuntu names
-sudo apt-get install -y openjdk-8-jdk   # only to build candidate jars; sbt too: https://www.scala-sbt.org/download
-sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # Ubuntu 23.10+ only; see below
-sudo modprobe sch_netem
-unshare -Urmn true && echo "user namespaces ok"
-bash rig/preflight.sh
-```
-The sysctl exists only on Ubuntu kernels (23.10 and later). It turns off, for **every program on the host**, the
-AppArmor rule that stops unprivileged programs from creating user namespaces; that rule is a hardening measure
-that narrows the kernel code a local unprivileged process can reach. Setting it to 0 gives that hardening up
-until the next reboot, when the value resets to 1 (it is not written to `/etc/sysctl.d`). On other distributions
-the key does not exist and unprivileged user namespaces are usually allowed already: if `unshare -Urmn true`
-succeeds, skip the sysctl.
-
-**The release jar and the rig.** These need only the release jar and the run card's packages (below; `rig/preflight.sh`
-checks them and fails closed).
-```
-# the ergo-<version>.jar asset of the GitHub release (ergo v6.0.6 reports appVersion 6.0.6), and its sha256
-curl -fsSL -o ~/ergo-6.0.6.jar https://github.com/ergoplatform/ergo/releases/download/v6.0.6/ergo-6.0.6.jar
-echo "21b9023933b19b98b7eb4d50cb78bcb6c827a0fe65711a00ceaf1b83f8f3a323  $HOME/ergo-6.0.6.jar" | sha256sum -c
-
-# a two-node network: A mines, B syncs; checks the rig itself (about a minute)
-PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/bringup.json rig/examples/bringup.sh
-
-# real transactions: A pays B from its mining rewards, the payments confirm (a minute or two)
-PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/rig.sh rig/examples/txload.json rig/examples/txload.sh
-```
-A run ends with the example's own verdict line and the rig's; for `bringup` it looks like this (heights vary):
-```
-  SYNC-OK: B is on A's chain at height 7 (B.h=7, A.h=27, A keeps mining)
-[rig] === hook done (verdict: PASS) ===
-```
-The exit status says the same: 0 PASS, 1 FAIL, 3 INCONCLUSIVE. INCONCLUSIVE is not a verdict on the node: the run
-could not show what the example checks, and a `[rig] CAUSE` line says why (`HARNESS` means a rig step, such as a
-partition, a crash or a restart, did not happen as asked). Exit 2 or 10 means the rig could not bring the network up
-(a node never answered, a link never connected, a namespace or netem step failed) before the example started; the
-last `[rig]` lines say which. To run several examples and get one line each:
-```
-PEERYARD_JAR=~/ergo-6.0.6.jar bash rig/run-suite.sh bringup txload     # rig bringup: PASS (SYNC-OK) ...
-```
-With no names it runs every example in `rig/examples/suite.tsv`, skipping those whose artifacts are not set.
-
-**A candidate jar.** Built from a clone of ergo with JDK 8 and sbt (the first build on a host downloads sbt's dependencies: 10 to 20 minutes;
-later builds are cached by the diff's hash) (set `JAVA8_HOME` if JDK 8 is not found under
-`/usr/lib/jvm`). The example takes the production diff of ergoplatform/ergo#2511 (`master...pr-2511`: from the
-PR's merge base with master to its head) and applies it onto v6.0.6, as the hosted CI example does;
-`-- <paths>` restricts the diff to those paths (hunk isolation by file). The example holds while #2511 is open; once it
-merges the range is empty and `build.sh` stops, so take any open pull request instead.
+**A candidate jar.** Built from a clone of ergo with JDK 8 and sbt (the first build on a host downloads sbt's
+dependencies, 10 to 20 minutes; later builds are cached by the diff's hash). The example takes the production diff of
+the open pull request [ergoplatform/ergo#2721](https://github.com/ergoplatform/ergo/pull/2721) (`master...pr-2721`:
+from the PR's merge base with master to its head) and applies it onto v6.0.8; `-- <paths>` restricts the diff to those
+paths (hunk isolation by file). Once #2721 merges the range is empty and `build.sh` stops, so take any open pull
+request instead.
 ```
 git clone https://github.com/ergoplatform/ergo ~/src/ergo
-git -C ~/src/ergo fetch origin pull/2511/head:pr-2511
-CAND="$(DIFFRUN_ERGO_CLONE=~/src/ergo bash diffrun/build.sh v6.0.6 master...pr-2511 -- src/main ergo-core/src/main ergo-wallet/src/main avldb/src/main)"
+git -C ~/src/ergo fetch origin pull/2721/head:pr-2721
+CAND="$(DIFFRUN_ERGO_CLONE=~/src/ergo bash diffrun/build.sh v6.0.8 master...pr-2721 -- src/main ergo-core/src/main ergo-wallet/src/main avldb/src/main)"
 echo "$CAND"          # the cached candidate jar; its sidecar <jar>.json sits beside it
 ```
-The release jar above was built upstream and the candidate here, so a pair of them differs in two ways (the
-patch and the toolchain). `diffrun/build.sh v6.0.6` with no patch builds the unpatched base with the same
-toolchain, which leaves one difference. To review a pull request, build both jars on the PR's own merge base
-instead (`AGENTS.md`, `review/README.md`).
+The release jar was built upstream and the candidate here, so a pair of them differs in two ways (the patch and the
+toolchain). `diffrun/build.sh v6.0.8` with no patch builds the unpatched base with the same toolchain, which leaves one
+difference. To review a pull request, build both jars on the PR's own merge base instead (`AGENTS.md`,
+`review/README.md`).
 
 **A two-version devnet that stays up**: the release jar mines, the candidate follows; query, stop, resume, wipe.
 ```
-PEERYARD_JAR=~/ergo-6.0.6.jar PEERYARD_JAR_B="$CAND" bash rig/devnet.sh up rig/examples/mixed.json two
+PEERYARD_JAR=~/ergo-6.0.8.jar PEERYARD_JAR_B="$CAND" bash rig/devnet.sh up rig/examples/mixed.json two
 bash rig/devnet.sh curl B /info two           # then: status | logs B | down | up (same command) | wipe
 ```
 
 **A scenario verdict**: release vs candidate. Below, one paired run of the smoke manifest (about ten minutes); a verdict
-to cite comes from the full `fork-convergence.json` (8–12 pairs, 1.5–2.5 hours). The registered version must be exactly
-the appVersion the node reports in `/info`, or every run is VOID.
+to cite comes from the full manifest (8–12 pairs, 1.5–2.5 hours); the smoke manifest checks only that every node still
+answers afterwards. The registered version must be exactly the
+appVersion the node reports in `/info`, or every run is VOID. #2721 moves the best header to a tying chain, which
+`sibling-fork` observes.
 ```
-bash diffrun/register.sh ~/ergo-6.0.6.jar 6.0.6
-bash diffrun/run.sh diffrun/scenarios/fork-convergence-smoke.json --base ~/ergo-6.0.6.jar --candidate "$CAND" --out ~/fc-2511
+bash diffrun/register.sh ~/ergo-6.0.8.jar 6.0.8
+bash diffrun/run.sh diffrun/scenarios/sibling-fork-smoke.json --base ~/ergo-6.0.8.jar --candidate "$CAND" --out ~/sf-2721
 ```
-Example output of a finished run is in `diffrun/examples/`.
 
-**Run card.** You need:
-- Linux with unprivileged user namespaces, `iproute2` with `sch_netem`, util-linux (`unshare`, `nsenter`), procps
-  (`ps`, `pgrep`, `pkill`), coreutils (`timeout`, `sha256sum`, `realpath`), `jq`, `curl`, `unzip`, `git`, `python3`
-  (the rig's cause classifier and the diag tools; standard library only),
-  **bash 4.4 or later**, a Java runtime for the node (the example runs used OpenJDK 21);
-- **JDK 8 and sbt**, only to build candidate jars (`diffrun/build.sh --dry-run` needs neither);
-- the Matrix examples need the `weak-blocks` reference node (`patches/sigma-snapshot.sh` once, then
-  `patches/stack.sh --build ergo-matrix`; `patches/README.md`), and the Rust examples an arkadianet or ergo-node-rust
-  binary (`rig/README.md`); `rig/run-suite.sh` skips what is not set;
-- about 1.5 GB of free RAM for a four-node scenario;
-- **Docker is optional, two ways:** `bash docker/run.sh` builds an image with the whole run card and starts a shell in
-  it at `/peeryard`, with the flags the rig needs already set (`docker/Dockerfile` explains each; by hand they are
-  `--init --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined`,
-  no `--privileged`, no root inside). The clone, your `PEERYARD_JAR` and `DIFFRUN_ERGO_CLONE` are mounted, and the
-  container's home is a host directory so caches survive restarts (`docker/run.sh --help`). This is the route for macOS
-  and for hosts where unprivileged user namespaces are locked; the first command inside is `bash rig/preflight.sh`,
-  which checks the container the same way it checks a host. And `review/it-spec.sh` runs one of ergo's own Docker
-  integration specs on a PR's tree, the suite upstream's CI runs, which peeryard treats as a dependency it calls, not
-  code it carries.
+## Lead scenarios
 
-A fork-convergence run takes 3–7 minutes; a full verdict takes 8–12 paired runs, 1.5 to 2.5 hours. The timings in
-this README come from a development host from 2019 and GitHub-hosted runners (2 and 4 vCPUs); a newer machine is
-faster. What gets
-written, and where:
-- the rig: its scratch directory (`SCRATCH`, default a fresh `mktemp -d` under `$TMPDIR` or `/tmp`, which is not
-  deleted afterwards), and node logs under a topology's `log_dir` when it sets one (anywhere it names);
-- `rig/devnet.sh`: `~/.peeryard/devnet/<name>` (or `PEERYARD_DEVNET_DIR`);
-- `diffrun/run.sh`: its `--out` directory (default a fresh `diffrun.<scenario>.*` directory under `$TMPDIR` or `/tmp`);
-- `diffrun/build.sh`: the jar cache (`DIFFRUN_CACHE`, default `~/.cache/diffrun/builds`), with the temporary build
-  worktree inside it; sbt and coursier keep their own caches under `$HOME` (`~/.sbt`, `~/.ivy2`, `~/.cache/coursier`) (`$DIFFRUN_CACHE/.tmp.*/wt`; git's bookkeeping for it goes in the ergo clone's `.git`), and
-  a short socket directory under `/tmp` that sbt needs;
-- `review/revert-check.sh`: `/tmp/revert-check.*` unless `--out` is given.
-
-The no-node self-tests take seconds: `T=$(mktemp -d) bash tests/sequential.sh`, `T=$(mktemp -d) bash tests/lint.sh`,
-`T=$(mktemp -d) bash tests/precheck.sh` and `T=$(mktemp -d) bash tests/tooling.sh`, the last on the patch check,
-sidecar registration and provenance helpers. `T` must be a fresh empty directory: each test deletes it first. In a
-container, the rig needs the flags in the Docker item above, which `docker/run.sh` passes.
-
-The mnemonics, the REST API key `hello` (and its hash) and the solver key in `rig/rig.sh` and the example topologies
-are public devnet test values, not secrets: they unlock only the private devnets peeryard starts.
-
-## Scenarios
 | scenario | nodes | question | related upstream |
 |---|---|---|---|
 | `fork-convergence` | 4 | does a follower on a lighter, static fork switch when it meets a peer on a heavier fork? | ergoplatform/ergo#2511 (closed), #2649 (in v6.0.8), #2721 |
@@ -265,25 +184,25 @@ are public devnet test values, not secrets: they unlock only the private devnets
 | `txload` | 2 | are real wallet payments accepted, confirmed and counted in blocks? | agreement check |
 | `bootstrap-modes` | 3 | do a digest-mode follower and a pruning follower settle on the miner's chain and state root? | agreement check |
 
-These five are the lead and agreement scenarios; the full catalog is in `diffrun/README.md`. `fork-convergence` and
-`sibling-fork` run empty-block devnets, so they observe header and block-section behavior only; `txload` covers the
-payment path. The details, the expectations and the known limits of each are in `diffrun/README.md`.
+These are the lead and agreement scenarios; the full catalog (indexer, wallet, crash consistency, storage rent, the
+relay floor, NiPoPoW, the Matrix line and more) is in `diffrun/README.md`. `fork-convergence` and `sibling-fork` run
+empty-block devnets, so they observe header and block-section behavior only; `txload` covers the payment path.
 
 ## Where this is going
+
 In the tree: a scenario template on the rig (`diffrun/scenarios/lib/rig-scenario.sh`, used by every scenario except
 `fork-convergence`, `sibling-fork` and `wallet-oracle`), a release-candidate check on hosted runners
-(`docs/release-check.md`), a calibration run (`diffrun/examples/fork-convergence-aa-6.0.6/`: the release's
-own base rate on one host, read before any `SUPPORTS` is cited), `rig/preflight.sh`, and the review frame
-(`review/`, including a revert check for a PR's new tests, `review/revert-check.sh`, and a picker that builds on
-each PR's own merge base, `review/pick.sh`; the frame was used for the pilot reviews posted before the rename, the
-merge-base picker is newer and unexercised on a live pull request). Still planned: the two
-lead scenarios (`fork-convergence`, `sibling-fork`) moved onto the rig so its oracles apply to them; scenarios
-built from open field reports; and, once the maintainers have been
-asked, a driver that turns review requests into these runs.
-
-The docs: `rig/README.md`, `diffrun/README.md`, `regression/README.md`, `stack/README.md`.
+(`docs/release-check.md`), A/A calibration on hosted runners (`aa.yml`) and on one host
+(`diffrun/examples/fork-convergence-aa-6.0.6/`), `rig/preflight.sh`, and the review frame (`review/`, including a
+revert check for a PR's new tests, `review/revert-check.sh`, and a picker that builds on each PR's own merge base,
+`review/pick.sh`). Reviews made with it are posted on ergoplatform/ergo pull requests: a GitHub search for "peeryard" in
+that repository's PR comments returned 82 pull requests on 2026-11-26. Still planned: the two lead scenarios
+(`fork-convergence`, `sibling-fork`) moved onto the rig so its oracles apply to them; scenarios built from open field
+reports; and, once the maintainers have been asked, a driver that turns review requests into these runs. The rest is in
+`ROADMAP.md`.
 
 ## Credit, license and security
+
 The code, documentation and witnessed runs in this repository were produced by Claude (Anthropic; models Claude
 Fable 5.1 and Claude Opus 5.5) working under a human maintainer's direction and review; the pre-publication reviews
 were run by separate Claude instances and by two outside models, and their findings applied before release. The

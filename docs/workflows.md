@@ -231,7 +231,8 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
 - **Does**: the rebuild rate of ergo's extra indexer from an empty index, per ergo ref, on one runner so the arms share a
   host: `bench/indexer/ExtraIndexerRebuildRateSpec.scala` is copied into each arm's tree, the spec's chain generator is
   edited to mint tokens only in blocks 1-3 (the same edit on every arm), and the arms run interleaved, the order reversed
-  every other round. A CPU-and-write floor, not a disk-bound mainnet rate (header).
+  every other round. A CPU-and-write floor, not a disk-bound mainnet rate (header). The step summary lists every
+  arm and round; any run that printed no result (`NO RESULT`: an exception, OOM or the 60-minute wait) then fails the job.
 - **Trigger**: dispatch; push to `ci/indexer-bench` (with the `PUSH_*` values in the file). **Inputs**: `arms`
   (`label=ref`, default `v609=v6.0.9 pr2717=pull/2717/head`), `blocks` (1-4800), `rounds` (1-5, default 3).
 - **Size**: one job, 150 min.

@@ -1,14 +1,14 @@
 diff --git a/src/it/scala/org/ergoplatform/it/BestChainConsistencyUnderDelaySpec.scala b/src/it/scala/org/ergoplatform/it/BestChainConsistencyUnderDelaySpec.scala
 new file mode 100644
-index 000000000..05af5174e
+index 000000000..a6abc1ff1
 --- /dev/null
 +++ b/src/it/scala/org/ergoplatform/it/BestChainConsistencyUnderDelaySpec.scala
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,193 @@
 +package org.ergoplatform.it
 +
 +import com.typesafe.config.Config
 +import org.ergoplatform.it.container.Docker.ExtraConfig
-+import org.ergoplatform.it.container.{IntegrationSuite, Node}
++import org.ergoplatform.it.container.{IntegrationSuite, LinkControl, Node}
 +import org.ergoplatform.it.util.{ConvergenceDiagnosis, ConvergenceWatch, NodeSample}
 +import org.scalatest.flatspec.AnyFlatSpec
 +
@@ -37,7 +37,8 @@ index 000000000..05af5174e
 +  * A pass is reported only if the race ran: at least `minSiblingHeights` heights with more than one block
 +  * occurred (union over nodes; per-node counts are logged). Otherwise, and when link delay cannot be applied
 +  * or does not measure as configured, the test is CANCELED with the reason — except under `CI` (env), where
-+  * every such cancel is a FAIL with the same text, so a missing kernel module cannot hide the test.
++  * every such cancel is a FAIL with the same text, so a missing kernel module cannot hide the test. A link that
++  * cannot be shaped for another reason FAILS as `LINK_SHAPING_FAILED`.
 +  * Every failure names one cause; see [[util.ConvergenceDiagnosis]].
 +  */
 +class BestChainConsistencyUnderDelaySpec extends AnyFlatSpec with IntegrationSuite {
@@ -98,9 +99,11 @@ index 000000000..05af5174e
 +    // every edge across the cut is delayed, both directions; edges within a side are not
 +    val crossEdges = for (a <- sideA; c <- sideC; (from, to) <- Seq((a, c), (c, a))) yield (from, to)
 +    crossEdges.foreach { case (from, to) =>
-+      docker.setLinkDelay(from, to, crossDelay).left.foreach { error =>
-+        giveUp(s"NETEM_UNAVAILABLE: no link delay ${from.nodeName} -> ${to.nodeName}, so the race cannot be staged " +
-+          s"(host needs sch_netem, sch_prio, cls_u32: `sudo modprobe sch_netem sch_prio cls_u32`). tc said: $error")
++      docker.setLinkDelay(from, to, crossDelay).left.foreach {
++        case LinkControl.Unavailable(tc) =>
++          giveUp(s"NETEM_UNAVAILABLE: no link delay ${from.nodeName} -> ${to.nodeName}, so the race cannot be staged " +
++            s"(host needs sch_netem, sch_prio, cls_u32: `sudo modprobe sch_netem sch_prio cls_u32`). tc said: $tc")
++        case error => fail(s"${error.cause}: no link delay ${from.nodeName} -> ${to.nodeName}: ${error.detail}")
 +      }
 +    }
 +    // one round trip per cross edge must show both directions' delay
@@ -118,7 +121,9 @@ index 000000000..05af5174e
 +    val started = Await.result(
 +      watch.until(startupTimeout.fromNow)(_.forall(n => n.fullHeight.exists(_ >= 2) && n.peers.exists(_ >= 1)))(
 +        "Nodes did not all reach height 2 with a peer"), startupTimeout + 10.seconds)
-+    val startHeight = started.flatMap(_.fullHeight).min
++    // blocks mined in the window: from the highest node at its start to the lowest at its end, so a
++    // follower's catch-up on blocks mined before the window does not count
++    val startHeight = started.flatMap(_.fullHeight).max
 +
 +    // the window: sample fast; an episode needs the same inconsistent state in two consecutive samples
 +    var pending = Map.empty[(String, Int, String, String), Violation]
@@ -175,8 +180,8 @@ index 000000000..05af5174e
 +    val mined = endHeight - startHeight
 +    if (mined < minBlocks) fail(watch.report(s"Only $mined blocks in ${window.toSeconds} s, at least $minBlocks expected"))
 +
-+    // one height at a time: the REST client allows 10 connections per host
-+    val idsByHeight = (startHeight to endHeight).toList.map { h =>
++    // heights mined in the window only; one height at a time: the REST client allows 10 connections per host
++    val idsByHeight = (startHeight + 1 to endHeight).toList.map { h =>
 +      val perNode = Await.result(Future.traverse(nodes)(_.headerIdsByHeight(h)), 30.seconds)
 +      (h, perNode.flatten.distinct, nodes.map(_.nodeName).zip(perNode.map(_.distinct.size)))
 +    }

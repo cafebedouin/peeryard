@@ -21,6 +21,9 @@ shapes a link, so suites that do not shape links pay nothing.
 Shaping is per destination. The sidecar puts a `prio` qdisc on the node's interface, with one `netem` band per
 target address, selected by a `u32` filter on the destination IP. So only node-to-node traffic is shaped, and
 the harness's own REST polling is not. The qdiscs live in the node's namespace and disappear with the container.
+One `prio` qdisc has 16 bands and the first three carry unshaped traffic, so a node can shape links to at most 13
+destinations (`LinkControl.MaxDestinations`); `setLink` to a 14th returns `Failed` saying so, without running `tc`.
+The example specs use two per node.
 
 The API (`LinkControl`, mixed into the suite's `Docker`): `setLink(from, to, delay, lossPercent)` sets one
 direction's delay and/or loss; `setLinkDelay` and `setLinkLoss` are the one-knob forms; `partition(a, b)` cuts
@@ -42,10 +45,10 @@ with `git apply --check`. Together they add or change these files:
 | `src/it/.../container/LinkControl.scala` | the sidecar: `setLink`, `setLinkDelay`, `setLinkLoss`, `partition`, `heal`, `connectMillis` |
 | `src/it/.../container/Docker.scala` | mixes `LinkControl` into the suite's `Docker` helper |
 | `src/it/.../BestChainConsistencyUnderDelaySpec.scala` | example: a regression detector for issue #525 (best full block and best header on different forks at one height), staged with delayed links |
-| `src/it/.../PartitionHealSpec.scala` | example: a follower cut off from its miner by a 100%-loss link stops advancing, and catches up on the miner's chain after `heal` |
-| `src/it/.../DelayedMinersAgreeSpec.scala` | example: two miners racing across a 500 ms/way delayed cut, each with a follower; after two minutes all four nodes agree on the header a few blocks below the lowest height (green on v6.0.6: 56 blocks, agreement at height 65) |
-| `src/it/.../util/ConvergenceWatch.scala` | samples every node's `/info` during a test |
-| `src/test/.../util/ConvergenceDiagnosis.scala` (+ spec) | turns a failed convergence into one named cause instead of a bare timeout |
+| `src/it/.../PartitionHealSpec.scala` | example: a follower cut off from its miner by a 100%-loss link stops advancing, and catches up on the miner's chain after `heal`; the heights it compares come from rounds in which every node answered (retried for up to 20 s, else `NODE_UNRESPONSIVE`: cancel, or fail under `CI`) |
+| `src/it/.../DelayedMinersAgreeSpec.scala` | example: two miners racing across a 500 ms/way delayed cut, each with a follower; after two minutes all four nodes agree on the header a few blocks below the lowest height (green on v6.0.6: 58 blocks mined in the window, agreement at height 95, on a 12-CPU host) |
+| `src/it/.../util/ConvergenceWatch.scala` | samples every node's `/info` and container state during a test; its docker calls (`inspect`, log tail) run on a pool the watch owns, not on the suite's shared execution context |
+| `src/test/.../util/ConvergenceDiagnosis.scala` (+ spec) | turns a failed convergence into one named cause instead of a bare timeout. Container states: `running`, `paused`, `oom-killed`, `<status>(<exit code>)`, `removed` (docker no longer knows the container: counted as down) and `unknown` (docker did not answer: proves nothing, not counted as down). `NODE_LAGGING` names only a frozen node below the best full height |
 | `src/it/.../ForkResolutionSpec.scala` | uses the watch and the diagnosis in an existing spec |
 
 ## Use
@@ -56,9 +59,15 @@ cd <ergo clone> && sbt -Denv=test docker          # the node image, as upstream 
 sbt "it:testOnly org.ergoplatform.it.PartitionHealSpec org.ergoplatform.it.DelayedMinersAgreeSpec"   # green on v6.0.6
 sbt "it:testOnly org.ergoplatform.it.BestChainConsistencyUnderDelaySpec"                             # red by design while #525 is open
 ```
-If the modules or the sidecar image are unavailable, `setLink` returns the reason (tc's own words when `tc`
-ran and failed; the Docker error when the helper image could not be built). The example specs then cancel, or
-fail when `CI` is set, so a missing module cannot pass silently. The unit spec `ConvergenceDiagnosisSpec` cites
+`it:testOnly` with two suites forks both at once (`build.sbt` allows two forked suites), six node containers in all.
+On a small host (10 GB of RAM) that starved the second suite's followers: `DelayedMinersAgreeSpec` failed with
+`NODE_UNRESPONSIVE` before its window, then passed run alone. There, run the specs one per `it:testOnly`.
+`setLink` and its wrappers return a `LinkControl.LinkError` that says what failed, with tc's own words or the
+Docker error. `Unavailable` (cause `NETEM_UNAVAILABLE`) means the host cannot shape links at all: a kernel module
+is missing, `tc` is not found, `NET_ADMIN` is refused, or the helper image could not be built. The example specs
+then cancel, or fail when `CI` is set, so a missing module cannot pass silently. `Failed` (cause
+`LINK_SHAPING_FAILED`) is anything else: a 14th destination, a Docker error, tc failing for another reason. The
+specs fail on it, quoting the detail. Which tc messages count as unavailable is `LinkControl.UnavailableSignatures`. The unit spec `ConvergenceDiagnosisSpec` cites
 GitHub Actions run ids in comments; they are public runs of ergoplatform/ergo's own CI, kept so a reader can
 look up the end states each case reproduces.
 
@@ -75,8 +84,11 @@ look up the end states each case reproduces.
   and red only if the behavior regresses. `DelayedMinersAgreeSpec` uses the same staging as the #525 spec (the
   two specs start separate networks, so they observe the same kind of run, not the same run): together they say
   "consensus held, and the #525 race was or was not observed" under that staging. `DelayedMinersAgreeSpec`
-  checks that the delay was set (`tc` succeeded), a minimum block count and the final agreement; it does not
-  measure the delay on the path or confirm that a fork race actually occurred in a given run.
+  checks that the delay was set (`tc` succeeded), a minimum count of blocks mined in the window and the final
+  agreement; it does not measure the delay on the path or confirm that a fork race actually occurred in a given
+  run. Both delay specs count the blocks mined in the window as the lowest full height at its end minus the highest
+  at its start, so a follower catching up on older blocks does not count; the #525 spec scans for sibling blocks
+  over the same heights.
 - `ConvergenceWatch` builds on `ConvergenceObservations`, which is upstream since v6.0.6 (`src/it/.../util/`);
   the patch adds nothing else outside `src/it` and `src/test`.
 - The sidecar image is built at test time from `alpine:3.21.3` (a fixed release, so its `apk` package set is

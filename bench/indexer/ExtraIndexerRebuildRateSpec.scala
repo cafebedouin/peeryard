@@ -1,11 +1,10 @@
 package org.ergoplatform.nodeView.history.extra
 
-import akka.actor.Props
+import akka.actor.{ActorRef, Props}
 import akka.testkit.TestProbe
 import org.ergoplatform.nodeView.history.extra.ExtraIndexer.ReceivableMessages.Index
 
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.Condition
 import scala.concurrent.duration.DurationInt
 
 // peeryard bench (bench/indexer): the extra indexer's rebuild rate from an empty index over a generated chain.
@@ -23,10 +22,21 @@ class ExtraIndexerRebuildBenchActor(test: ExtraIndexerSpecification) extends Ext
 
 class ExtraIndexerRebuildRateSpec extends ExtraIndexerSpecification {
 
-  override def awaitCondition(condition: Condition): Unit = {
+  /**
+    * Sends `Index()` and waits until the indexed height reaches the generated chain's full height. The lock is
+    * taken before the send: the actor signals `done` under it, so its signal cannot come before the wait starts.
+    * The height is read after every wake-up, so a spurious one, or a signal from another actor, does not end
+    * the wait early.
+    */
+  private def indexAndAwait(bench: ActorRef): Unit = {
+    val deadline = 60.minutes.fromNow
     lock.lock()
     try {
-      if (!condition.await(60, TimeUnit.MINUTES)) throw new AssertionError("bench: indexer did not catch up in 60 min")
+      bench ! Index()
+      do {
+        if (!done.await(deadline.timeLeft.toMillis, TimeUnit.MILLISECONDS))
+          throw new AssertionError("bench: indexer did not catch up in 60 min")
+      } while (IndexerState.fromHistory(_history).indexedHeight < history.fullBlockHeight)
     } finally lock.unlock()
   }
 
@@ -39,8 +49,7 @@ class ExtraIndexerRebuildRateSpec extends ExtraIndexerSpecification {
     probe.send(bench, GetLoadedState())
     probe.expectMsgType[IndexerState](60.minutes)
     val g1 = System.nanoTime()
-    bench ! Index()
-    awaitCondition(done)
+    indexAndAwait(bench)
     val i1 = System.nanoTime()
     val state = IndexerState.fromHistory(_history)
     state.indexedHeight shouldBe blocks

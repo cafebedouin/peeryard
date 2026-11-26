@@ -89,6 +89,9 @@ jobs:
             done; done
           { echo '```'; cat out/arms.txt out/host.txt out/results.tsv; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           for f in out/run-*.log; do gzip "$f"; done
+          # a run that printed no result (an exception, OOM, the 60-min wait) fails the job, after the summary is written
+          if grep -q 'NO RESULT' out/results.tsv; then
+            echo "::error::$(grep -c 'NO RESULT' out/results.tsv) arm run(s) printed no PEERYARD-BENCH line; see out/run-*.log.gz"; exit 1; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: indexer-bench, path: out/, retention-days: 90 }

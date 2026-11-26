@@ -281,7 +281,8 @@ jobs:
       - name: One verdict over the shards
         run: |
           mkdir -p art
-          bash diffrun/pool.sh --out pooled --shards "$SHARDS" --pairs "$PAIRS" art; rc=$?
+          # rc is taken with ||: under the runner's `bash -e`, a failing pool.sh would end the step before `rc=$?`
+          rc=0; bash diffrun/pool.sh --out pooled --shards "$SHARDS" --pairs "$PAIRS" art || rc=$?
           { echo '```'; cat pooled/table.txt 2>/dev/null || echo "pool.sh exit $rc: no verdict"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           exit $rc
       - uses: actions/upload-artifact@v4

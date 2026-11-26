@@ -16,6 +16,7 @@ SRC=../.github/workflows; OUT=.github/workflows
 [[ -d "$SRC" ]] || { echo "export-workflows: no $SRC beside this tree: the files under $OUT are the source"; exit 0; }
 check=0; [[ "${1:-}" == --check ]] && check=1
 mkdir -p "$OUT"; rc=0
+tmp=""; trap 'rm -f "$tmp"' EXIT          # also on the exit 2 below (a peeryard/ path survived)
 for w in sweep aa; do
   in="$SRC/peeryard-$w.yml"; out="$OUT/$w.yml"; [[ -f "$in" ]] || { echo "export-workflows: missing $in" >&2; exit 2; }
   tmp="$(mktemp)"

@@ -23,8 +23,10 @@ jobs:
       repeats: ${{ steps.r.outputs.repeats }}
     steps:
       - id: r
+        env:
+          REPEATS: ${{ inputs.repeats || '1' }}
         run: |
-          n='${{ inputs.repeats || '1' }}'; [[ "$n" =~ ^[1-5]$ ]] || { echo "repeats must be 1-5"; exit 1; }
+          n="$REPEATS"; [[ "$n" =~ ^[1-5]$ ]] || { echo "::error::repeats must be 1-5, got '$n'"; exit 1; }
           echo "repeats=$(jq -c -n --argjson n "$n" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
   run:
     needs: list
@@ -78,17 +80,26 @@ jobs:
           path: out/
           retention-days: 14
   summary:
-    needs: run
-    if: always()
+    needs: [list, run]
+    if: always() && needs.list.result == 'success'
     runs-on: ubuntu-24.04
+    env:
+      REPEATS_JSON: ${{ needs.list.outputs.repeats }}
+      VARIANTS: 9            # the entries of the run job's matrix.v above: change both together
     steps:
       - uses: actions/download-artifact@v4
         with: { pattern: 'wallet-oracle-*', path: rows }
       - name: Table
         run: |
+          shopt -s nullglob; tsv=(rows/*/row.tsv)
           {
             echo "| variant | repeat | must | got | verdict line |"; echo "|---|---|---|---|---|"
-            cat rows/*/row.tsv | sort | awk -F'\t' '{printf "| %s | %s | %s | %s | `%s` |\n", $1, $2, $3, $4, $5}'
+            [ ${#tsv[@]} -gt 0 ] && sort "${tsv[@]}" | awk -F'\t' '{printf "| %s | %s | %s | %s | `%s` |\n", $1, $2, $3, $4, $5}'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          bad=$(cat rows/*/row.tsv | awk -F'\t' '$3 != "-" && $3 != $4' | wc -l)
+          # every variant and repeat must have reported a row: a job that died before writing one is a gap, not a pass
+          expected=$((VARIANTS * $(jq length <<< "$REPEATS_JSON"))); have=0
+          [ ${#tsv[@]} -gt 0 ] && have=$(cat "${tsv[@]}" | grep -c .)
+          for d in rows/*/; do [ -f "$d/row.tsv" ] || echo "no row: $(basename "$d")"; done
+          if [ "$have" != "$expected" ]; then echo "::error::$have of $expected variant runs reported a row"; exit 1; fi
+          bad=$(cat "${tsv[@]}" | awk -F'\t' '$3 != "-" && $3 != $4' | wc -l)
           echo "$bad variant run(s) did not report what they must"; [ "$bad" = 0 ]

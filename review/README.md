@@ -59,8 +59,18 @@ preregistration written before the first run, the captures, the report, the thre
 - **Posting is a human decision**, every time.
 
 ## What is and is not here
-Implemented: `pick.sh` (on each PR's own merge base), `footprint.sh`, `reviews.yaml`, `GUIDE.md` (the form, by
-kind) with `templates/`, `GATES.md` (the four gates), the three review prompts, `comment-lint`, `post.sh`, the
+Implemented: `pick.sh` (on each PR's own merge base), `prior.sh` (a peeryard review already at this head:
+`none`, `current`, `stale`, or `unknown` with exit 2 when GitHub could not be read), `footprint.sh`, `reviews.yaml`,
+`GUIDE.md` (the form, by kind) with `templates/`, `GATES.md` (the four gates), the three review prompts,
+`comment-lint`, `post.sh` and `queue.sh` (the posting gate, and the queue of texts an unattended run prepared), the
 revert check (`revert-check.sh`: does each new test fail with the production change reverted and pass with it),
-and the run lock (`with-lock.sh`). Planned, and marked so in `reviews.yaml`: a search across a repository for
+and the run lock (`with-lock.sh`). Beside them:
+- `agent-files.sh`: the files in a PR written for AI tools (agent instructions, context dumps); a review names them.
+- `pr-line.sh`: the `line` input of `pr-scenario.yml` for one PR, and its dispatch command at the head as read now.
+- `it-spec.sh`: one of ergo's own Docker integration specs (`src/it`) on a given ref (Docker, JDK 8, sbt).
+- `logab-runs.sh`: the log A/B, what else differs between the arms of an executed A/B (GUIDE rule 11c).
+- `run-captured.sh`: a hand-written executed command with its provenance at the top of the capture.
+- `provenance.sh`: the peeryard version and node builds a run used, as one clause for a credit line.
+- `release-check.sh`: the release-candidate check as one command (`RELEASE-CHECK.md`).
+- `ci-red/`: a recount of three `it` tests' outcomes from upstream CI job logs (its own `README.md`). Planned, and marked so in `reviews.yaml`: a search across a repository for
 review requests; today the person names the PR or lets `pick.sh` choose. Agents: `../AGENTS.md` and `.claude/skills/review-pr/SKILL.md` drive this flow.

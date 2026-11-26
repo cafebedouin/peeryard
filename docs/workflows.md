@@ -35,7 +35,8 @@ repository]. All jobs run on `ubuntu-24.04`.
 - **Does**: the no-node checks: `shellcheck -x` on every bash script (and `-s bash` on the sourced hooks), `bash -n`,
   the Python unit tests under `tests/`, `tests/leakcheck.sh`, the shell self-tests (`lint`, `precheck`, `sequential`,
   `phases`, `indexer_diff`, `crash_consistency`, `wallet_oracle`, `wallet_workload`, `pr_path`, `tooling`), and
-  `ci/export-workflows.sh --check`. No node, no JDK 8.
+  `ci/export-workflows.sh --check`. No node, no JDK 8. The script lists for `shellcheck` and `bash -n` are
+  NUL-separated (a path with a space stays one path), and an empty list fails the step instead of passing it.
 - **Trigger**: push (any branch), pull request, dispatch. **Inputs**: none.
 - **Size**: one job, `timeout-minutes: 20`. A push to a branch with an open pull request in this repository triggers it
   twice (push and pull_request).
@@ -58,7 +59,8 @@ repository]. All jobs run on `ubuntu-24.04`.
   `floor(2 x pairs x (timeout_seconds (default 900) + precheck_timeout_seconds when there is a precheck) / 60) + 30`
   (`pr-scenario.yml:121`). At the defaults (`matrix-paychain.json` has `timeout_seconds` 1500, no precheck) that is 80
   min per shard, so the upper bound is 120 + 5 x 80 = 520 min (about 8.7 runner-hours). At 20 shards it holds all 20
-  concurrent jobs. The `pool` job sets no limit.
+  concurrent jobs. The `pool` job sets no limit; it writes its summary and then exits with `pool.sh`'s status (before
+  2026-11-26 a failing `pool.sh` ended the step under `bash -e` before the summary line was written).
 - **Covered by**: `diffrun/README.md`, `diffrun/scenarios/FIT.md`, `docs/release-check.md` (through
   `review/release-check.sh`), `rig/README.md`, and the scenario docs that dispatch it (`rig/WALLET-ORACLE.md`,
   `rig/CRASH-CONSISTENCY.md`, `rig/INDEXER-DIFF.md`, `rig/WALLET-WORKLOAD.md`, `docs/storage-rent.md`,
@@ -85,7 +87,9 @@ repository]. All jobs run on `ubuntu-24.04`.
 ### `aa.yml`
 - **Does**: the A/A calibration of `fork-convergence` and `sibling-fork`: the same jar in both roles, a fixed number of
   pairs per shard with the sequential stop rule removed, each shard its own runner; the `pool` job reports each rate with
-  an exact 95% interval (`diffrun/aa_pool.py`). Exported by `ci/export-workflows.sh`.
+  an exact 95% interval (`diffrun/aa_pool.py`). Exported by `ci/export-workflows.sh`. The `pool` job writes both
+  pools, then fails when `aa_pool.py` refused either (no shards, a bad verdict): a missing rate is a red run, not a green
+  one (`pooled.txt` is uploaded either way). The build job names the stack build that failed.
 - **Trigger**: dispatch; push to `ci/aa`; dispatched by `release-watch.yml` on a new release. **Inputs**: `tag`
   (default `v6.0.8`), `sha256` (default empty: the release's own `.jar.sha256` asset), `node` (`release`, `reference`
   or `pr2721`).
@@ -97,7 +101,9 @@ repository]. All jobs run on `ubuntu-24.04`.
 - **Does**: the publication sweep. One job builds the reference nodes from `patches/` (release line, sibling-fork set,
   Matrix; Matrix is optional), then one job per rig example and repeat runs `rig/run-suite.sh` (the list is
   `rig/examples/suite.tsv`), plus one `fork-convergence` and one `sibling-fork` pair per repeat; a `summary` job
-  tabulates. Rust examples report SKIP (no binaries on the runner). Exported by `ci/export-workflows.sh`.
+  tabulates. Rust examples report SKIP (no binaries on the runner). Exported by `ci/export-workflows.sh`. Its first
+  step, before the build, checks the inputs: `repeats` 1-99, `node` `reference` or `release`, and each name in
+  `examples` a row of `rig/examples/suite.tsv`; the inputs reach the scripts through `env`, never pasted into them.
 - **Trigger**: dispatch; push to `ci/sweep`. **Inputs**: `repeats` (default 1), `examples` (default all), `v4`, `node`
   (`reference` or `release`), `diffrun` (default true), `scenario_env`.
 - **Size**: the workflow's own filter (`awk -F'\t' '!/^#/ && NF == 5'`) selects 50 examples from today's `suite.tsv`.
@@ -109,7 +115,8 @@ repository]. All jobs run on `ubuntu-24.04`.
 ### `wallet-oracle.yml`
 - **Does**: the wallet oracle (`rig/WALLET-ORACLE.md`) on a release jar or any jar URL: nine variants (A/A controls,
   restart, crash, rescan, fork, and two positive controls) per repeat; the `summary` job checks each variant against the
-  verdict it must give (PASS, FAIL, or `-` for the fork switch, which is reported, not judged).
+  verdict it must give (PASS, FAIL, or `-` for the fork switch, which is reported, not judged). The summary also counts
+  the rows: fewer than 9 x repeats (a job that died before writing its row) fails it before the verdict check.
 - **Trigger**: dispatch; push to `ci/wallet-oracle`. **Inputs**: `jar_url` (default the v6.0.7 release jar), `sha256`,
   `repeats` (1-5, default 1).
 - **Size**: 9 x repeats jobs at 40 min: 360 min upper bound at the default, 1,800 at `repeats=5`. `list` and `summary`
@@ -121,7 +128,8 @@ repository]. All jobs run on `ubuntu-24.04`.
   the weak-blocks base and the base plus `patches/ergo-matrix/002-input-block-relay.patch` (ergoplatform/ergo#2566), each
   on `matrix-latency` at 150 +- 100 ms and at 0 ms, with the wire observer on; `diag/matrix_prop.py` pools reach, hop
   latency and duplicates.
-- **Trigger**: dispatch. **Inputs**: `duration` (seconds observed per run, default 180).
+- **Trigger**: dispatch. **Inputs**: `duration` (seconds observed per run, 30-1800, default 180; checked before the
+  build, and passed to the run jobs through `env`).
 - **Size**: build 120 + 12 run jobs (2 builds x 2 delays x 3 repeats, fixed) at 60 = 840 min upper bound. `pool` sets
   no limit.
 - **Covered by**: `diag/README.md`.
@@ -130,7 +138,8 @@ repository]. All jobs run on `ubuntu-24.04`.
 - **Does**: compares builds of the weak-blocks line on one rig example: the base and the base plus each named patch
   alone, each at block version 3 and 4, `repeats` times; keeps rig logs, ERROR lines, gzipped node logs, per-node
   samples and `cause.json`; a `matrix-compat*` example also gets `diag/matrix_value.py`'s report. `diag/compare_pool.py`
-  pools per build and version. A report, never a verdict.
+  pools per build and version. A report, never a verdict. A build that fails (two attempts) fails the build job with
+  its name, before any copy.
 - **Trigger**: dispatch. **Inputs**: `patches` (default two `2597-*` candidates), `example` (default
   `matrix-relay-star`), `repeats` (1-10, default 5).
 - **Size**: build 120 + (1 + number of patches) x 2 versions x repeats jobs at 60. Defaults: 3 x 2 x 5 = 30 jobs,
@@ -214,7 +223,7 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
 - **Size**: at most 30 jobs per dispatch, plan, build and summary included (`plan.py --max-jobs 30`); a plan over it is
   refused. Fixed jobs: plan 15, build 120, summary 10. Per-job limits are computed by `ci/release-check/plan.py`: an
   example job `ceil(arms x catalog timeout / 60) + 15` (`plan.py:80`), a rate shard `min(350, floor(2 x pairs x
-  per-run) + 30)` (`plan.py:90`). No whole-dispatch bound is given here: it depends on the selection. A full `auto`
+  per-run) + 30)` (`plan.py:93`). No whole-dispatch bound is given here: it depends on the selection. A full `auto`
   check usually goes out as two dispatches, `parts=suite,upgrade` and then `parts=rates`, spaced in time.
 - **Covered by**: `docs/release-check.md` (inputs, the smoke dispatch, reading the result), `review/RELEASE-CHECK.md`,
   `README.md`, `rig/README.md`.
@@ -223,6 +232,8 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
 - **Does**: watches ergoplatform/ergo releases. For a new non-prerelease tag with no `aa.yml` run here yet: runs
   `patches/check.sh` against it (NEEDED / CONTAINED / COLLIDES), opens an issue when the stack needs an edit, and
   dispatches `aa.yml` on the new tag. Opens an issue once when that release's A/A run failed, and does not retry it.
+  The release tag must look like one (`^v[0-9][0-9A-Za-z.+-]*$`) before it is used; it and `force` reach the steps
+  through `env`.
 - **Trigger**: schedule (`41 5 * * *`, daily 05:41 UTC); dispatch. **Inputs**: `force` (dispatch the A/A even if the
   release already has a run).
 - **Size**: one job, 20 min; on a new release it also starts an `aa.yml` run at `node=release` (1,500 min upper bound,
@@ -234,7 +245,9 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
 ### `queue.yml`
 - **Does**: renders the review-queue pages (cafebedouin.github.io/peeryard and `/maintainers`) from public GitHub data
   with `queue/build.py` under `queue/rules.json`, reading the earlier daily snapshots back from the published site first,
-  and deploys them to GitHub Pages. No node runs.
+  and deploys them to GitHub Pages. No node runs. A review counts as made at the current head by its `commit_id`; a
+  comment by its time against the head's push time (`head_at_source` in `docs/queue-data.md`). A GitHub search that
+  fails (the outcomes view) is a warning in the build log.
 - **Trigger**: schedule (`17 6 * * *`, daily 06:17 UTC); dispatch; push to `main` touching `queue/**`,
   `patches/**/patches.json` or the workflow. **Inputs**: none.
 - **Size**: build 30 min; the `deploy` job sets no limit.
@@ -246,13 +259,15 @@ Not workflows themselves: the scripts some workflows call, and example workflow 
 
 - `ci/export-workflows.sh`: writes `sweep.yml` and `aa.yml` from their copies in the repository peeryard is developed in
   (`../.github/workflows/peeryard-{sweep,aa}.yml`, where the tree sits under `peeryard/`); `--check` exits 1 when the
-  exported files are stale, and `checks.yml` runs it. In a standalone clone there is no source directory and it does
+  exported files are stale, and `checks.yml` runs it; its temporary file is removed on every exit. In a standalone clone there is no source directory and it does
   nothing; the exported files are then the source (their headers say "if this repository is the source, edit here").
 - `ci/build-ref.sh`: the build step of a hosted workflow for any ergo ref (commit, branch or tag), through
   `diffrun/build.sh <commit>` with one retry, after publishing the sigma-state snapshot the commit pins, if any. Used by
   `release-check.yml`.
 - `ci/release-check/`: the planner and reporter of `release-check.yml` (`scope.py`, `plan.py`, `report.py`) and its
-  tables (`catalog.tsv`, `path-map.tsv`, `extra-suite.tsv`, `recorded-rates.json`).
+  tables (`catalog.tsv`, `path-map.tsv`, `extra-suite.tsv`, `recorded-rates.json`). `scope.py --api` counts the
+  `gh api` lookups that failed (`api_errors` in `scope.json`, a warning, and a line in `scope.md`) instead of reading
+  them as "no pull request"; `plan.py` refuses a malformed catalog `rate` column by name.
 - Four `.example` workflows, inert until copied into `.github/workflows/` (described in `diffrun/README.md`):
   - `diffrun.yml.example`: a dispatch-only differential workflow over public-tier manifests that uploads only each run's
     `verdict.json` and `table.txt`; its header says it is untested on hosted runners. One job, 300 min.

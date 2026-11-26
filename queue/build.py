@@ -180,6 +180,27 @@ def load_claims():
 
 # ---- outcomes: what became of the pull requests peeryard reviewed --------------------------------------------------------
 
+def search_numbers(q, token, per_page=100):
+    """The issue/pull-request numbers a search query finds, every page: the search API answers with an object
+    ({total_count, items}), not a list, so api(paginate=True) cannot page it; pages are read with page= until a short
+    one (the API serves at most 1000 results). A failed query is reported on stderr and counts what was read before it."""
+    nums, page = set(), 1
+    while True:
+        try:
+            res = api("/search/issues", {"q": q, "per_page": per_page, "page": page}, token)
+        except Exception as e:
+            print(f"warning: search failed on page {page}, outcomes may be incomplete: {q!r}: {str(e)[:200]}", file=sys.stderr)
+            break
+        items = res.get("items") or []
+        nums.update(it["number"] for it in items)
+        if res.get("incomplete_results"):
+            print(f"warning: GitHub marked the search results incomplete: {q!r}", file=sys.stderr)
+        if len(items) < per_page or page * per_page >= 1000:
+            break
+        page += 1
+    return nums
+
+
 def outcomes(repo, token):
     """Closed pull requests with a peeryard review (found by the phrase or marker in comments, and by the reviewers.json
     logins as reviewer or commenter for the backfill): merged, closed as the last review recommended (its Recommended:
@@ -190,11 +211,7 @@ def outcomes(repo, token):
         queries += [f"repo:{repo} is:pr is:closed reviewed-by:{login}", f"repo:{repo} is:pr is:closed commenter:{login}"]
     nums = set()
     for q in queries:
-        try:
-            res = api("/search/issues", {"q": q, "per_page": 100}, token)
-            nums.update(it["number"] for it in res.get("items", []))
-        except Exception:
-            pass
+        nums.update(search_numbers(q, token))
     rows = []
     for n in sorted(nums):
         try:
@@ -250,6 +267,49 @@ def carry_reviews(repo, rows, diffs, gdir):
     return carried
 
 
+def head_push_time(repo, n, head_sha, head_commit, token):
+    """(when the head commit reached the pull request, how that is known). The REST API records a push time only for a
+    force push (the timeline's head_ref_force_pushed event, whose commit_id is the new head; its `committed` events carry
+    the commit's own dates, not the push). Otherwise the head's earliest check suite stands in for it (GitHub creates
+    the suites on the push). With neither, the head commit's committer date, which can be earlier than the push: a
+    commit written before a review and pushed after it then makes that review look as if it were made at this head."""
+    try:
+        tl = api(f"/repos/{repo}/issues/{n}/timeline", {"per_page": 100}, token, paginate=True)
+        fp = [parse_ts(e["created_at"]) for e in tl
+              if e.get("event") == "head_ref_force_pushed" and e.get("commit_id") == head_sha and e.get("created_at")]
+        if fp:
+            return max(fp), "force-push"
+    except Exception as e:
+        print(f"warning: #{n}: timeline not read ({str(e)[:120]}); push time from the check suites or the commit", file=sys.stderr)
+    try:
+        suites = api(f"/repos/{repo}/commits/{head_sha}/check-suites", {"per_page": 100}, token).get("check_suites", [])
+        cs = [parse_ts(s["created_at"]) for s in suites if s.get("created_at")]
+        if cs:
+            return min(cs), "check-suite"
+    except Exception as e:
+        print(f"warning: #{n}: check suites not read ({str(e)[:120]}); push time from the commit", file=sys.stderr)
+    return parse_ts(head_commit["commit"]["committer"]["date"]), "committer-date"
+
+
+def review_at_head(r, head_sha, head_at):
+    """A GitHub review was made at the current head: by its commit_id (the head it was submitted on) when GitHub gives
+    one, else by its submission time against the head's push time. A pending (unsubmitted) review never counts."""
+    if r.get("state") == "PENDING" or not r.get("submitted_at"):
+        return False
+    if r.get("commit_id"):
+        return r["commit_id"] == head_sha
+    return parse_ts(r["submitted_at"]) > head_at
+
+
+def post_at_head(p, head_sha, head_at):
+    """A peeryard post (peeryard_posts) was made at the current head: by the head it names (a review's commit_id first,
+    then its marker's head), else, for a comment with no marker head, by its time against the head's push time."""
+    h = p.get("commit_id") or p.get("head")
+    if h:
+        return len(h) >= 7 and head_sha.startswith(h)
+    return p["at"] > head_at
+
+
 def collect(repo, token, limit):
     """Returns (rows for the open, non-draft pull requests; the open pull-request list as GitHub gave it, drafts included)."""
     allprs = api(f"/repos/{repo}/pulls", {"state": "open", "per_page": 100}, token, paginate=True)
@@ -269,16 +329,15 @@ def collect(repo, token, limit):
         files = [f["filename"] for f in api(f"/repos/{repo}/pulls/{n}/files", {"per_page": 100}, token, paginate=True)]
         head_sha = full["head"]["sha"]
         head = api(f"/repos/{repo}/commits/{head_sha}", token=token)
-        head_at = parse_ts(head["commit"]["committer"]["date"])
+        head_at, head_at_source = head_push_time(repo, n, head_sha, head, token)
         reviews = api(f"/repos/{repo}/pulls/{n}/reviews", {"per_page": 100}, token, paginate=True)
         comments = api(f"/repos/{repo}/issues/{n}/comments", {"per_page": 100}, token, paginate=True)
         checks = api(f"/repos/{repo}/commits/{head_sha}/check-runs", {"per_page": 100}, token).get("check_runs", [])
-        reviews_at_head = [r for r in reviews if r.get("submitted_at") and parse_ts(r["submitted_at"]) > head_at
-                           and r["user"]["login"] != full["user"]["login"]]
+        reviews_at_head = [r for r in reviews if review_at_head(r, head_sha, head_at) and r["user"]["login"] != full["user"]["login"]]
         posts = [c for c in peeryard_posts(reviews, comments)
                  if c["login"] != full["user"]["login"] and c["kind"] not in NON_REVIEW_KINDS]   # the author's own posts, replies
-        peeryard = [c for c in posts if c["at"] > head_at]
-        prior = [c for c in posts if c["at"] <= head_at]       # the latest one naming a head may still carry (carry_reviews)
+        peeryard = [c for c in posts if post_at_head(c, head_sha, head_at)]
+        prior = [c for c in posts if not post_at_head(c, head_sha, head_at)]   # the latest one naming a head may still carry (carry_reviews)
         last_activity = max([head_at] + [parse_ts(r["submitted_at"]) for r in reviews_at_head]
                             + [parse_ts(c["created_at"]) for c in comments if parse_ts(c["created_at"]) > head_at])
         if checks:
@@ -290,7 +349,7 @@ def collect(repo, token, limit):
         body = full.get("body") or ""
         rows.append({
             "number": n, "title": full["title"], "author": full["user"]["login"], "url": full["html_url"],
-            "base": full["base"]["ref"], "head_sha": head_sha[:9], "head_at": head_at.isoformat(),
+            "base": full["base"]["ref"], "head_sha": head_sha[:9], "head_at": head_at.isoformat(), "head_at_source": head_at_source,
             "files": len(files), "additions": full["additions"], "deletions": full["deletions"],
             "tier": tier_of(files, RULES), "reviews_at_head": len(reviews_at_head),
             "approved_at_head": any(r["state"] == "APPROVED" for r in reviews_at_head),

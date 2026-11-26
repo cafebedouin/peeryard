@@ -79,8 +79,11 @@ def main():
                                  "first": "candidate" if r % 2 == 1 or not c["baseline_arm"] else "baseline",
                                  "minutes": math.ceil(arms * rows[n]["timeout"] / 60) + 15})
         else:
-            when, pps = c["rate"].split()
-            pps = int(pps)
+            # the catalog's rate column is "<condition> <pairs per shard>" (scope.py copies it as given)
+            parts_ = (c.get("rate") or "").split()
+            if len(parts_) != 2 or not parts_[1].isdigit() or int(parts_[1]) < 1:
+                fail(f"{n}: ci/release-check/catalog.tsv rate column is {c.get('rate')!r}, not '<condition> <pairs per shard>' (e.g. 'switched==true 4')")
+            when, pps = parts_[0], int(parts_[1])
             man = json.load(open(os.path.join(ROOT, "diffrun/scenarios", f"{n}.json")))
             per_run = (man.get("timeout_seconds", 900) + (man.get("precheck_timeout_seconds", 300) if "precheck" in man else 0)) / 60
             k, left = 1, rate_pairs

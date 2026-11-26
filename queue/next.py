@@ -31,17 +31,35 @@ def load(src):
 def plan(r):
     lines = r["additions"] + r["deletions"]
     size = "small" if lines < RULES["small"] else "medium" if lines < RULES["medium"] else "large"
-    prod = r.get("production_files") or []
-    tests = r["files"] - len(prod) > 0 and r["tier"][0] in (1, 2, 3)
     kinds, minutes = [], 0
-    if prod:
-        kinds.append("read-review"); minutes += RULES["read_" + size]
-        if tests and r["tier"][0] in (1, 2):
+    if r.get("production_files") is None:
+        # the diff could not be read (or the same-change view did not run): which files are production is unknown, so
+        # the plan is the tier's: a tier-3 change is a revert-check, any other a read-review sized by its line count
+        # (tier 4 is "docs and other", which can hold production code outside the tier-1/2 paths). A guess, said so.
+        if r["tier"][0] == 3:
             kinds.append("revert-check"); minutes += RULES["revert_check"]
-    elif r["tier"][0] == 3:
-        kinds.append("revert-check"); minutes += RULES["revert_check"]
+        else:
+            kinds.append("read-review"); minutes += RULES["read_" + size]
+        guess = f"production files unknown (diff not read): planned from tier {r['tier'][0]}, a guess"
     else:
-        kinds.append("read"); minutes += RULES["read_small"]
+        guess = None
+        prod = r["production_files"]
+        tests = r["files"] - len(prod) > 0 and r["tier"][0] in (1, 2, 3)
+        if prod:
+            kinds.append("read-review"); minutes += RULES["read_" + size]
+            if tests and r["tier"][0] in (1, 2):
+                kinds.append("revert-check"); minutes += RULES["revert_check"]
+        elif r["tier"][0] == 3:
+            kinds.append("revert-check"); minutes += RULES["revert_check"]
+        else:
+            kinds.append("read"); minutes += RULES["read_small"]
+    group = group_of(r)
+    if group:
+        kinds.append("compare"); minutes += RULES["compare_extra"]
+    return kinds, minutes, size, group, guess
+
+
+def group_of(r):
     group = []
     if r.get("same_change_later"):
         group = [f"same change as #{n}" for n in r["same_change_later"]]
@@ -49,9 +67,7 @@ def plan(r):
         group.append(f"same change as #{r['same_change_as']} (earlier)")
     for s in r.get("same_issue") or []:
         group.append(f"issue #{s['issue']} with " + ", ".join(f"#{n}" for n in s["with"]))
-    if group:
-        kinds.append("compare"); minutes += RULES["compare_extra"]
-    return kinds, minutes, size, group
+    return group
 
 
 def main():
@@ -82,12 +98,12 @@ def main():
         c = r.get("claimed")
         if c and c["by"] != a.me:
             skipped.append((n, c["by"])); continue
-        kinds, minutes, size, group = plan(r)
+        kinds, minutes, size, group, guess = plan(r)
         if minutes > left and picked:
             continue
         picked.append({"pr": n, "title": r["title"], "author": r["author"], "tier": r["tier"][0], "kinds": kinds, "minutes": minutes,
                        "size": f"{size} ({r['additions']}+/{r['deletions']}- in {r['files']} files)", "why": r.get("why", []), "group": group,
-                       "url": r["url"], "base": r["base"]})
+                       "url": r["url"], "base": r["base"], "estimate_note": guess})
         left -= minutes
         if left <= 0:
             break
@@ -97,6 +113,8 @@ def main():
     for i, p in enumerate(picked, 1):
         print(f"\n{i}. #{p['pr']}  {p['title']}  ({p['author']}, base {p['base']}, tier {p['tier']})")
         print(f"   kinds: {', '.join(p['kinds'])}   ~{p['minutes']} min   {p['size']}")
+        if p["estimate_note"]:
+            print(f"   estimate: {p['estimate_note']}")
         if p["group"]:
             print("   group: " + "; ".join(p["group"]) + "  -> one compare verdict over the set")
         print("   why:   " + "; ".join(p["why"]))

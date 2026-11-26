@@ -42,12 +42,18 @@ if [[ -z "$J8" ]]; then
            /usr/lib/jvm/zulu8* /usr/lib/jvm/zulu-8* /usr/lib/jvm/jdk1.8.0* /usr/lib/jvm/jdk8u* /usr/lib/jvm/jdk-8u* \
            /usr/lib/jvm/adoptopenjdk-8-* /usr/lib/jvm/openjdk-8*; do is_jdk8 "$c" && { J8="$c"; break; }; done
 fi
-[[ -n "$J8" ]] && is_jdk8 "$J8" || { echo "revert-check: no JDK 8 (set JAVA8_HOME to a JDK whose java -version says 1.8)" >&2; exit 2; }
+# a JAVA8_HOME that is set is used as given (no search past it): one that is not a JDK 8 (say a path for another
+# architecture, as docker/Dockerfile once set) is named, so the fix is plain
+[[ -n "$J8" ]] || { echo "revert-check: no JDK 8 found under /usr/lib/jvm (set JAVA8_HOME to a JDK whose java -version says 1.8)" >&2; exit 2; }
+is_jdk8 "$J8" || { echo "revert-check: JAVA8_HOME=$J8 is not a JDK 8: $(if [[ -x "$J8/bin/java" ]]; then "$J8/bin/java" -version 2>&1 | head -1; else echo "no $J8/bin/java"; fi)" >&2; exit 2; }
 SBT="${SBT:-sbt}"; command -v "$SBT" >/dev/null || { echo "revert-check: sbt not found" >&2; exit 2; }
 export JAVA_HOME="$J8" XDG_RUNTIME_DIR="${DIFFRUN_RUNTIME_DIR:-/tmp/sr-$(id -u)}"; mkdir -p "$XDG_RUNTIME_DIR"
 
 # refs
-git -C "$CLONE" fetch -q origin "pull/$PR/head:pr-$PR" || { echo "revert-check: cannot fetch pull/$PR/head" >&2; exit 2; }
+# forced (+), as pr-line.sh fetches it: after a rebase or force-push the new head is not a fast-forward of the old pr-N
+if grep -qxF "branch refs/heads/pr-$PR" <<< "$(git -C "$CLONE" worktree list --porcelain 2>/dev/null)"; then
+  echo "revert-check: pr-$PR is checked out in a worktree of $CLONE, so it cannot be refreshed; switch that worktree away from it" >&2; exit 2; fi
+git -C "$CLONE" fetch -q origin "+pull/$PR/head:refs/heads/pr-$PR" || { echo "revert-check: cannot fetch pull/$PR/head" >&2; exit 2; }
 HEAD_SHA="$(git -C "$CLONE" rev-parse "pr-$PR")"
 if [[ -z "$BASE" ]]; then
   bref="$(gh pr view "$PR" -R "$(git -C "$CLONE" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')" --json baseRefName -q .baseRefName 2>/dev/null)"

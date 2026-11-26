@@ -29,7 +29,7 @@ if [[ $frc == 2 ]]; then
   echo "post: could not check $REPO#$PR for agent-instruction files" >&2; [[ $ACK == 1 ]] || { echo "post: refused (--ack-agent-files posts anyway)" >&2; exit 5; }
 elif [[ -n "$flags" ]]; then
   echo "post: $REPO#$PR adds or changes files written for AI tools:"; while read -r l; do echo "  $l"; done <<< "$flags"
-  missing="$(awk '{print $NF}' <<< "$flags" | while read -r f; do grep -qF -- "$f" "$PUB" || echo "$f"; done)"
+  missing="$(cut -d' ' -f5- <<< "$flags" | while read -r f; do grep -qF -- "$f" "$PUB" || echo "$f"; done)"
   if [[ -n "$missing" && $ACK != 1 ]]; then
     echo "post: refused: the text does not name $(tr '\n' ' ' <<< "$missing")(name each file in the review, or pass --ack-agent-files)" >&2; exit 5
   fi

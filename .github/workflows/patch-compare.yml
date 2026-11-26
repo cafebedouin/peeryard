@@ -59,8 +59,12 @@ jobs:
           export DIFFRUN_ERGO_CLONE="$HOME/ergo-clone" JAVA8_HOME="$JAVA_HOME" DIFFRUN_NO_LOCK=1
           base="$(jq -r .base patches/ergo-matrix/patches.json)"; out="$GITHUB_WORKSPACE/jars"; mkdir -p "$out"
           build(){ local j; for attempt in 1 2; do j="$(bash diffrun/build.sh "$@" | tail -1)" && [ -f "$j" ] && { echo "$j"; return 0; }; echo "build failed (attempt $attempt)" >&2; sleep 20; done; return 1; }
-          cp "$(build "$base")" "$out/base.jar"; names=(base); echo "base: weak-blocks $base" > "$out/builds.txt"
-          i=0; for p in $PATCHES; do i=$((i+1)); cp "$(build "$base" "$p")" "$out/p$i.jar"; names+=("p$i")
+          # each build is checked before the copy: a failed build prints nothing, and cp '' would hide which one failed
+          j="$(build "$base")" || { echo "::error::the base build failed (diffrun/build.sh $base, two attempts)"; exit 1; }
+          cp "$j" "$out/base.jar"; names=(base); echo "base: weak-blocks $base" > "$out/builds.txt"
+          i=0; for p in $PATCHES; do i=$((i+1))
+            j="$(build "$base" "$p")" || { echo "::error::the build of the base + $p failed (diffrun/build.sh, two attempts)"; exit 1; }
+            cp "$j" "$out/p$i.jar"; names+=("p$i")
             echo "p$i: weak-blocks $base + $p (sha256 $(sha256sum "$p" | cut -c1-16))" >> "$out/builds.txt"; done
           echo "builds=$(printf '%s\n' "${names[@]}" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"

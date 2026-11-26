@@ -29,7 +29,8 @@ say(){ echo "[docker/run.sh] $*" >&2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD=1; shift ;;
-    --image) IMAGE="$2"; shift 2 ;;
+    --image) { [ $# -ge 2 ] && [ -n "$2" ] && case "$2" in -*) false ;; esac; } || { say "--image needs an image name (see --help)"; exit 2; }
+             IMAGE="$2"; shift 2 ;;
     --dry-run|-n) DRY=1; shift ;;
     -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --) shift; break ;;
@@ -61,7 +62,7 @@ say "clone $ROOT -> /peeryard; home (caches, devnets) $DHOME -> /home/peer"
 if [ -n "${PEERYARD_JAR:-}" ]; then
   [ -f "$PEERYARD_JAR" ] || { say "PEERYARD_JAR=$PEERYARD_JAR is not a file"; exit 2; }
   JDIR="$(cd "$(dirname "$PEERYARD_JAR")" && pwd)"; JBASE="$(basename "$PEERYARD_JAR")"
-  CMD="$CMD -v $(q "$JDIR"):/jars:ro -e PEERYARD_JAR=/jars/$(q "$JBASE" | sed "s/^'//; s/'\$//")"
+  CMD="$CMD -v $(q "$JDIR"):/jars:ro -e $(q "PEERYARD_JAR=/jars/$JBASE")"   # the whole assignment quoted: a space stays in the name
   say "node jar $PEERYARD_JAR -> /jars/$JBASE (read-only)"
 fi
 if [ -n "${DIFFRUN_ERGO_CLONE:-}" ]; then

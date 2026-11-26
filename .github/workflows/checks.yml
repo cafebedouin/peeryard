@@ -16,10 +16,18 @@ jobs:
       - run: sudo apt-get install -y -qq jq shellcheck
       - name: shellcheck (scripts, then the sourced hooks)
         run: |
-          shellcheck -x $(grep -rlE '^#!.*bash' --include='*.sh' --include='comment-lint' . | grep -v '^./.git/')
+          # the file list is NUL-separated (a path with a space stays one word); an empty list is a broken check, not a pass
+          mapfile -d '' files < <(grep -rlZE --exclude-dir=.git '^#!.*bash' --include='*.sh' --include='comment-lint' .)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no bash scripts found to shellcheck"; exit 1; }
+          echo "shellcheck: ${#files[@]} scripts"
+          shellcheck -x "${files[@]}"
           shellcheck -s bash -e SC2148,SC2154 rig/examples/*.sh rig/lib/*.sh diffrun/scenarios/precheck/lib.sh diffrun/scenarios/lib/rig-scenario.sh diffrun/scenarios/hooks/*.sh
       - name: bash -n
-        run: for f in $(grep -rlE '^#!.*bash' . | grep -v '^./.git/'); do bash -n "$f"; done
+        run: |
+          mapfile -d '' files < <(grep -rlZE --exclude-dir=.git '^#!.*bash' .)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no bash scripts found for bash -n"; exit 1; }
+          echo "bash -n: ${#files[@]} files"
+          for f in "${files[@]}"; do bash -n "$f"; done
       - name: python tests (diagnose, features, sweep, logmap, aa_pool)
         run: python3 -m unittest discover -s tests -p '*_test.py'
       - name: leakcheck (no register files or ids travel with peeryard)

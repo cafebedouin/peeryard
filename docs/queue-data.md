@@ -26,7 +26,6 @@ raises `schema_version` and is announced in this file. Ignore fields you do not 
 | `generated_at` | string | the same, ISO 8601 (`YYYY-MM-DDTHH:MM:SSZ`) |
 | `repo` | string | `ergoplatform/ergo` |
 | `open_prs` | int | open pull requests GitHub listed, drafts included |
-| `coverage`, `outcomes` (history only) | object | in `history/<date>.json` since 2026-11-09: the coverage object above and the outcome counts `{merged, closed as recommended, closed}`; null on earlier days |
 | `same_change` | list | groups of open pull requests (drafts included) that make the same production change, below |
 | `same_issue` | list | groups of open pull requests by different authors on the same issue, below |
 | `same_change_error` | string or null | why the duplicate view was not computed on this run (both lists are then empty); null when it was |
@@ -34,7 +33,7 @@ raises `schema_version` and is announced in this file. Ignore fields you do not 
 | `min_changed_lines` | int | the smallest change (added plus removed production lines) that can form a `same_change` group |
 | `needs_review`, `needs_maintainer` | list of int | the two ranked tracks of the pages, in rank order |
 | `coverage` | object | `{live, reviewed_at_head, peeryard_at_head, peeryard_carried, peeryard_kinds: {kind: n}, needs_review, needs_rebase, wip, tier1_live, tier1_executed, stale, claimed}` over the live pull requests (see rules.json `tracks.coverage`) |
-| `outcomes` | list | closed pull requests that had a peeryard review: `{number, title, author, url, closed_at, outcome, recommended, review, reviews, first_review}`; `outcome` is `merged`, `closed as recommended` or `closed` |
+| `outcomes` | list | closed pull requests that had a peeryard review: `{number, title, author, url, closed_at, outcome, recommended, review, reviews, first_review}`; `outcome` is `merged`, `closed as recommended` or `closed`. Found by GitHub search (every page, up to the API's 1000 results a query); a query that fails is a warning in the build log and the list is then short |
 | `claims` | list | live claims from `queue/claims.json`: `{pr, by, kind, claimed_at, expires_at}` |
 | `needs_rebase` | list of int | live pull requests GitHub reports as conflicting with their base (mergeable `dirty`), no review at head: off the review track until the author rebases |
 | `carried` | list | upstream pull requests peeryard carries as patches |
@@ -61,6 +60,8 @@ from a release branch is left out (it references every pull request in the relea
 | --- | --- | --- |
 | `number`, `title`, `author`, `url`, `base` | | the pull request |
 | `head_sha` | string | first 9 hex digits of its head commit |
+| `head_at` | string | when that head reached the pull request (ISO 8601); a review or comment counts as "at head" against it (below) |
+| `head_at_source` | string | how `head_at` is known: `force-push` (the timeline's force-push event for this head), `check-suite` (the head's earliest check suite, created on the push), or `committer-date` (neither available; the commit's own date, which can be earlier than the push) |
 | `production_patch_id` | string or null | the `-U0` id above; null when it changes no production file |
 | `production_patch_id_context` | string or null | the same with the default three lines of context: equal ids mean the same change on the same surrounding code |
 | `production_changed_lines` | int or null | added plus removed production lines |
@@ -68,7 +69,7 @@ from a release branch is left out (it references every pull request in the relea
 | `same_change_as` | int | present on a later member of a `same_change` group: the first one |
 | `same_change_later` | list of int | present on the first member of a group: the later ones |
 | `same_issue` | list | present when in a `same_issue` group: `{issue, with: [int]}` per issue |
-| `reviews_at_head` | int | GitHub reviews by someone other than the author, submitted after the head commit |
+| `reviews_at_head` | int | GitHub reviews by someone other than the author made on this head: by the review's `commit_id` when GitHub gives one, else submitted after `head_at`; pending reviews never count |
 | `peeryard_review` | string or null | link to the peeryard review that stands for this head (see `peeryard`); null when none |
 | `peeryard` | object or null | `{url, at, source, kind, by, head, prod_patch_id, carried_from, recommended}`: `source` is `marker` (the `<!-- peeryard {…} -->` comment), `phrase` (the credit-line words) or `legacy` (`queue/reviewers.json` backfill); `kind` is the marker's review kind or null; `head` the head it was made on (the marker's, or the review's commit); `carried_from` is set (first 9 digits of that head) when the review was made at an earlier head whose production patch-id equals the current one, null when made at this head; `by` the poster; `recommended` the review's `Recommended:` line (first 200 characters) or null; a post without a marker gets kind `executed` or `read` from its report form |
 | `claimed` | object or null | `{by, kind, expires_at}` when a live claim names this pull request |
@@ -80,7 +81,9 @@ Draft pull requests are not in `rows` but are in the groups.
 `history/index.json`: `{schema_version, repo, dates, latest, path}`, `dates` oldest first.
 
 `history/<date>.json`: `{schema_version, date, generated_at, repo, open_prs, open_ready_prs, same_change,
-same_issue, same_change_error, same_change_uncompared}`. `open_ready_prs` counts open, non-draft pull requests;
+same_issue, same_change_error, same_change_uncompared, coverage, outcomes}`. `coverage` (since 2026-11-09; null on
+earlier days) is the `coverage` object of `queue.json`. `outcomes` (since 2026-11-09; null on earlier days) is not
+`queue.json`'s list: here it is the counts object `{merged, closed as recommended, closed}`. `open_ready_prs` counts open, non-draft pull requests;
 `same_change[]` is `{patch_id, prs, files, changed_lines}` with `files` as a count; `same_issue[]` is `{issue, prs,
 pairs}` with each pair as `[int, int]`. A group that disappears from one day to the next was closed, merged, or changed;
 the pull requests' own pages say which.

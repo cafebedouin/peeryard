@@ -1,5 +1,7 @@
 """Unit tests for the daily history of queue/build.py (history/<date>.json and history/index.json); no network.
 Run: python3 -m unittest tests/queue_history_test.py"""
+import contextlib
+import io
 import json
 import os
 import sys
@@ -58,6 +60,74 @@ class History(unittest.TestCase):
         finally:
             build.fetch_json = old
 
+
+
+
+H, O = "b" * 40, "a" * 40
+COMMIT = {"commit": {"committer": {"date": "2026-11-01T00:00:00Z"}}}
+
+
+def fake_api(responses):
+    def api(path, params=None, token=None, paginate=False):
+        for key, val in responses.items():
+            if key in path:
+                if isinstance(val, Exception):
+                    raise val
+                return val(params) if callable(val) else val
+        raise AssertionError(path)
+    return api
+
+
+class AtHead(unittest.TestCase):
+    """A review or post counts at the head by the head's push time, not its committer date (a commit written before
+    an earlier review and pushed after it must not inherit that review)."""
+
+    def setUp(self):
+        real = build.api
+        self.addCleanup(setattr, build, "api", real)
+
+    def test_push_time_sources(self):
+        ts = build.parse_ts
+        build.api = fake_api({"/timeline": [{"event": "committed"}],
+                              "/check-suites": {"check_suites": [{"created_at": "2026-11-10T00:00:00Z"}]}})
+        self.assertEqual(build.head_push_time("o/r", 7, H, COMMIT, None), (ts("2026-11-10T00:00:00Z"), "check-suite"))
+        build.api = fake_api({"/timeline": [
+            {"event": "head_ref_force_pushed", "commit_id": H, "created_at": "2026-11-12T00:00:00Z"},
+            {"event": "head_ref_force_pushed", "commit_id": O, "created_at": "2026-11-13T00:00:00Z"}]})
+        self.assertEqual(build.head_push_time("o/r", 7, H, COMMIT, None), (ts("2026-11-12T00:00:00Z"), "force-push"))
+        build.api = fake_api({"/timeline": RuntimeError("502"), "/check-suites": {"check_suites": []}})
+        self.assertEqual(build.head_push_time("o/r", 7, H, COMMIT, None), (ts("2026-11-01T00:00:00Z"), "committer-date"))
+
+    def test_reviews_by_commit_id(self):
+        ts = build.parse_ts
+        at = ts("2026-11-10T00:00:00Z")
+        old = {"state": "COMMENTED", "submitted_at": "2026-11-05T00:00:00Z", "commit_id": O}
+        self.assertFalse(build.review_at_head(old, H, ts("2026-11-01T00:00:00Z")))
+        self.assertTrue(build.review_at_head(dict(old, state="APPROVED", commit_id=H), H, at))
+        self.assertFalse(build.review_at_head({"state": "PENDING", "submitted_at": None, "commit_id": H}, H, at))
+        self.assertTrue(build.review_at_head({"state": "COMMENTED", "submitted_at": "2026-11-11T00:00:00Z"}, H, at))
+
+    def test_posts_by_push_time_or_named_head(self):
+        ts = build.parse_ts
+        at = ts("2026-11-10T00:00:00Z")
+        before = {"at": ts("2026-11-06T00:00:00Z"), "commit_id": None, "head": None}
+        self.assertFalse(build.post_at_head(before, H, at))
+        self.assertTrue(build.post_at_head(dict(before, at=ts("2026-11-11T00:00:00Z")), H, at))
+        self.assertFalse(build.post_at_head(dict(before, at=ts("2026-11-11T00:00:00Z"), head=O), H, at))
+        self.assertTrue(build.post_at_head(dict(before, head=H), H, at))
+
+    def test_search_pages_until_a_short_page(self):
+        pages = {1: list(range(100)), 2: list(range(100, 200)), 3: list(range(200, 250))}
+        build.api = fake_api({"/search/issues": lambda p: {"items": [{"number": n} for n in pages[p["page"]]]}})
+        self.assertEqual(len(build.search_numbers("q", None)), 250)
+
+        def flaky(p):
+            if p["page"] == 2:
+                raise RuntimeError("HTTP 422")
+            return {"items": [{"number": n} for n in pages[p["page"]]]}
+        build.api = fake_api({"/search/issues": flaky})
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(len(build.search_numbers("q", None)), 100)
 
 if __name__ == "__main__":
     unittest.main()

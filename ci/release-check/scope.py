@@ -26,14 +26,25 @@ def git(clone, *args):
     return subprocess.run(["git", "-C", clone, *args], check=True, capture_output=True, text=True).stdout
 
 
+API_ERRORS = []   # the gh api lookups that failed: counted in scope.json (api_errors), never read as "no pull request"
+
+
 def gh_json(path):
+    """The parsed answer of `gh api <path>`, or None when the call fails or answers something that is not JSON; a failure
+    is printed as a workflow warning and recorded in API_ERRORS, so a lookup that failed is told apart from one that
+    found nothing."""
     r = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+    err = None
     if r.returncode != 0:
-        return None
-    try:
-        return json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return None
+        err = (r.stderr.strip() or f"exit {r.returncode}").splitlines()[-1][:200]
+    else:
+        try:
+            return json.loads(r.stdout)
+        except json.JSONDecodeError:
+            err = "not JSON"
+    API_ERRORS.append({"path": path, "error": err})
+    print(f"::warning::scope: gh api {path} failed: {err}")
+    return None
 
 
 def read_tsv(path, ncols):
@@ -102,6 +113,8 @@ def main():
             if isinstance(got, list):
                 refs = sorted({p["number"] for p in got if p.get("merged_at")})
                 source = "api" if refs else ""
+            else:
+                source = "api-error"          # not looked up: unknown, not "no pull request"
         commits.append({"sha": sha, "parents": parents.split(), "merge": len(parents.split()) > 1, "subject": subject,
                         "prs": refs, "pr_source": source})
         for n in refs:
@@ -123,6 +136,8 @@ def main():
             if isinstance(got, dict):
                 p["title"] = got.get("title", "")
                 p["base"] = (got.get("base") or {}).get("ref", "")
+            elif got is None:
+                p["title_error"] = True
 
     paths = []
     for p in git(a.clone, "diff", "--name-only", bsha, csha).splitlines():
@@ -147,6 +162,7 @@ def main():
         "paths": paths, "unmapped": [p["path"] for p in paths if not p["mapped"]],
         "selected": selected, "selected_by": {s: why[s] for s in selected},
         "catalog": catalog,
+        "api_errors": len(API_ERRORS), "api_error_paths": [e["path"] for e in API_ERRORS],
     }
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "scope.json"), "w") as f:
@@ -156,6 +172,8 @@ def main():
         f.write(render(scope))
     print(f"scope: {len(commits)} commits, {len(prs)} pull requests, {len(paths)} paths "
           f"({len(scope['unmapped'])} unmapped); selected: {' '.join(selected)}")
+    if API_ERRORS:
+        print(f"::warning::scope: {len(API_ERRORS)} gh api lookup(s) failed: pull requests and titles are incomplete (scope.json api_errors)")
 
 
 def render(s):
@@ -166,6 +184,9 @@ def render(s):
                 f"(merge base `{s['merge_base'][:12]}`).", ""]
     n_merge = sum(1 for x in s["commits"] if x["merge"])
     out += [f"{len(s['commits'])} commits ({n_merge} merges), {len(s['prs'])} pull requests, {len(s['paths'])} changed paths.", ""]
+    if s.get("api_errors"):
+        out += [f"**{s['api_errors']} GitHub API lookup(s) failed**: the pull requests and titles below are incomplete "
+                "(commits marked *lookup failed* were not looked up).", ""]
     if s["prs"]:
         out += ["| PR | title | commits |", "|---|---|---|"]
         for p in s["prs"]:
@@ -175,7 +196,7 @@ def render(s):
     loose = [x for x in s["commits"] if not x["prs"] and not x["merge"]]
     if loose:
         out += ["Commits with no pull request found:", ""]
-        out += [f"- `{x['sha'][:9]}` {x['subject']}" for x in loose]
+        out += [f"- `{x['sha'][:9]}` {x['subject']}" + (" (*lookup failed*)" if x.get("pr_source") == "api-error" else "") for x in loose]
         out.append("")
     out += ["| changed path | scenarios | note |", "|---|---|---|"]
     for p in s["paths"]:

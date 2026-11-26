@@ -84,6 +84,12 @@ def pool(files, when):
     return per
 
 
+def shard_link(job_url, scenario, shard):
+    """A rate shard's job as a markdown link "[k](url)", or the bare shard number when its job URL is not known."""
+    url = job_url.get("rate %s shard %s" % (scenario, shard))
+    return "[%s](%s)" % (shard, url) if url else str(shard)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--art", required=True)
@@ -188,8 +194,8 @@ def main():
             rlo, rhi = clopper_pearson(rec["k"], rec["n"])
             r["recorded"] = dict(rec, interval=[rlo, rhi])
             r["reproduces_recorded"] = blo <= rhi and rlo <= bhi   # the two intervals overlap
-        r["links"] = [f"[{x['shard']}]({job_url[f'rate {s} shard {x['shard']}']})" if job_url.get(f"rate {s} shard {x['shard']}")
-                      else str(x["shard"]) for x in shards]
+        # (no quotes of the same kind nested inside an f-string: that needs Python 3.12)
+        r["links"] = [shard_link(job_url, s, x["shard"]) for x in shards]
         rates.append(r)
     json.dump(rates, open(os.path.join(a.out, "rates.json"), "w"), indent=1)
 

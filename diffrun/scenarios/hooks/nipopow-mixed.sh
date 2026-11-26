@@ -4,7 +4,7 @@
 # nipopowBootstrap = true and asks A and B for a proof. The metric is whether C applies the served proof
 # (proof_applied) or rejects it (rejected: "sent wrong nipopow") and stays at header height 0. Both arms are mixed,
 # so base and candidate are the two directions of a proof-form change.
-# RESULT_JSON carries a_served_proof, proof_applied, rejected, penalties, no_peers_logged, c_headers, and both
+# RESULT_JSON carries pass (the hook's PASS under EXPECT), a_served_proof, proof_applied, rejected, penalties, no_peers_logged, c_headers, and both
 # appVersions. rig_verdict is PASS when the served proof is rejected (the reproduction), FAIL otherwise.
 echo "[nipopow-mixed] waiting for A's first rewards to mature, then minting boxes"
 wait_balance A 30000000000 300 >/dev/null || { echo "[nipopow-mixed] INCONCLUSIVE: A never had a spendable balance"; echo "RESULT_JSON $(jq -cn '{schema_version:1,scenario:"nipopow-mixed",inconclusive:"no A balance"}')"; rig_verdict=FAIL; return; }
@@ -58,7 +58,7 @@ echo "RESULT_JSON $(jq -cn \
   --argjson rejected "$([ "${rej:-0}" -ge 1 ] && echo true || echo false)" \
   --argjson pen "${pen:-0}" \
   --argjson nopeers "$([ "$no_peers" = yes ] && echo true || echo false)" \
-  --argjson chdr "${c_hdr:-0}" \
+  --argjson chdr "${c_hdr:-0}" --argjson pass "$([ "$res" = PASS ] && echo true || echo false)" \
   --arg jv "$(${PEERYARD_JAVA:-java} -version 2>&1 | head -1)" \
-  '{schema_version:1,scenario:"nipopow-mixed",runtime:{java:$jv},versions:{serve_A:$A,join_C:$C},metrics:{a_served_proof:$served,proof_applied:$applied,rejected:$rejected,penalties:$pen,no_peers_logged:$nopeers,c_headers:$chdr}}')"
+  '{schema_version:1,scenario:"nipopow-mixed",runtime:{java:$jv},versions:{serve_A:$A,join_C:$C},metrics:{pass:$pass,a_served_proof:$served,proof_applied:$applied,rejected:$rejected,penalties:$pen,no_peers_logged:$nopeers,c_headers:$chdr}}')"
 rig_verdict=$res

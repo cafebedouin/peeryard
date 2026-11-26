@@ -107,6 +107,6 @@ echo "RESULT_JSON $(jq -cn --argjson versions "$versions" --arg jv "$(${PEERYARD
   --argjson applied "$(b $applied)" --argjson synced "$(b $synced)" --argjson before "$(b $before)" \
   --argjson wrong "${wrong:-0}" --argjson misb "${misb:-0}" --argjson nopeers "${nopeers:-0}" \
   --argjson asked_up "$asked_up" --argjson asked_not "$asked_not" --argjson rebuilt "$rebuilt" --argjson nocached "$nocached" \
-  --argjson bytes "$bytes" --argjson chdr "${c_hdr:-0}" \
-  '{schema_version:1,scenario:"nipopow-cutover",runtime:{java:$jv},versions:$versions,metrics:{proof_applied:$applied,synced:$synced,wrong_proof:$wrong,misbehavior:$misb,no_peers:$nopeers,asked_upgraded:$asked_up,asked_not_upgraded:$asked_not,rebuilt:$rebuilt,no_cached:$nocached,proof_before_next_dump:$before,proof_bytes:$bytes,c_headers:$chdr}}')"
+  --argjson bytes "$bytes" --argjson chdr "${c_hdr:-0}" --argjson pass "$([ "$res" = PASS ] && echo true || echo false)" \
+  '{schema_version:1,scenario:"nipopow-cutover",runtime:{java:$jv},versions:$versions,metrics:{pass:$pass,proof_applied:$applied,synced:$synced,wrong_proof:$wrong,misbehavior:$misb,no_peers:$nopeers,asked_upgraded:$asked_up,asked_not_upgraded:$asked_not,rebuilt:$rebuilt,no_cached:$nocached,proof_before_next_dump:$before,proof_bytes:$bytes,c_headers:$chdr}}')"
 rig_verdict=$res

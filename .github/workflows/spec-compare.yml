@@ -15,7 +15,7 @@ on:
     inputs:
       patches: { description: 'space-separated patch files (repo paths), each applied alone to the weak-blocks base; the word base = the base alone (control)' }
       specs: { description: 'space-separated test classes (org.ergoplatform.mining.CandidateGeneratorSpec ...)' }
-      repeats: { description: 'runs per patch and spec (1-5)', default: '2' }
+      repeats: { description: 'runs per patch and spec (1-5); arms x specs x repeats is at most 12', default: '2' }
       matrix_base: { description: 'full 40-hex weak-blocks commit to apply the patches to (empty = patches/ergo-matrix/patches.json base, as before)', default: '' }
       judge_mutant: { description: 'mutation arm to judge (one of the patches; empty = no judge job)', default: '' }
       judge_test: { description: 'the test the mutation must make fail (its name or a part of it)', default: '' }
@@ -38,6 +38,10 @@ jobs:
           [[ -z "$MATRIX_BASE" || "$MATRIX_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "matrix_base: empty, or a full 40-hex commit"; exit 1; }
           for p in $PATCHES; do [[ "$p" == base || ( "$p" =~ ^patches/[A-Za-z0-9/._-]+\.patch$ && -f "$p" ) ]] || { echo "patch: $p"; exit 1; }; done
           for s in $SPECS; do [[ "$s" =~ ^org\.ergoplatform\.[A-Za-z0-9.]+Spec[A-Za-z]*$ ]] || { echo "spec: $s"; exit 1; }; done
+          # one job per arm, spec and repeat, 120 min each: cap the product as ref-specs.yml does (pace larger batches)
+          na=$(wc -w <<< "$PATCHES"); ns=$(wc -w <<< "$SPECS")
+          (( na >= 1 && ns >= 1 )) || { echo "patches and specs: at least one each"; exit 1; }
+          (( na * ns * REPEATS <= 12 )) || { echo "arms x specs x repeats = $(( na * ns * REPEATS )): at most 12 jobs per dispatch (pace larger batches)"; exit 1; }
           echo "arms=$(printf '%s\n' $PATCHES | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "specs=$(printf '%s\n' $SPECS | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           echo "repeats=$(seq 1 "$REPEATS" | jq -sc .)" >> "$GITHUB_OUTPUT"

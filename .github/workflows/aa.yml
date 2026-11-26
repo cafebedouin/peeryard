@@ -2,7 +2,7 @@
 # source, edit here.
 # A/A calibration of peeryard's rate-based diffrun scenarios on GitHub-hosted runners (an A/A rate is a per-host
 # number, so it is measured on a runner class anyone can re-run). The released reference jar (the release named by the tag input, sha256
-# pinned below) runs in BOTH roles, so every run observes the release; each shard is its
+# checked against the sha256 input, or, when that is empty, the release's own .jar.sha256 asset if it has one) runs in BOTH roles, so every run observes the release; each shard is its
 # own runner, so the pooled runs are observations of the runner class, not of one machine. The sequential stop rule is
 # removed for calibration (a fixed number of pairs per shard). The pool job reports each rate with an exact 95%
 # interval (diffrun/aa_pool.py). Runs on push to ci/aa or by hand.

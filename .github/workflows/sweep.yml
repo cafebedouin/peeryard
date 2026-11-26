@@ -93,7 +93,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 10   # half the account's 20 concurrent jobs, so other repositories' runs are not queued behind a sweep
       matrix:
         example: ${{ fromJSON(needs.build.outputs.examples) }}
         repeat: ${{ fromJSON(needs.build.outputs.repeats) }}

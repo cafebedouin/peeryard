@@ -15,7 +15,7 @@ on:
       sha: { description: 'ergoplatform/ergo commit (full sha; a pull request head is fine)', required: true }
       spec: { description: 'integration spec class for it:testOnly', required: true }
       repeats: { description: 'runs (1-20)', default: '5' }
-      run_minutes: { description: 'per-run limit in minutes (1-20)', default: '18' }
+      run_minutes: { description: 'per-run limit in minutes (1-20; repeats x run_minutes at most 120)', default: '18' }
       patch_b64: { description: 'optional unified diff to apply first, base64', default: '' }
       label: { description: 'short arm label for the run name and results', default: 'arm' }
 permissions:
@@ -35,6 +35,8 @@ jobs:
           [[ "$SPEC" =~ ^[A-Za-z0-9_.]+$ ]] || { echo "spec: a class name"; exit 1; }
           [[ "$REPEATS" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "repeats: 1-20"; exit 1; }
           [[ "$RUNMIN" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "run_minutes: 1-20"; exit 1; }
+          # the job's limit is 150 min and the image build comes first: refuse a loop that could not finish inside it
+          (( REPEATS * RUNMIN <= 120 )) || { echo "repeats x run_minutes = $(( REPEATS * RUNMIN )) min: at most 120 (the job limit is 150, less the image build)"; exit 1; }
           [[ "$LABEL" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || { echo "label: [A-Za-z0-9._-]{1,40}"; exit 1; }
           shopt -s nocasematch; idlike='(^|[^A-Za-z0-9])[abceklmprsx]-?[0-9]{3}([^0-9]|$)'
           if [[ "$LABEL" =~ $idlike ]]; then
@@ -93,11 +95,13 @@ jobs:
             docker network ls -q --filter name=ergo-itest- | xargs -r docker network rm > /dev/null 2>&1 || true
             if [[ -d ergo/target/logs ]]; then mv ergo/target/logs/* "$nl/" 2>/dev/null || true; fi
             rm -f "$nl/test.log"   # the test JVM's own log, the same lines as the sbt log
-            if [[ "$tests" == "Tests: succeeded 1, failed 0" ]]; then rm -rf "$nl"; else find "$nl" -type f -exec gzip -9 {} +; fi
+            if [[ "$tests" =~ ^Tests:\ succeeded\ [1-9][0-9]*,\ failed\ 0$ ]]; then rm -rf "$nl"; else find "$nl" -type f -exec gzip -9 {} +; fi
             gzip -9 "$log"
           done
-          pass=$(awk -F'\t' 'NR>1 && $5=="Tests: succeeded 1, failed 0"' out/RESULTS.tsv | wc -l)
-          fail=$(awk -F'\t' 'NR>1 && $5=="Tests: succeeded 0, failed 1"' out/RESULTS.tsv | wc -l)
+          # a run passed when sbt ran at least one test and none failed; it failed when any test failed (a spec with
+          # several tests reports them all in one line: the earlier exact match counted those as "other", as spec-loop's did)
+          pass=$(awk -F'\t' 'NR>1 && $5 ~ /^Tests: succeeded [1-9][0-9]*, failed 0$/' out/RESULTS.tsv | wc -l)
+          fail=$(awk -F'\t' 'NR>1 && $5 ~ /^Tests: succeeded [0-9]+, failed [1-9][0-9]*$/' out/RESULTS.tsv | wc -l)
           other=$(( REPEATS - pass - fail ))
           { echo "**$LABEL: $pass passed, $fail failed, $other other (of $REPEATS)**"; echo '```'; cat out/RESULTS.tsv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

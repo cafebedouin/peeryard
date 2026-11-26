@@ -13,8 +13,8 @@ peeryard runs on the same account (`CLAUDE.md`). So:
 - **Size every batch before sending it**: runs x jobs per run x minutes per job, and say the number. The sizes below
   give the jobs and the limits per job to do it with.
 - **Keep to tens of runs a day.** A large counted batch is spread over several days, not sent at once.
-- **20 concurrent jobs** are shared by every repository on the account. A wide matrix here (a sweep, an A/A, a
-  20-shard `pr-scenario`) holds all of them and queues every other repository's runs until it drains.
+- **20 concurrent jobs** are shared by every repository on the account. A wide matrix here (an A/A, a 20-shard
+  `pr-scenario`) can hold all of them and queue every other repository's runs until it drains; a sweep holds half.
 - **HTTP 422 "Actions has been disabled for this repository"** on a dispatch, while the permissions API still reports
   Actions as enabled, is the usage check, not a rate limit: read the banner on the repository's Actions tab. Turning
   Actions back on is the operator's decision.
@@ -92,9 +92,6 @@ repository]. All jobs run on `ubuntu-24.04`.
 - **Size**: 10 shard jobs (5 per scenario, 4 and 2 pairs) at 150 min: upper bound 1,500 min (25 runner-hours) for
   `node=release`; `reference` and `pr2721` add a 120-min build job, 1,620 min. The `pool` job sets no limit.
 - **Covered by**: `diffrun/README.md` (the A/A table), `README.md`, `AGENTS.md`, `ROADMAP.md`, `docs/release-check.md`.
-- **Note**: the header says the jar's sha256 is "pinned below" (`aa.yml:5`), but the `sha256` input defaults to empty
-  (`aa.yml:14`) and falls back to the release's `.sha256` asset; a comment in `release-watch.yml` (its last step)
-  refers to that as replacing "a stale pinned default".
 
 ### `sweep.yml`
 - **Does**: the publication sweep. One job builds the reference nodes from `patches/` (release line, sibling-fork set,
@@ -105,7 +102,7 @@ repository]. All jobs run on `ubuntu-24.04`.
   (`reference` or `release`), `diffrun` (default true), `scenario_env`.
 - **Size**: the workflow's own filter (`awk -F'\t' '!/^#/ && NF == 5'`) selects 50 examples from today's `suite.tsv`.
   With the defaults: build 120 + 50 x 60 + 2 x 60 = 3,240 min upper bound (54 runner-hours) at `repeats=1`; each
-  extra repeat adds 3,120. The example matrix has `max-parallel: 20`, which is the whole account's concurrency.
+  extra repeat adds 3,120. The example matrix has `max-parallel: 10`, half the account's concurrency.
   Name a few examples with `examples` for anything less than a publication run.
 - **Covered by**: `README.md`, `rig/README.md`, `diffrun/README.md`, `ROADMAP.md`, `docs/release-check.md`.
 
@@ -161,14 +158,12 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
   (`sbt docker`), then N runs each under a per-run time limit; keeps node logs only for runs that did not pass.
 - **Trigger**: dispatch. **Inputs**: `sha`, `spec`, `repeats` (1-20, default 5), `run_minutes` (1-20, default 18),
   `patch_b64`, `label`.
-- **Size**: one job, 150 min. The inputs allow more than the job limit: `repeats x run_minutes` reaches 400 min
-  (`it-loop.yml:17-18` against `:26`), and at the defaults 5 x 18 = 90 min of runs plus the image build. Keep
-  `repeats x run_minutes` well under 150.
+- **Size**: one job, 150 min. The input check refuses `repeats x run_minutes` over 120, which leaves the image build
+  room inside the limit; at the defaults 5 x 18 = 90 min of runs plus the image build.
 - **Covered by**: no peeryard doc names it. `AGENTS.md` sends integration specs to `review/it-spec.sh` or to the ergo
   fork's `fork-ci.yml`.
-- **Note**: a run counts as passed only on the exact line `Tests: succeeded 1, failed 0` (`it-loop.yml:96`, `:99`), so
-  an integration spec with more than one test is counted as "other" when it passes. `spec-loop.yml` changed the same
-  exact match to a pattern for this reason (its comment above the pass count).
+- **Counting**: a run passed when sbt ran at least one test and none failed, and failed when any test failed, as in
+  `spec-loop.yml`; anything else (a timeout, no `Tests:` line) is "other".
 
 ### `ref-specs.yml`
 - **Does**: named ergo test classes on several trees ("arms", `name:sha[:patch]`, from any ergo repository or fork), one
@@ -189,9 +184,9 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
   mutant fails in every job).
 - **Trigger**: dispatch. **Inputs**: `patches`, `specs`, `repeats` (1-5, default 2), `matrix_base`, `judge_mutant`,
   `judge_test`, `judge_control`.
-- **Size**: arms x specs x repeats jobs at 120. The plan job checks each value but sets no cap on the product: two arms,
-  one spec, the default two repeats is 480 min; five arms and four specs at five repeats would be 100 jobs, 12,000 min.
-  `plan` and `judge` set no limit.
+- **Size**: arms x specs x repeats jobs at 120; the plan job refuses a product over 12 (as `ref-specs.yml` caps
+  arms x repeats), so the upper bound is 1,440 min. Two arms, one spec, the default two repeats is 480 min. `plan` and
+  `judge` set no limit.
 - **Covered by**: `patches/README.md`, `diag/README.md` (the mutation judge); mutation patches come from
   `patches/mutate.sh`.
 

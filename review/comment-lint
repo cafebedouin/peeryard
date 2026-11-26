@@ -28,6 +28,12 @@ BANNED = [
      "rule 15: a term from peeryard's own docs the recipient will not know; say what was done in plain words"),
     (r"\b(the outside|another) model (found|raised|missed|did not)", "rule 12: after the credit line, argue from the code and the runs, not from who or what noticed it"),
 ]
+# A possible security lead is written only under "## Internal", on a line opening "Security lead:" (review/GATES.md,
+# private routing; templates/review.md): such a line anywhere in the posted part is a FAIL, whatever the kind.
+SECURITY_LEAD = re.compile(r"^\s*(?:[-*>]\s*)*(?:\*\*)?\s*security lead\b", re.I | re.M)
+# In a review body an Integration item (vehicle, duplicates, scope, stray or agent-instruction files) is one
+# "Integration:" clause in the verdict paragraph, never a labelled block (review/GUIDE.md, Labels).
+INTEGRATION_BLOCK = re.compile(r"^\s*(?:- )?\*\*\[Integration\]", re.M)
 HEDGES = re.compile(r"\b(might|may|could|possibly|perhaps|potentially|seems?|appears?)\b", re.I)
 
 
@@ -83,6 +89,13 @@ def lint(path, kind):
             out.append(("FAIL", f"a reply opens with its credit line and the marker '{MARKER}' (templates/reply.md)"))
     if kind in ("review", "pr") and re.search(r"^Executed:", prose, re.M) and not re.search(r"\bLogs:", prose):
         out.append(("WARN", "rule 11c: an executed A/B states its log profile difference (a 'Logs:' clause: what else differs between the arms, or 'no feature separates the arms; no new message')"))
+    m = SECURITY_LEAD.search(raw)
+    if m:
+        out.append(("FAIL", f"a security lead in the posted part: '{m.group(0).strip()[:40]}' (it goes only under '## Internal', "
+                            "naming SECURITY.md's channel, with no trigger detail: review/GATES.md)"))
+    if kind == "review" and INTEGRATION_BLOCK.search(prose):
+        out.append(("FAIL", "an [Integration] labelled block in a review body: fold it into the verdict paragraph as one "
+                            "'Integration:' clause; the labelled blocks are for correctness (review/GUIDE.md, Labels)"))
     if kind in ("review", "pr"):
         if not (lines and CREDIT.match(lines[0])):
             out.append(("WARN", "rule 12: first line is not the credit line (Review carried out by … / Prepared with …)"))

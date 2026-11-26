@@ -25,7 +25,8 @@ skip the sysctl. A host you would rather not change can use the container below 
 ## Run card
 
 You need:
-- Linux with unprivileged user namespaces, `iproute2` with `sch_netem`, util-linux (`unshare`, `nsenter`), procps
+- Linux with unprivileged user namespaces, `iproute2` with `sch_netem`, util-linux (`unshare`, `nsenter`, `mount`,
+  `flock`: the host's run lock, `review/with-lock.sh`), procps
   (`ps`, `pgrep`, `pkill`), coreutils (`timeout`, `sha256sum`, `realpath`), `jq`, `curl`, `unzip`, `git`, `python3`
   (the rig's cause classifier and the diag tools; standard library only), **bash 4.4 or later**, and a Java runtime
   for the node (the example runs used OpenJDK 21);
@@ -36,8 +37,10 @@ You need:
   ergo-node-rust binary (`rig/README.md`); `rig/run-suite.sh` skips what is not set;
 - about 1.5 GB of free RAM for a four-node scenario (`rig/README.md`: about 350 MB per node at `-Xmx512m`).
 
-`rig/preflight.sh` checks the first item (namespaces, netem, every command named there, the Java runtime) and the
-free memory, and fails closed on any miss; JDK 8, sbt, `taskset` (a topology node with `cpus`) and `tar` (fixture
+`rig/preflight.sh` checks the first item (bash 4.4, user namespaces, netem in a namespace, a tmpfs `/run` with
+`ip netns` and `ip netns exec` inside one, an init as PID 1 in a container, the commands `jq curl unzip ip tc unshare
+nsenter mount flock pkill pgrep ps timeout sha256sum realpath python3 git`, the Java runtime), the free memory and a
+writable scratch directory, and fails closed on any miss; JDK 8, sbt, `taskset` (a topology node with `cpus`) and `tar` (fixture
 snapshots) it reports without failing; it does not look for the Matrix or Rust node binaries.
 
 **Docker is optional, two ways.**
@@ -76,7 +79,8 @@ connected, a namespace or netem step failed) before the example started; the las
   worktree inside it (`$DIFFRUN_CACHE/.tmp.*/wt`; git's bookkeeping for it goes in the ergo clone's `.git`), and a short
   socket directory under `/tmp` that sbt needs; sbt and coursier keep their own caches under `$HOME` (`~/.sbt`,
   `~/.ivy2`, `~/.cache/coursier`);
-- `review/revert-check.sh`: `/tmp/revert-check.*` unless `--out` is given;
+- `review/revert-check.sh`: its `--out` directory, which it requires (in a review,
+  `audits/<date>_pr-<N>/captures/revert-check`) and names on stderr at start;
 - a review: `audits/<date>_pr-<N>/` (ignored by git except the layout and an example; `audits/README.md`).
 
 ## Self-tests (no node, seconds)
@@ -90,7 +94,8 @@ for t in lint precheck sequential phases indexer_diff crash_consistency wallet_o
 done
 ```
 `T` must be a fresh empty directory: each test deletes it first. `tests/tooling.sh` makes commits, so it needs a git
-identity (`checks.yml` sets one). `tests/diffrun_pool.sh` (the sharded-verdict pooler) runs the same way but is not
+identity (`checks.yml` sets one), and util-linux's `script` and `flock` (it runs `review/post.sh` on a pseudo-terminal
+against a stub `gh`, and `review/with-lock.sh` on its own lock path). `tests/diffrun_pool.sh` (the sharded-verdict pooler) runs the same way but is not
 in `checks.yml`. Each shell test exits non-zero on a `MISMATCH`. `checks.yml` also runs `shellcheck -x` and `bash -n`
 over every bash script and `ci/export-workflows.sh --check`.
 

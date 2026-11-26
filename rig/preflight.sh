@@ -5,7 +5,7 @@
 # namespace, where `ip netns` keeps its bind mounts (rig.sh does the same at start); `ip netns exec` inside such a
 # namespace, the way every node, curl and tc call is made (it remounts /sys, which a container's masked /sys paths can
 # refuse); an init as PID 1 when running in a container (orphans are reaped; else <defunct> children survive a run);
-# the commands the rig and devnet.sh call (procps pkill/pgrep/ps, util-linux nsenter/mount among them, python3, git;
+# the commands the rig and devnet.sh call (procps pkill/pgrep/ps, util-linux nsenter/mount/flock among them, python3, git;
 # taskset and tar are reported but not failed, since only some runs use them); the Java
 # runtime (PEERYARD_JAVA, default `java`) and its version; free memory against [nodes] JVMs (default 4) at
 # about 350 MB each. Prints one line per check and exits 1 on any miss. No node is started; a few seconds.
@@ -37,8 +37,9 @@ if in_container; then
   esac
 fi
 # python3: rig.sh runs diag/health.py, diagnose.py and costs.py on every run, blockwatch and the wire decode too; git:
-# the diffrun and review tools (provenance, builds, PR fetches)
-for c in jq curl unzip ip tc unshare nsenter mount pkill pgrep ps timeout sha256sum realpath python3 git; do command -v "$c" >/dev/null && ok "command $c" "($(command -v "$c"))" || miss "command $c" ""; done
+# the diffrun and review tools (provenance, builds, PR fetches); flock: review/with-lock.sh, the host's run lock every
+# node run, build and revert check takes (and rig.sh's sample log)
+for c in jq curl unzip ip tc unshare nsenter mount flock pkill pgrep ps timeout sha256sum realpath python3 git; do command -v "$c" >/dev/null && ok "command $c" "($(command -v "$c"))" || miss "command $c" ""; done
 # needed only by some runs, so reported, not failed: taskset for a topology node with "cpus" (and wire capture
 # pinning), tar for the rig's fixture snapshots (PEERYARD_FIXTURES: fixture_save and the restore at start)
 command -v taskset >/dev/null && ok "command taskset (optional)" "($(command -v taskset))" || ok "command taskset (optional)" "(not found; a topology node with \"cpus\" will not launch)"

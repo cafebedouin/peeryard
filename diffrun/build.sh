@@ -47,8 +47,10 @@ for p in ${PATHS[@]+"${PATHS[@]}"}; do [[ -n "$p" ]] || die "empty pathspec"; do
 set -- "${POS[@]}"
 # A build runs sbt for minutes and disturbs a timing-sensitive node run on the same host, so a real build takes the
 # host's run lock (review/with-lock.sh) itself; a dry run does not. DIFFRUN_NO_LOCK=1 skips it (CI runners, one job).
+# with-lock exports PEERYARD_LOCKED=1 to what it runs, so a build already under the lock (this script re-run by
+# with-lock, or called from a command wrapped in it) goes straight on instead of queueing behind its own holder.
 if [[ $DRY == 0 && "${DIFFRUN_NO_LOCK:-0}" != 1 && "${PEERYARD_LOCKED:-0}" != 1 && -f "$(dirname "${BASH_SOURCE[0]}")/../review/with-lock.sh" ]]; then
-  exec bash "$(dirname "${BASH_SOURCE[0]}")/../review/with-lock.sh" -- env PEERYARD_LOCKED=1 bash "${BASH_SOURCE[0]}" "${ORIG_ARGS[@]}"
+  exec bash "$(dirname "${BASH_SOURCE[0]}")/../review/with-lock.sh" -- bash "${BASH_SOURCE[0]}" "${ORIG_ARGS[@]}"
 fi
 CLONE="${DIFFRUN_ERGO_CLONE:?set DIFFRUN_ERGO_CLONE to a local clone of ergoplatform/ergo}"
 CACHE="${DIFFRUN_CACHE:-$HOME/.cache/diffrun/builds}"

@@ -10,7 +10,11 @@
 # FIFO: whichever waiter happens to poll first after a release wins, so an early arrival can wait behind any number
 # of later ones. Tickets of dead processes are removed.
 # The lock file holds the current holder's line for the waiters' message. Waiting is reported once a minute on
-# stderr; --wait caps it (default 6 h). Exit status is the command's; 75 means the wait expired.
+# stderr; --wait caps it (default 6 h). Exit status is the command's; 75 means the wait expired; 2 a setup error
+# (flock missing, the lock path not writable).
+# The command runs with PEERYARD_LOCKED=1 exported. When with-lock is called with PEERYARD_LOCKED=1 already set (a
+# command that holds the lock calls a script that takes it, such as diffrun/build.sh, or with-lock itself), it runs
+# the command directly instead of queueing behind its own holder, which would wait until --wait expires.
 set -uo pipefail
 LOCK="${PEERYARD_LOCK:-/tmp/peeryard.lock}"; WAIT=$((6 * 3600)); Q="$LOCK.d"
 while [[ $# -gt 0 ]]; do case "$1" in
@@ -18,6 +22,9 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --) shift; break ;;
   *) echo "usage: $0 [--wait <seconds>] -- <command> [args...]" >&2; exit 2 ;; esac; done
 [[ $# -gt 0 ]] || { echo "with-lock: no command" >&2; exit 2; }
+# re-entrant: the caller already holds the host lock (it exported PEERYARD_LOCKED); waiting here would wait on itself
+[[ "${PEERYARD_LOCKED:-0}" == 1 ]] && exec "$@"
+command -v flock >/dev/null || { echo "with-lock: flock not found (util-linux); bash rig/preflight.sh lists what a host needs" >&2; exit 2; }
 mkdir -p "$Q" || { echo "with-lock: cannot create $Q" >&2; exit 2; }
 TICKET="$Q/$(date +%s%N)-$$"; : > "$TICKET" || exit 2
 trap 'rm -f "$TICKET"' EXIT
@@ -31,4 +38,5 @@ until [[ "$(oldest_live)" == "$(basename "$TICKET")" ]] && flock -n 9; do
 done
 rm -f "$TICKET"   # holder no longer queues; the flock is what it holds
 truncate -s 0 "$LOCK"; printf '%s pid %s: %s (%s args)\n' "$(date -u +%FT%TZ)" "$$" "$(basename "${1:-?}")" "$(($# - 1))" >&9   # the command's name only: arguments can carry paths
-"$@"; rc=$?; truncate -s 0 "$LOCK"; exit $rc   # the holder line is cleared on release
+PEERYARD_LOCKED=1 "$@"; rc=$?; truncate -s 0 "$LOCK"; exit $rc   # the holder line is cleared on release; the command and
+                                                                  # its children see PEERYARD_LOCKED=1 (re-entry above)

@@ -6,7 +6,9 @@
     python3 queue/claim.py --list
 
 Edits queue/claims.json (expired claims are pruned on every run) and prints the git commands that publish it: a claim
-counts on the public page only once it is on main, which the daily build reads. --by defaults to `gh api user`'s login,
+counts on the public page only once it is on main, which the daily build reads. Those commands are for the person to
+run: an agent hands them over and never commits or pushes claims.json itself (AGENTS.md: nothing is pushed without the
+person's go). --by defaults to `gh api user`'s login,
 then $USER. Nothing is posted to GitHub. The page and queue/next.py read the file; a claim never hides a pull request,
 it tags it.
 """
@@ -51,7 +53,8 @@ def main():
         if not j["claims"]:
             print("no live claims")
         if pruned:
-            save(j); print(f"({pruned} expired claim(s) pruned; commit claims.json)")
+            save(j); print(f"({pruned} expired claim(s) pruned in claims.json; the person publishes it, as below)")
+            print_publish("prune")
         return
     by = a.by or subprocess.run(["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True).stdout.strip() or os.environ.get("USER", "someone")
     others = [c for c in j["claims"] if c["pr"] != a.pr]
@@ -69,7 +72,13 @@ def main():
                                  "expires_at": (t + dt.timedelta(hours=a.hours)).strftime("%Y-%m-%dT%H:%M:%SZ")}]
         save(j)
         print(f"#{a.pr}: claimed by {by}" + (f" for {a.kind}" if a.kind else "") + f" for {a.hours:g} h")
-    print("publish it:  git -C " + os.path.dirname(HERE) + f" commit -qm 'claims: #{a.pr}' queue/claims.json && git -C " + os.path.dirname(HERE) + " push -q origin main")
+    print_publish(f"#{a.pr}")
+
+
+def print_publish(what):
+    root = os.path.dirname(HERE)
+    print("to publish, the person runs (an agent hands this over and does not run it):\n  git -C " + root
+          + f" commit -qm 'claims: {what}' queue/claims.json && git -C " + root + " push -q origin main")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 # or environment-bound; one that does not compile without the change depends on its API (reported as such, not
 # as a failure).
 #
-#   DIFFRUN_ERGO_CLONE=<ergo clone> bash review/revert-check.sh --pr <N> [--base <ref>] [--out <dir>]
+#   DIFFRUN_ERGO_CLONE=<ergo clone> bash review/revert-check.sh --pr <N> [--base <ref>] --out <dir>
 #                                                                [--tests <path-regex>] [--revert <path-regex>] [--timeout <s>]
 # --revert <regex>: revert only the production paths matching it (per-hunk: "does this test guard THAT file?"); the
 #   default reverts every non-test path, which turns a spec that uses a new API into a compile error.
@@ -28,9 +28,13 @@ CLONE="${DIFFRUN_ERGO_CLONE:-}"; PR=""; BASE=""; OUT=""; TESTS_RE='(^|/)src/test
 while [[ $# -gt 0 ]]; do case "$1" in
   --pr) PR="$2"; shift 2 ;; --base) BASE="$2"; shift 2 ;; --out) OUT="$2"; shift 2 ;;
   --tests) TESTS_RE="$2"; shift 2 ;; --revert) REVERT_RE="$2"; shift 2 ;; --timeout) TIMEOUT="$2"; shift 2 ;; --clone) CLONE="$2"; shift 2 ;;
-  *) echo "usage: $0 --pr <N> [--base <ref>] [--out <dir>] [--tests <regex>] [--timeout <s>]" >&2; exit 2 ;; esac; done
+  *) echo "usage: $0 --pr <N> [--base <ref>] --out <dir> [--tests <regex>] [--revert <regex>] [--timeout <s>]" >&2; exit 2 ;; esac; done
 [[ -n "$PR" && -n "$CLONE" && -d "$CLONE/.git" ]] || { echo "revert-check: --pr and a clone (DIFFRUN_ERGO_CLONE or --clone) are required" >&2; exit 2; }
-OUT="${OUT:-$(mktemp -d /tmp/revert-check.XXXXXX)}"; mkdir -p "$OUT"; OUT="$(readlink -f "$OUT")"
+# --out is required: the table and the sbt logs are a review's evidence and belong in its audit directory, not in a
+# /tmp directory nobody is told about
+[[ -n "$OUT" ]] || { echo "revert-check: --out <dir> is required (in a review: --out audits/<date>_pr-$PR/captures/revert-check)" >&2; exit 2; }
+mkdir -p "$OUT" || { echo "revert-check: cannot create $OUT" >&2; exit 2; }; OUT="$(readlink -f "$OUT")"
+[[ "${REVERT_CHECK_LOCKED:-0}" == 1 ]] || echo "revert-check: writing to $OUT" >&2
 [[ "${REVERT_CHECK_LOCKED:-0}" == 1 ]] || : > "$OUT/revert-check.txt"
 say(){ echo "$*" | tee -a "$OUT/revert-check.txt"; }
 
@@ -74,9 +78,13 @@ say "changed: ${#ALL[@]} files; tests matched: ${#TESTS[@]}; reverted without th
 [[ ${#PROD[@]} -gt 0 ]] || { say "the PR changes only test files: a revert check has nothing to revert"; echo "RESULT_JSON {\"pr\":$PR,\"tests\":${#TESTS[@]},\"guarding\":0,\"passes_both\":0,\"fails_both\":0,\"compile_error_without\":0,\"nothing_to_revert\":true}" | tee "$OUT/RESULT_JSON"; exit 0; }
 printf '%s\n' "${TESTS[@]}" > "$OUT/test-files.txt"; printf '%s\n' "${PROD[@]}" > "$OUT/reverted-files.txt"
 # The host lock is taken here, after the early exits, so a PR with no tests never queues for it; callers need not
-# wrap this script in with-lock (doing so is harmless). The locked half gets --out "$OUT" appended (the parser
-# keeps the last --out), so both halves write one directory even when the caller gave no --out.
-if [[ "${REVERT_CHECK_LOCKED:-0}" != 1 ]]; then export REVERT_CHECK_LOCKED=1 PEERYARD_LOCKED=1; exec bash "$HERE/with-lock.sh" -- bash "$0" "${ORIG_ARGS[@]}" --out "$OUT"; fi
+# wrap this script in with-lock. A caller that already holds the lock (with-lock exports PEERYARD_LOCKED=1) goes
+# straight on in this process; otherwise the script re-runs itself under with-lock, which exports PEERYARD_LOCKED=1 to
+# it. REVERT_CHECK_LOCKED=1 tells that second run it is the locked half (it keeps the table started above rather than
+# truncating it, and does not print the header twice); it gets --out "$OUT" appended (the parser keeps the last
+# --out), the resolved directory, so both halves write one directory.
+if [[ "${REVERT_CHECK_LOCKED:-0}" != 1 && "${PEERYARD_LOCKED:-0}" != 1 ]]; then
+  export REVERT_CHECK_LOCKED=1; exec bash "$HERE/with-lock.sh" -- bash "$0" "${ORIG_ARGS[@]}" --out "$OUT"; fi
 
 # worktrees
 WT_WITH="$OUT/with"; WT_WITHOUT="$OUT/without"

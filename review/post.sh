@@ -2,6 +2,9 @@
 # post.sh <owner/repo> <pr> <report.md> [--kind review|inline|reply] [--queue]: the last gate. Lints the text,
 # prints it, states what it contributes (the recipes and verdict lines it carries), and asks for a typed `yes`
 # before `gh pr comment`. Saves the posted text beside the report as <report>.posted.md with the comment URL.
+# The person runs it, in their own terminal: the answer is read only from a terminal (a piped or redirected stdin is
+# refused, exit 6), so neither an agent nor `yes |` can answer for them. Exit: 0 posted (or queued), 1 not posted,
+# 2 usage, 3 lint FAIL, 4 gh failed, 5 agent-instruction files not named, 6 stdin not a terminal.
 # --queue: for an unattended run; instead of asking, appends the item to audits/QUEUE.tsv (repo, pr, kind,
 # file, contribution line) for review/queue.sh, which asks for each item when a person is back.
 # --ack-agent-files: post although the PR adds or changes agent-instruction files or LLM context dumps that the text
@@ -35,11 +38,19 @@ elif [[ -n "$flags" ]]; then
   fi
 fi
 echo "----- text to post to $REPO#$PR -----"; cat "$PUB"; echo "----- end -----"
-echo "what it contributes: $(grep -c -E '^- \*\*\[' "$FILE") finding(s); executed: $(grep -m1 -E '^Executed:' "$FILE" | cut -c1-160); verdict lines: $(grep -oE '[A-Z_-]+: (PASS|FAIL|SUPPORTS|AGAINST|NULL|DEGENERATE)[^`]*' "$FILE" | head -3 | tr '\n' ' ')"
+NF="$(grep -c -E '^(- )?\*\*\[' "$PUB")"   # labelled findings in the posted part (the template's blocks, or a list of them)
+echo "what it contributes: $NF finding(s); executed: $(grep -m1 -E '^Executed:' "$PUB" | cut -c1-160); verdict lines: $(grep -oE '[A-Z_-]+: (PASS|FAIL|SUPPORTS|AGAINST|NULL|DEGENERATE)[^`]*' "$PUB" | head -3 | tr '\n' ' ')"
 if [[ $QUEUE == 1 ]]; then
   q="$HERE/../audits/QUEUE.tsv"; mkdir -p "$(dirname "$q")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$REPO" "$PR" "$KIND" "$(readlink -f "$FILE")" "$(grep -c -E '^- \*\*\[' "$FILE") finding(s); $(grep -m1 -E '^Executed:' "$FILE" | cut -c1-120)" >> "$q"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$REPO" "$PR" "$KIND" "$(readlink -f "$FILE")" "$NF finding(s); $(grep -m1 -E '^Executed:' "$PUB" | cut -c1-120)" >> "$q"
   echo "queued (not posted): $q; when back, run: bash review/queue.sh"; exit 0
+fi
+# The answer must be typed by the person at a terminal: a pipe (`yes | post.sh`, `printf 'yes\n' | queue.sh`) or a file is
+# refused before the question is asked, so an agent or a script cannot answer it. An agent prints this command for the
+# person to run in their own terminal (.claude/skills/review-pr/SKILL.md step 6); there is no override.
+if [[ ! -t 0 ]]; then
+  echo "post: refused: stdin is not a terminal; the person posts, by running this command in their own terminal and typing yes:" >&2
+  echo "  bash review/post.sh $REPO $PR $FILE${KIND:+ --kind $KIND}$([[ $ACK == 1 ]] && echo ' --ack-agent-files')" >&2; exit 6
 fi
 read -r -p "post this as a comment on $REPO#$PR? type yes to post: " ans
 [[ "$ans" == yes ]] || { echo "not posted"; exit 1; }

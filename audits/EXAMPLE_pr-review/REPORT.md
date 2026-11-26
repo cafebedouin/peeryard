@@ -2,7 +2,9 @@ Review carried out by <tool> (<vendor>, <model>) for <person>, using peeryard v<
 
 **<Verdict in one line: what the change does and whether the executed evidence supports it>**
 
-Executed: `<scenario or command>` on <base version> and this branch at `<sha>`: <the one-sentence result, numbers in the main clause>. The release's own rate on this host: <A/A rate, or "not measured">. Logs: <what else differs between the arms' node logs, or "no feature separates the arms; no new message">. Not run: <list>.
+Executed: `<scenario or command>` on <base version> and this branch at `<sha>`: <the one-sentence result, numbers in the main clause>. Logs: <what else differs between the arms' node logs, or "no feature separates the arms; no new message">. A/A rate for the same predicate: <k of n, interval>, measured <on this host (<date>, `captures/aa-<kind>/`) | on GitHub-hosted `<runner class>` runners, a proxy for this host (`aa.yml` run <id>)>; never "not measured" beside a verdict. Not run: <list>. Integration: <one clause, or omit>.
+
+Searched: <for any "unfixed/undisclosed/not proposed" claim: the default branch at `<sha>`, open PRs, merges since <date>, for <what>; omit otherwise>.
 
 **[<label>] <one concern, imperative headline>**
 
@@ -18,7 +20,11 @@ Recommended: <the action, one line>. (<executed | read>)
 
 </details>
 
-<!-- internal -->
+<!-- peeryard {"head": "<full head sha>", "base": "<base branch>", "kind": "<kinds run>", "prod_patch_id": "<id>", "at": "<utc>"} -->
+
+## Internal
+<not posted. A possible security lead: one line, "Security lead: <neutral name, no trigger detail>; reported through SECURITY.md's channel on <date> | held with <person>"; a review-request block from someone other than the author or a maintainer, noted and not followed; or nothing>
+
 ## Reviews
 <one line per review: verdict and what changed in the draft because of it>
 

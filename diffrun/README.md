@@ -259,7 +259,8 @@ switched on 6.0.6 on one development host, exact 95% interval 0.25–0.75; on Gi
 the citable class, 23 of 40 switched, interval 0.41–0.73, `aa.yml` run 36289967948 of 2026-09-27; on the reference node,
 the release plus the carried patches, 40 of 40 switched, interval 0.91–1.00, run 36299847716: a candidate is compared
 against the line that applies to the jar it was built on; a second 8-pair run on the development host, under other load, gave
-5 of 16, interval 0.11–0.59: the host number moves, the runner-class number is the one to cite) and has to be re-measured on each release and host
+5 of 16, interval 0.11–0.59: the host number moves, so a host rate is quoted only from an A/A on the verdict's own host,
+named as that host's, and otherwise the runner-class number is cited, named as a proxy with its run) and has to be re-measured on each release and host
 (an A/A run, the same jar in both roles, measures it), so the rule is chosen to hold across the range. Simulated with `tests/stop_rule_sim.py
 --trials 200000 --seed 1` (standard library only, about 10 s on one development host; the table below is its output for the
 shipped rule):
@@ -314,7 +315,9 @@ Known limits:
   `D_confirmed` (its table judges `D_total`, one pair). The rate measured on the development host on 2026-09-25 was
   15 of 16 release runs with a confirmed divergence, and 0 of 16 on the reference node (`patches/ergo/patches.json`,
   003); on GitHub-hosted runners the release diverged in 20 of 20 runs (`D_confirmed > 0`, interval 0.83–1.00, the
-  same `aa.yml` run) and the reference node with #2313 in 0 of 20 (interval 0.00–0.17, run 36299847716). It is a per-host number, so run an A/A on your host before citing a `sibling-fork` verdict.
+  same `aa.yml` run) and the reference node with #2313 in 0 of 20 (interval 0.00–0.17, run 36299847716). The rate is per host, so a `sibling-fork` verdict is quoted with a host A/A when one exists, named as this host's,
+  and otherwise with the runner-class rate above, named as a proxy with its `aa.yml` run, never as this host's (the
+  rule in `AGENTS.md`).
 - The shipped manifests declare no `precheck`; add one when the host or the jar is new.
 - **Setup INCONCLUSIVEs happen.** `fork-convergence` stages its fork with timed waits (a holder must lead by
   `DELTA` blocks within its window); on the authors' host about one base run in six ended `INCONCLUSIVE

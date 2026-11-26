@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # tooling.sh: tests patches/check.sh, patches/stack.sh, patches/mutate.sh, diffrun/register.sh, diffrun/pool.sh, rig/suite-env.sh,
-# rig/lib/blockwatch.sh (against a stubbed REST API) and review/provenance.sh on local
+# rig/lib/blockwatch.sh (against a stubbed REST API), review/provenance.sh, and review/post.sh, queue.sh, pick.sh,
+# with-lock.sh and revert-check.sh's argument checks (against a stub gh first on PATH, on its own lock path) on local
 # fixtures (a throwaway git repository and fake jars); no network, no node. Run from the peeryard root:
 #   T=$(mktemp -d) bash tests/tooling.sh
 set -uo pipefail
 # the fixtures are git repositories and several helpers are Python: say what is missing once, instead of a cascade
-miss=(); for t in git python3; do command -v "$t" >/dev/null 2>&1 || miss+=("$t"); done
+miss=(); for t in git python3 script flock; do command -v "$t" >/dev/null 2>&1 || miss+=("$t"); done
 [[ ${#miss[@]} -eq 0 ]] || { echo "tests/tooling.sh needs ${miss[*]} (see the run card in README.md); not run" >&2; exit 2; }
 T="${T:?set T to a scratch dir, e.g. T=$(mktemp -d)}"
 # T is deleted and recreated below: refuse anything that is not a scratch dir under /tmp or $TMPDIR (where
@@ -246,18 +247,121 @@ expect_in "blockwatch.sh: a clean chain -> OK" "rc=0 result=OK" "$BW/clean.txt"
 expect_in "blockwatch.sh: deliberate-fail contract -> reported per block" "contract:deliberate-fail.sh A@5 b0000" "$BW/fail.txt"
 expect_in "blockwatch.sh: ... and BLOCKWATCH_RESULT says VIOLATED" "rc=1 result=VIOLATED total=6" "$BW/fail.txt"
 
-# ---- post.sh guard (a stub detector; the prompt is answered "no", so nothing is posted: exit 1 = reached the prompt)
-P="$T/post"; mkdir -p "$P"
+# ---- post.sh and queue.sh: a stub gh first on PATH (records its calls, never touches the network) and a stub
+# agent-file detector. post.sh reads the answer only from a terminal, so these tests give it one (script(1) runs it on
+# a pty, with the answer fed in); a piped or redirected answer is refused (exit 6). No environment variable bypasses
+# that check, by design: one would let an agent through too.
+P="$T/post"; mkdir -p "$P/bin"
+cat > "$P/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >> "${STUB_GH_LOG:?}"
+if [[ "${STUB_GH_FAIL:-0}" == 1 ]]; then echo "stub gh: HTTP 502" >&2; exit 1; fi
+case "$1 $2" in
+  "pr comment") while [[ $# -gt 0 ]]; do [[ "$1" == --body-file ]] && cp "$2" "${STUB_GH_LOG%.log}.body"; shift; done
+                echo "https://github.com/o/r/pull/1#issuecomment-1" ;;
+  "api user") echo stubuser ;;
+  "pr view"|"pr list") printf '7\tfalse\t0\tmaster\tsomeone\tA title\n' ;;
+  "api repos/"*/pulls/*/reviews*|"api repos/"*/timeline*) ;;
+  "api repos/"*/issues/*/comments*) [[ -z "${STUB_GH_POST:-}" ]] || echo "$STUB_GH_POST" ;;
+  "api repos/"*/check-suites*) echo 2026-01-01T00:00:00Z ;;
+  "api repos/"*/pulls/*) echo "${STUB_GH_HEAD:-}" ;;
+esac
+EOF
+chmod +x "$P/bin/gh"; export STUB_GH_LOG="$P/gh.log"; GHPATH="$P/bin:$PATH"
+[[ "$(PATH="$GHPATH" command -v gh)" == "$P/bin/gh" ]] || { echo "tests/tooling.sh: the stub gh is not first on PATH; not running the post.sh tests" >&2; exit 2; }
 printf '#!/usr/bin/env bash\necho "FLAG agent-instructions added +609 .github/instructions/ins.instructions.md"\nexit 1\n' > "$P/flag.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$P/none.sh"; printf '#!/usr/bin/env bash\nexit 2\n' > "$P/err.sh"; chmod +x "$P"/*.sh
-body(){ printf 'Review carried out by Claude (Anthropic, Claude Opus 5.5) for the maintainer, using peeryard v0.1.0 on x (0123456789ab); ran y.\n\n**Verdict line.**\n\n**[Integration] Drop an unrelated file**\n\nObserved: %s.\n\nRecommended: remove it. (read)\n' "$1"; }
-body 'this diff adds `.github/instructions/ins.instructions.md`' > "$P/named.md"; body 'the fix is fine' > "$P/unnamed.md"
-pst(){ printf 'no\n' | PEERYARD_AGENT_FILES_CMD="$P/$1.sh" bash review/post.sh o/r 1 "$P/$2.md" "${@:3}" > "$P/out-$1-$2.txt" 2>&1; echo $?; }
-expect_rc "post.sh: flagged file named in the text -> reaches the prompt" 1 "$(pst flag named)"
-expect_rc "post.sh: flagged file not named -> refused (exit 5)" 5 "$(pst flag unnamed)"
-expect_rc "post.sh: ... --ack-agent-files -> reaches the prompt" 1 "$(pst flag unnamed --ack-agent-files)"
-expect_rc "post.sh: detector lookup failed -> refused (exit 5)" 5 "$(pst err unnamed)"
-expect_rc "post.sh: nothing flagged -> reaches the prompt" 1 "$(pst none unnamed)"
+# a review in the template's shape: an Integration item is a clause of the verdict paragraph, not a labelled block
+body(){ printf 'Review carried out by Claude (Anthropic, Claude Opus 5.5) for the maintainer, using peeryard v0.1.0 on x (0123456789ab); ran y.\n\n**Verdict line.**\n\nExecuted: ran `t` on base and head: passes. Logs: no feature separates the arms; no new message. Integration: %s.\n\n**[Possible bug] Bound the parse**\n\nObserved: reads `A.scala:3`.\n\nRecommended: bound it. (read)\n' "$1"; }
+body 'this diff adds `.github/instructions/ins.instructions.md`, which the fix does not use' > "$P/named.md"; body 'none' > "$P/unnamed.md"
+# pty <answer> <command...>: the command runs on a terminal, the answer typed into it
+pty(){ local ans=$1; shift; printf '%s\n' "$ans" | PATH="$GHPATH" SHELL="$(command -v bash)" script -qec "$(printf '%q ' "$@")" /dev/null; }
+pst(){ local ans=$1 det=$2 f=$3; shift 3
+  pty "$ans" env PEERYARD_AGENT_FILES_CMD="$P/$det.sh" bash review/post.sh o/r 1 "$P/$f.md" "$@" > "$P/out-$det-$f.txt" 2>&1; echo $?; }
+expect_rc "post.sh: flagged file named in the text -> reaches the prompt" 1 "$(pst no flag named)"
+expect_in "post.sh: ... and asks the question" "type yes to post" "$P/out-flag-named.txt"
+expect_rc "post.sh: flagged file not named -> refused (exit 5)" 5 "$(pst no flag unnamed)"
+expect_rc "post.sh: ... --ack-agent-files -> reaches the prompt" 1 "$(pst no flag unnamed --ack-agent-files)"
+expect_rc "post.sh: detector lookup failed -> refused (exit 5)" 5 "$(pst no err unnamed)"
+expect_rc "post.sh: nothing flagged -> reaches the prompt" 1 "$(pst no none unnamed)"
+# a piped or redirected answer is refused before the question, and gh is never called
+: > "$STUB_GH_LOG"
+expect_rc "post.sh: yes piped (not a terminal) -> refused (exit 6)" 6 \
+  "$(yes yes | PATH="$GHPATH" PEERYARD_AGENT_FILES_CMD="$P/none.sh" bash review/post.sh o/r 1 "$P/unnamed.md" > "$P/out-piped.txt" 2>&1; echo $?)"
+printf 'yes\n' > "$P/yes.txt"
+expect_rc "post.sh: yes redirected from a file -> refused (exit 6)" 6 \
+  "$(PATH="$GHPATH" PEERYARD_AGENT_FILES_CMD="$P/none.sh" bash review/post.sh o/r 1 "$P/unnamed.md" < "$P/yes.txt" > "$P/out-file.txt" 2>&1; echo $?)"
+expect_in "post.sh: ... names the command for the person to run" "bash review/post.sh o/r 1 $P/unnamed.md" "$P/out-piped.txt"
+[[ ! -s "$STUB_GH_LOG" ]] && ok "post.sh: ... gh never called" || bad "post.sh: piped yes" "gh called: $(cat "$STUB_GH_LOG")"
+[[ ! -e "$P/unnamed.posted.md" ]] && ok "post.sh: ... nothing saved as posted" || bad "post.sh: piped yes" "$P/unnamed.posted.md written"
+# yes typed on a terminal posts only the public part: the cut at "## Internal" keeps a lead written there off the thread
+{ body 'none'; printf '\n<!-- peeryard {"head": "x"} -->\n\n## Internal\nSecurity lead: a neutral name; held with the person.\nINTERNAL-ONLY-LINE\n\n## Reviews\nREVIEWS-LINE\n\n## Upstream to peeryard\nnothing\n'; } > "$P/full.md"
+: > "$STUB_GH_LOG"; rm -f "$P/gh.body"
+expect_rc "post.sh: yes typed on a terminal -> posted (stub gh)" 0 "$(pst yes none full)"
+expect_in "post.sh: ... gh pr comment called" "gh pr comment 1 -R o/r --body-file" "$STUB_GH_LOG"
+expect_in "post.sh: ... the public part was sent" "**[Possible bug] Bound the parse**" "$P/gh.body"
+expect_in "post.sh: ... through the marker" '<!-- peeryard {"head": "x"} -->' "$P/gh.body"
+if ! grep -qE 'Security lead|INTERNAL-ONLY-LINE|REVIEWS-LINE|^## ' "$P/gh.body"; then ok "post.sh: ... nothing from ## Internal or below"
+else bad "post.sh: cut" "internal text in the posted body: $(grep -E 'Security lead|INTERNAL|REVIEWS|^## ' "$P/gh.body")"; fi
+expect_in "post.sh: ... saved as posted" "# posted " "$P/full.posted.md"
+expect_in "post.sh: ... contribution line counts the labelled block" "what it contributes: 1 finding(s)" "$P/out-none-full.txt"
+# a Security lead line above "## Internal", or an [Integration] block in a review body, fails the lint: refused (exit 3)
+{ body 'none'; printf '\nSecurity lead: something.\n'; } > "$P/lead.md"
+{ body 'none'; printf '\n**[Integration] Drop the stray file**\n\nObserved: `x`.\n\nRecommended: drop it. (read)\n'; } > "$P/integ.md"
+: > "$STUB_GH_LOG"
+expect_rc "post.sh: a Security lead line in the posted part -> refused (exit 3)" 3 "$(pst yes none lead)"
+expect_in "post.sh: ... says where a lead goes" "it goes only under '## Internal'" "$P/out-none-lead.txt"
+expect_rc "post.sh: an [Integration] block in a review body -> refused (exit 3)" 3 "$(pst yes none integ)"
+[[ ! -s "$STUB_GH_LOG" ]] && ok "post.sh: ... gh never called for a refused text" || bad "post.sh: refused text" "gh called: $(cat "$STUB_GH_LOG")"
+# queue.sh, in a copy of review/ (it rewrites <tree>/audits/QUEUE.tsv): a piped yes is refused and the item stays queued
+Q="$T/qtree"; mkdir -p "$Q/audits"; cp -r review "$Q/review"
+printf '2026-01-01T00:00:00Z\to/r\t1\treview\t%s\t1 finding(s)\n' "$P/unnamed.md" > "$Q/audits/QUEUE.tsv"; : > "$STUB_GH_LOG"
+expect_rc "queue.sh: yes piped -> refused (exit 6)" 6 \
+  "$(yes yes | PATH="$GHPATH" PEERYARD_AGENT_FILES_CMD="$P/none.sh" bash "$Q/review/queue.sh" > "$P/out-queue.txt" 2>&1; echo $?)"
+if [[ ! -s "$STUB_GH_LOG" && "$(grep -c -v '^done' "$Q/audits/QUEUE.tsv")" == 1 ]]; then ok "queue.sh: ... nothing posted, the item still queued"
+else bad "queue.sh: piped yes" "gh: $(cat "$STUB_GH_LOG"); queue: $(cat "$Q/audits/QUEUE.tsv")"; fi
+
+# ---- review/pick.sh against the stub gh and a local origin with one pull head (refs/pull/7/head)
+O="$T/pick-origin.git"; C="$T/pick-clone"; git init -q --bare "$O"; git clone -q "$O" "$C" 2>/dev/null
+pg(){ git -C "$C" -c user.name=t -c user.email=t@t "$@"; }
+mkdir -p "$C/src/main"; echo a > "$C/src/main/A.scala"; pg add .; pg commit -qm base; pg branch -qM master; pg push -q origin master
+pg checkout -qb feat; echo b >> "$C/src/main/A.scala"; pg commit -qam feat; pg push -q origin feat:refs/pull/7/head; pg checkout -q master
+PH="$(git -C "$O" rev-parse refs/pull/7/head)"
+pk(){ local tag=$1; shift; PATH="$GHPATH" bash review/pick.sh --repo o/r --clone "$C" "$@" > "$P/pick-$tag.txt" 2>&1; echo $?; }
+expect_rc "pick.sh --pr 7: prepared -> picked (exit 0)" 0 "$(STUB_GH_HEAD="$PH" pk ok --pr 7)"
+expect_in "pick.sh: ... says picked" "# picked #7 (named)" "$P/pick-ok.txt"
+expect_rc "pick.sh --pr 7: gh fails -> exit 2" 2 "$(STUB_GH_FAIL=1 pk ghfail --pr 7)"
+expect_in "pick.sh: ... says gh failed" "pick: gh pr view 7 -R o/r failed" "$P/pick-ghfail.txt"
+expect_rc "pick.sh (no --pr): gh fails -> exit 2, not 'no candidate'" 2 "$(STUB_GH_FAIL=1 pk ghfail-list)"
+expect_rc "pick.sh --pr 7: a review current at its head -> not picked (exit 1)" 1 "$(STUB_GH_HEAD="$PH" STUB_GH_POST="2026-02-01T00:00:00Z https://x/c1 $PH" pk current --pr 7)"
+expect_in "pick.sh: ... with the reason" "not picked: #7 was not prepared: a peeryard review is already current" "$P/pick-current.txt"
+expect_rc "pick.sh --pr 7: prior reviews unreadable -> not picked (exit 1)" 1 "$(STUB_GH_HEAD=nosha pk unknown --pr 7)"
+git -C "$O" update-ref -d refs/pull/7/head
+expect_rc "pick.sh --pr 7: head not fetched -> not picked (exit 1)" 1 "$(STUB_GH_HEAD="$PH" pk fetcherr --pr 7)"
+expect_in "pick.sh: ... with the reason" "its head could not be fetched" "$P/pick-fetcherr.txt"
+if ! grep -q '# picked' "$P/pick-fetcherr.txt" "$P/pick-current.txt" "$P/pick-unknown.txt" "$P/pick-ghfail.txt"; then ok "pick.sh: ... none of the refusals says picked"
+else bad "pick.sh: refusals" "$(grep -l '# picked' "$P"/pick-*.txt)"; fi
+
+# ---- review/with-lock.sh on its own lock path: a nested call runs at once (re-entrant), the command sees
+# PEERYARD_LOCKED=1, another caller still waits, and a host without flock fails at once
+export PEERYARD_LOCK="$T/x.lock"
+expect_rc "with-lock.sh: nested with-lock -> the inner command runs (exit 0)" 0 \
+  "$(env -u PEERYARD_LOCKED bash review/with-lock.sh --wait 2 -- bash review/with-lock.sh --wait 2 -- true > "$T/wl-nested.txt" 2>&1; echo $?)"
+[[ ! -s "$T/wl-nested.txt" ]] && ok "with-lock.sh: ... without waiting" || bad "with-lock.sh: nested" "$(cat "$T/wl-nested.txt")"
+expect_in "with-lock.sh: the command sees PEERYARD_LOCKED=1" "PEERYARD_LOCKED=1" <(env -u PEERYARD_LOCKED bash review/with-lock.sh -- env)
+( env -u PEERYARD_LOCKED bash review/with-lock.sh -- sleep 14 ) & wlpid=$!; sleep 1
+expect_rc "with-lock.sh: a second caller while held -> gives up (exit 75)" 75 \
+  "$(env -u PEERYARD_LOCKED bash review/with-lock.sh --wait 1 -- true > "$T/wl-busy.txt" 2>&1; echo $?)"
+wait "$wlpid"
+NF="$T/noflock"; mkdir -p "$NF"; for c in bash env dirname basename mkdir date rm ls sort head wc kill truncate sleep cat printf true; do
+  p="$(command -v "$c")" && ln -sf "$p" "$NF/$c"; done
+expect_rc "with-lock.sh: no flock -> exit 2 at once" 2 "$(env -u PEERYARD_LOCKED PATH="$NF" bash review/with-lock.sh --wait 30 -- true > "$T/wl-noflock.txt" 2>&1; echo $?)"
+expect_in "with-lock.sh: ... says flock is missing" "with-lock: flock not found" "$T/wl-noflock.txt"
+unset PEERYARD_LOCK
+
+# ---- review/revert-check.sh refuses to run without --out (it would write a review's evidence to an unnamed /tmp dir)
+expect_rc "revert-check.sh: no --out -> exit 2" 2 "$(PATH="$GHPATH" bash review/revert-check.sh --pr 7 --clone "$C" > "$T/rc-noout.txt" 2>&1; echo $?)"
+expect_in "revert-check.sh: ... names the audit path" "--out audits/<date>_pr-7/captures/revert-check" "$T/rc-noout.txt"
 
 # ---- rig/suite-env.sh (sweep.yml's scenario_env): only keys an example's suite.tsv row declares, in that row only
 S="$T/suite.tsv"

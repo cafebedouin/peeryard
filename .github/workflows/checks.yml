@@ -52,7 +52,7 @@ jobs:
         run: T=$(mktemp -d) bash tests/pr_path.sh
       - name: rig checks (topology validation, partition/heal flags, settle, the helper registry, hook env and verdict rules)
         run: T=$(mktemp -d) bash tests/rig_checks.sh
-      - name: tooling (check.sh, stack.sh, register.sh, provenance.sh, post.sh)
+      - name: tooling (patch stack and check, register, pool, suite-env, blockwatch, provenance; post, queue, pick, with-lock and revert-check against a stub gh)
         run: |
           git config --global user.email ci@example.invalid
           git config --global user.name ci

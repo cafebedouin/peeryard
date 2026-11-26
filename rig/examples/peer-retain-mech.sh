@@ -15,5 +15,5 @@ mech_row(){ local t t2 bi si ti ai ci
      syncInfo: (($si | j) // (if $si == "" then null else $si end)),
      trackInfo: (($ti | j) // (if $ti == "" then null else $ti end))}'; }
 mech_start(){ [[ "${PEER_RETAIN_MECH:-0}" == 1 ]] || return 0; : > "$MECH_JSONL"
-  ( while [[ ! -f "$STOPF" ]]; do mech_row >> "$MECH_JSONL"; sleep 2; done ) & MECH_PID=$!; BG_PIDS+=("$MECH_PID"); }
-mech_stop(){ [[ -n "${MECH_PID:-}" ]] && { kill "$MECH_PID" 2>/dev/null; wait "$MECH_PID" 2>/dev/null; }; }
+  ( while [[ ! -f "$STOPF" ]]; do mech_row >> "$MECH_JSONL"; sleep 2; done ) & MECH_PID=$!; bg_register "$MECH_PID" peer-retain-mech; }
+mech_stop(){ [[ -n "${MECH_PID:-}" ]] && { kill "$MECH_PID" 2>/dev/null; wait "$MECH_PID" 2>/dev/null; bg_unregister "$MECH_PID"; }; }

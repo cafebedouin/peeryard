@@ -65,6 +65,8 @@
 #   rent_box / rent_issue / rent_expired / rent_claim / rent_blocks / rent_audit / rent_bot   storage rent (demurrage):
 #                                   holder boxes, their expiry, honest claims and an audit of the claims in blocks
 #                                   (rig/lib/storage_rent.sh; needs a short-period test build, docs/storage-rent.md)
+#   bg_register <pid> <label>       a background loop the hook starts (lib/bg.sh): stop_all stops it before its final wait;
+#                                   bg_unregister <pid> once the hook stopped it itself
 #   mark <label>                    a labelled event in $RIG_LOG_DIR/events.jsonl, beside the rig's own (partition,
 #                                   heal, link_netem, crash, revive, relaunch, launch), each with a sample taken then
 #   and the variables NODES, RIG_LOG_DIR, SCRATCH, CONF_OVR (per-node extra HOCON for a deferred launch).
@@ -91,6 +93,9 @@ set -uo pipefail
 MNEMONIC="ozone drill grab fiber curtain grace pudding thank cruise elder eight picnic"  # the node's public test mnemonic
 JAVA_BIN="${PEERYARD_JAVA:-java}"; JAVA_OPTS="${PEERYARD_JAVA_OPTS:--Xmx512m}"
 API_KEY_HASH="324dcf027dd4a30a932c441f365a25e86b173defa4b8e58948253471b81b72cf"          # Blake2b256("hello")
+# validate_topology (the one validation pass, run below before any namespace exists) and cpu_ids
+# shellcheck source=rig/lib/topology.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/topology.sh"
 
 # ---------------------------------------------------------------------------
 if [[ "${RIG_INNER:-0}" != "1" ]]; then
@@ -101,29 +106,16 @@ if [[ "${RIG_INNER:-0}" != "1" ]]; then
   [[ -f "$HOOK" ]] || { echo "no hook: $HOOK" >&2; exit 2; }
   for c in jq curl unzip ip tc unshare; do command -v "$c" >/dev/null || { echo "missing: $c" >&2; exit 2; }; done
   command -v "$JAVA_BIN" >/dev/null || { echo "missing: $JAVA_BIN (PEERYARD_JAVA)" >&2; exit 2; }
-  # Every node needs a jar: nodes[].jar, else the top-level "jar", else PEERYARD_JAR. Checked here, resolved again inside.
+  # Every node needs a jar: nodes[].jar, else the top-level "jar", else PEERYARD_JAR (DEF_JAR, resolved here).
   # shellcheck disable=SC2016  # a jq program: $ENV is jq's, not the shell's
   JAR_XP='def xp: if type == "string" then gsub("\\$\\{(?<v>[A-Za-z_][A-Za-z0-9_]*)\\}"; ($ENV[.v] // "")) else . end;'
-  # A "${VAR}" that expands to nothing is an error, never a silent fall-back to the default jar.
-  raw_top="$(jq -r '.jar // ""' "$CFG")"
   # No PEERYARD_JAR and no jar in the topology: the release rig/node-release.sh last fetched, if any
   [[ -z "${PEERYARD_JAR:-}" && -L "$HOME/.peeryard/jars/default.jar" ]] && PEERYARD_JAR="$(readlink "$HOME/.peeryard/jars/default.jar")"
-  DEF_JAR="$(jq -r --arg d "${PEERYARD_JAR:-}" "$JAR_XP"' (.jar // $d) | xp' "$CFG")"
-  [[ -n "$raw_top" && -z "$DEF_JAR" ]] && { echo "topology \"jar\" is '$raw_top' but expands to nothing (unset variable?)" >&2; exit 2; }
-  while IFS=$'\t' read -r n kind raw j rawb b; do
-    case "$kind" in
-      jvm)
-        [[ -n "$raw" && -z "$j" ]] && { echo "node $n: jar is '$raw' but expands to nothing (unset variable?)" >&2; exit 2; }
-        j="${j:-$DEF_JAR}"
-        [[ -f "$j" ]] || { echo "no node jar for $n: set nodes[].jar, \"jar\" in the topology, or PEERYARD_JAR (got '$j')" >&2; exit 2; } ;;
-      arkadianet|ergo-node-rust)
-        # another implementation: its binary comes from nodes[].bin or the kind's environment variable
-        [[ -n "$rawb" && -z "$b" ]] && { echo "node $n: bin is '$rawb' but expands to nothing (unset variable?)" >&2; exit 2; }
-        if [[ -z "$b" ]]; then case "$kind" in arkadianet) b="${PEERYARD_ARKADIANET_BIN:-}" ;; ergo-node-rust) b="${PEERYARD_ERGO_NODE_RUST_BIN:-}" ;; esac; fi
-        [[ -x "$b" ]] || { echo "no node binary for $n (kind $kind): set nodes[].bin or PEERYARD_$(echo "$kind" | tr 'a-z-' 'A-Z_')_BIN (got '$b')" >&2; exit 2; } ;;
-      *) echo "node $n: unknown kind '$kind' (jvm | arkadianet | ergo-node-rust)" >&2; exit 2 ;;
-    esac
-  done < <(jq -r "$JAR_XP"' .nodes[] | [.name, (.kind // "jvm"), (.jar // ""), ((.jar // "") | xp), (.bin // ""), ((.bin // "") | xp)] | @tsv' "$CFG")
+  DEF_JAR="$(jq -r --arg d "${PEERYARD_JAR:-}" "$JAR_XP"' if type == "object" then (.jar // $d) | xp else "" end' "$CFG" 2>/dev/null)"
+  # The whole topology, once, before the namespaces (lib/topology.sh: structure, names, kinds, knownPeers, links, cpus,
+  # java_opts, jars and binaries; a "${VAR}" that expands to nothing is an error, never a fall-back): every problem is
+  # printed, then exit 2. The inner part below relies on it and does not check again.
+  validate_topology "$CFG" "$DEF_JAR" || exit 2
   RIG_CFG="$(readlink -f "$CFG")"; RIG_HOOK="$(readlink -f "$HOOK")"
   export RIG_INNER=1 RIG_CFG RIG_HOOK RIG_JAR="$DEF_JAR"
   unshare -Urmn true 2>/dev/null || { echo "unprivileged user namespaces are unavailable here (Ubuntu 23.10+: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; or use a VM)" >&2; exit 2; }
@@ -200,12 +192,12 @@ derive_genesis_digest(){
   mkdir -p "$pdir/tmp"   # the node copies <network>.conf into java.io.tmpdir at startup and needs it to exist
   conf="$(GENESIS_DIGEST="" SCRATCH_DATA_OVERRIDE="$pdir" gen_conf "$n")"
   ip netns exec "${NS[$n]}" bash -c "cd '${RT_CWD[$n]}' && exec '$JAVA_BIN' $JAVA_OPTS -Djava.io.tmpdir='$pdir/tmp' -jar '${NODE_JAR[$n]}' $NET_ARGS -c '$conf'" > "$plog" 2>&1 &
-  pid=$!; end=$((SECONDS + ${RIG_PROBE_TIMEOUT_S:-90})); d=""
+  pid=$!; bg_register "$pid" genesis-probe; end=$((SECONDS + ${RIG_PROBE_TIMEOUT_S:-90})); d=""
   while [[ $SECONDS -lt $end ]]; do
     d="$(grep -oE 'Genesis UTXO state generated with hex digest [0-9a-f]+' "$plog" | head -1 | awk '{print $NF}')"
     [[ -n "$d" ]] && break; kill -0 "$pid" 2>/dev/null || break; sleep 1
   done
-  kill -9 "$pid" 2>/dev/null; pkill -9 -f "$conf" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  kill -9 "$pid" 2>/dev/null; pkill -9 -f "$conf" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; bg_unregister "$pid"
   [[ -n "$d" ]] || { echo "FAIL: the probe node did not log 'Genesis UTXO state generated' within ${RIG_PROBE_TIMEOUT_S:-90} s (RIG_PROBE_TIMEOUT_S raises it; a loaded host needs more); minerRewardDelay=$REWARD_DELAY; last line of $plog: $(tail -1 "$plog" 2>/dev/null | cut -c1-160)"; exit 2; }
   # Only the probe's own dir goes: node data_$n is never touched here (the probe ran with SCRATCH_DATA_OVERRIDE),
   # so a persisted chain (PEERYARD_KEEP_DATA=1, devnet.sh) survives the probe on every start.
@@ -215,15 +207,7 @@ derive_genesis_digest(){
 RIG_LOG_DIR="$(jq -r --arg d "$SCRATCH/out" '.log_dir // $d' "$CFG")"
 mkdir -p "$SCRATCH" "$RIG_LOG_DIR"
 RIG_AFFINITY="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/$$/status)"   # the CPUs this rig may use (a `taskset` around it narrows them)
-mapfile -t NODES < <(jq -r '.nodes[].name' "$CFG")
-# every knownPeers entry must name a node here: conf.sh and known_peer_addrs read IP[<peer>] under set -u, and an
-# unknown name kills that subshell, so it and every later peer of the node would drop out of its config unnoticed
-bad_peer="$(jq -r '[.nodes[].name] as $ns | .nodes[] | .name as $n | (.knownPeers // [])
-  | if type != "array" then [$n, "list", tojson] else .[] | select(type != "string" or (IN($ns[]) | not)) | [$n, "peer", tostring] end
-  | @tsv' "$CFG" | head -1)"
-if [[ -n "$bad_peer" ]]; then IFS=$'\t' read -r bp_node bp_kind bp_val <<< "$bad_peer"
-  if [[ "$bp_kind" == list ]]; then echo "FAIL: knownPeers in node '$bp_node' is not a list: $bp_val"
-  else echo "FAIL: unknown peer '$bp_val' in node '$bp_node' (knownPeers names nodes of this topology)"; fi; exit 2; fi
+mapfile -t NODES < <(jq -r '.nodes[].name' "$CFG")   # validate_topology (outer part) checked names, kinds, peers, links
 # Per-node jar (nodes[].jar, else the top-level jar / PEERYARD_JAR; "${VAR}" expanded from the environment), and a
 # per-node working directory: the node resolves some fallback configs relative to its CWD, so each node gets its
 # own jar's *.conf copies unless the topology names a "runtime_cwd" for all of them.
@@ -236,18 +220,13 @@ RUNTIME_CWD="$(jq -r '.runtime_cwd // empty' "$CFG")"
 # Per-node CPUs and JVM options. "cpus" (taskset list syntax, e.g. "2-3" or "0,4") pins every launch of the node with
 # `taskset -c`; the JVM sizes its GC and compiler threads from that mask, so it is both the limit and the JVM's view of
 # it (-XX:ActiveProcessorCount alone changes only the view: give it through "java_opts"). A list outside the rig's own
-# mask is refused, never silently unpinned. "java_opts" is appended after PEERYARD_JAVA_OPTS, for jvm nodes only.
+# mask is refused (validate_topology; set_cpus for a later change), never silently unpinned. "java_opts" is appended
+# after PEERYARD_JAVA_OPTS, for jvm nodes only (validate_topology). cpu_ids is in lib/topology.sh.
 declare -A NODE_CPUS NODE_JOPTS
-cpu_ids(){ local IFS=, part; for part in $1; do if [[ "$part" == *-* ]]; then seq "${part%-*}" "${part#*-}"; else echo "$part"; fi; done; }
 declare -A RIG_CPU_OK; for c in $(cpu_ids "$RIG_AFFINITY"); do RIG_CPU_OK[$c]=1; done
 for n in "${NODES[@]}"; do
   NODE_CPUS[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).cpus) // "" | tostring' "$CFG")"
   NODE_JOPTS[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).java_opts) // ""' "$CFG")"
-  if [[ -n "${NODE_CPUS[$n]}" ]]; then
-    [[ "${NODE_CPUS[$n]}" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || { echo "FAIL: node $n: cpus '${NODE_CPUS[$n]}' is not a CPU list (e.g. \"2-3\" or \"0,4\")"; exit 2; }
-    for c in $(cpu_ids "${NODE_CPUS[$n]}"); do
-      [[ -n "${RIG_CPU_OK[$c]:-}" ]] || { echo "FAIL: cpus outside rig affinity: node=$n requested=${NODE_CPUS[$n]} allowed=$RIG_AFFINITY"; exit 2; }; done
-  fi
 done
 # Wire observer placement: pinned to the rig's CPUs that no node's "cpus" names, when some node names any and such
 # CPUs remain; otherwise unpinned, and it then shares CPUs with the nodes (recorded in effective.json either way).
@@ -263,22 +242,18 @@ if [[ $WIRE_ON == 1 ]]; then
 fi
 for n in "${NODES[@]}"; do
   KIND[$n]="$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).kind) // "jvm"' "$CFG")"
-  [[ -n "${NODE_JOPTS[$n]}" && "${KIND[$n]}" != jvm ]] && { echo "FAIL: node $n: java_opts is for jvm nodes only (kind ${KIND[$n]})"; exit 2; }
   if [[ "${KIND[$n]}" == jvm ]]; then
     j="$(jq -r --arg n "$n" "$JAR_XP"' first(.nodes[]|select(.name==$n).jar // empty) | xp' "$CFG")"
-    NODE_JAR[$n]="$(readlink -f "${j:-$JAR}")"
-    [[ -f "${NODE_JAR[$n]}" ]] || { echo "FAIL: no jar for node $n (${j:-$JAR})"; exit 2; }
+    NODE_JAR[$n]="$(readlink -f "${j:-$JAR}")"   # a file: validate_topology
     if [[ -n "$RUNTIME_CWD" ]]; then RT_CWD[$n]="$RUNTIME_CWD"
     else
       RT_CWD[$n]="$SCRATCH/rt_$n"; mkdir -p "${RT_CWD[$n]}/src/main/resources"
       unzip -o -q "${NODE_JAR[$n]}" application.conf devnet.conf mainnet.conf testnet.conf -d "${RT_CWD[$n]}/src/main/resources"
     fi
   else
-    [[ $RUST_DEVNET == 1 ]] || { echo "FAIL: node $n is kind ${KIND[$n]}; a non-jvm node needs the chain preset rust-devnet (its chain parameters are compiled in)"; exit 2; }
     b="$(jq -r --arg n "$n" "$JAR_XP"' first(.nodes[]|select(.name==$n).bin // empty) | xp' "$CFG")"
     if [[ -z "$b" ]]; then case "${KIND[$n]}" in arkadianet) b="${PEERYARD_ARKADIANET_BIN:-}" ;; ergo-node-rust) b="${PEERYARD_ERGO_NODE_RUST_BIN:-}" ;; esac; fi
-    NODE_JAR[$n]="$(readlink -f "$b")"; RT_CWD[$n]="$SCRATCH/rt_$n"; mkdir -p "${RT_CWD[$n]}"
-    [[ -x "${NODE_JAR[$n]}" ]] || { echo "FAIL: no binary for node $n (kind ${KIND[$n]}): '$b'"; exit 2; }
+    NODE_JAR[$n]="$(readlink -f "$b")"; RT_CWD[$n]="$SCRATCH/rt_$n"; mkdir -p "${RT_CWD[$n]}"   # executable: validate_topology
   fi
 done
 
@@ -296,7 +271,6 @@ declare -a LINK_A LINK_B
 # its other peers cannot reach: a node learned through gossip was then dialled at an unreachable address.
 nid=0
 for n in "${NODES[@]}"; do
-  [[ "$n" =~ ^[A-Za-z0-9]{1,5}$ ]] || { echo "FAIL: node name '$n' must be 1-5 letters or digits (veth names are ve_<a>_<b>, at most 15 characters)"; exit 2; }
   NS[$n]="ns_$n"
   P2P[$n]=$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).p2p) // 9021' "$CFG")
   REST[$n]=$(jq -r --arg n "$n" 'first(.nodes[]|select(.name==$n).rest) // 9052' "$CFG")
@@ -351,7 +325,8 @@ for n in "${NODES[@]}"; do IP[$n]="${ID_IP[$n]}"; done   # declared and dialled;
 # PID: live pid per node. MINING_OVR / POLL_OVR: runtime overrides set by the mining helpers (empty = the topology's
 # value). FRESH_DONE: the data dir is wiped on a node's first launch only, so a relaunch keeps its chain.
 declare -A PID MINING_OVR POLL_OVR FRESH_DONE CONF_OVR
-BG_PIDS=()   # background loops a hook starts through the rig (blockwatch); stop_all kills them
+# shellcheck source=rig/lib/bg.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/bg.sh"   # BG_PIDS, bg_register: every background helper, walked by stop_all
 # The chain parameters of the rust-devnet preset, for a JVM node: the values of arkadianet's
 # scripts/devnet-mixed/genesis.conf (its Rust counterpart is ChainSpec::devnet()), which ergo-node-rust's devnet
 # network mirrors. networkType devnet60 selects the protocol-v4 launch parameters (Devnet60LaunchParameters).
@@ -540,7 +515,7 @@ RELINK_DIALS=0
 relink(){ local end=$((SECONDS + $1)) next=$((SECONDS + ${PEERYARD_RELINK_GRACE_S:-10})) i a b x hit from to missing; shift
   while :; do missing=0
     for i in "${!LINK_A[@]}"; do a="${LINK_A[$i]}"; b="${LINK_B[$i]}"
-      [[ -n "${PARTITIONED["$a,$b"]:-}" ]] && continue
+      [[ -n "${PARTITIONED["$a,$b"]:-}${PARTITIONED["$b,$a"]:-}" ]] && continue   # either direction cut (hook_api.sh partition)
       hit=0; for x in "$@"; do [[ "$x" == "$a" || "$x" == "$b" ]] && hit=1; done; [[ $hit == 1 ]] || continue
       [[ " $(peers_of "$a")" == *" $b "* && " $(peers_of "$b")" == *" $a "* ]] && continue
       missing=1; [[ $SECONDS -ge $next ]] || continue
@@ -556,7 +531,7 @@ relink(){ local end=$((SECONDS + $1)) next=$((SECONDS + ${PEERYARD_RELINK_GRACE_
     sleep 2; done; }
 check_topology(){ local i a b pa pb ok=0 n p
   for i in "${!LINK_A[@]}"; do a="${LINK_A[$i]}"; b="${LINK_B[$i]}"
-    if [[ -n "${PARTITIONED["$a,$b"]:-}" ]]; then echo "  link $a<->$b: partitioned (not expected connected)"; continue; fi
+    if [[ -n "${PARTITIONED["$a,$b"]:-}${PARTITIONED["$b,$a"]:-}" ]]; then echo "  link $a<->$b: partitioned (not expected connected)"; continue; fi
     pa=" $(peers_of "$a")"; pb=" $(peers_of "$b")"
     if [[ "$pa" == *" $b "* && "$pb" == *" $a "* ]]; then echo "  link $a<->$b: connected both ways"
     else echo "  link $a<->$b: MISSING ($a sees:${pa% } | $b sees:${pb% })"; ok=1; fi
@@ -692,9 +667,9 @@ solve_loop(){ local n="$1" c r last=""
 solve_start(){ local n="$1"
   [[ -n "${SOLVER_PID[$n]:-}" ]] && return 0
   solve_loop "$n" >> "$RIG_LOG_DIR/solver_$n.log" 2>&1 &
-  SOLVER_PID[$n]=$!; echo "[solver] started for $n (pid ${SOLVER_PID[$n]}, poll ${SOLVE_POLL_S:-1}s)"; }
+  SOLVER_PID[$n]=$!; bg_register "${SOLVER_PID[$n]}" "solver:$n"; echo "[solver] started for $n (pid ${SOLVER_PID[$n]}, poll ${SOLVE_POLL_S:-1}s)"; }
 solve_stop(){ local n="$1" p="${SOLVER_PID[$1]:-}"
-  [[ -n "$p" ]] && { kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; }
+  [[ -n "$p" ]] && { kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; bg_unregister "$p"; }
   SOLVER_PID[$n]=""; echo "[solver] stopped for $n"; }
 
 # shellcheck source=rig/lib/faults.sh
@@ -770,11 +745,12 @@ mine(){
   local hf; hf=$(full_height "$n")
   echo "[mine] mine($n,$cnt) reached final=$hf (overshoot=$((hf-target)))"
 }
-# stop_all: TERM every node, wait for graceful exits (the node flushes its databases on TERM; a KILL right after
-# TERM loses the last blocks, seen as a 12-block rollback on restart), then KILL whatever is left.
+# stop_all: stop the background helpers (lib/bg.sh: those without a stop command of their own), TERM every node, wait
+# for graceful exits (the node flushes its databases on TERM; a KILL right after TERM loses the last blocks, seen as a
+# 12-block rollback on restart), then KILL whatever is left; then the helpers with their own stop (wire captures,
+# companions), and any background job never registered, so the final `wait` has nothing left to wait for.
 stop_all(){ local n p end
-  for n in "${NODES[@]}"; do [[ -n "${SOLVER_PID[$n]:-}" ]] && kill "${SOLVER_PID[$n]}" 2>/dev/null; done
-  for p in "${BG_PIDS[@]}"; do kill "$p" 2>/dev/null; done
+  bg_stop_all plain
   for n in "${NODES[@]}"; do [[ -n "${PID[$n]:-}" ]] && { planned_exit "$n" "${PID[$n]}"; kill "${PID[$n]}" 2>/dev/null; }; done
   end=$((SECONDS + ${RIG_STOP_GRACE_S:-30}))
   while [[ $SECONDS -lt $end ]]; do
@@ -782,8 +758,9 @@ stop_all(){ local n p end
     [[ $p == 0 ]] && break; sleep 1
   done
   for n in "${NODES[@]}"; do pkill -9 -f "$SCRATCH/conf_${n}\.(conf|toml)" 2>/dev/null || true; done
-  declare -F companions_stop_all >/dev/null && companions_stop_all   # application processes a hook started
-  declare -F wire_stop >/dev/null && wire_stop   # not yet defined when an early exit (the probe failing) fires the trap
+  bg_stop_all own   # wire captures and companions, each by its own stop command
+  declare -F companions_stop_all >/dev/null && companions_stop_all   # a companion whose start was not registered here (a subshell's)
+  bg_sweep "${PID[@]}"
   wait 2>/dev/null; echo "[rig] all nodes stopped$([[ $p == 1 ]] && echo ' (some killed after the grace period)')"; }
 trap stop_all EXIT
 
@@ -908,7 +885,7 @@ wire_start(){ local i a b f end cmd
     cmd=(python3 "$WIRE_PY" capture "ve_${a}_${b}" "$RIG_LOG_DIR/wire/$a-$b.pcap")
     [[ -n "$WIRE_CPUS" ]] && cmd=(taskset -c "$WIRE_CPUS" "${cmd[@]}")
     ip netns exec "${NS[$a]}" "${cmd[@]}" 2>> "$RIG_LOG_DIR/wire/capture.log" &
-    WIRE_PIDS+=($!)
+    WIRE_PIDS+=($!); bg_register "$!" "wire:$a-$b" wire_stop
   done
   end=$((SECONDS + 10))
   for i in "${!LINK_A[@]}"; do f="$RIG_LOG_DIR/wire/${LINK_A[$i]}-${LINK_B[$i]}.pcap"
@@ -918,7 +895,7 @@ wire_start(){ local i a b f end cmd
 wire_stop(){ local p
   [[ ${#WIRE_PIDS[@]} -gt 0 ]] || return 0
   for p in "${WIRE_PIDS[@]}"; do kill "$p" 2>/dev/null; done
-  for p in "${WIRE_PIDS[@]}"; do for _ in $(seq 1 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  for p in "${WIRE_PIDS[@]}"; do for _ in $(seq 1 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; bg_unregister "$p"; done
   WIRE_PIDS=(); }
 [[ $WIRE_ON == 1 ]] && wire_start
 for n in "${NODES[@]}"; do deferred "$n" || launch "$n"; done
@@ -999,7 +976,7 @@ sample_row(){ local ev="${1:-}" n p st info ms rc to tmp ticks rss io row="" t l
   row="{\"t\": $t$([[ -n "$ev" ]] && printf ', "event": "%s"' "$ev"), \"loadavg1\": $la, \"mem_available_mb\": $ma, \"nodes\": [${row%,}]}"
   { flock 9; printf '%s\n' "$row" >&9; } 9>> "$RIG_LOG_DIR/samples.jsonl"; }
 diag_sampler(){ while :; do sample_row; sleep "${PEERYARD_SAMPLE_S:-3}"; done; }
-diag_sampler & DIAG_PID=$!
+diag_sampler & DIAG_PID=$!; bg_register "$DIAG_PID" diag-sampler
 RIG_SAMPLING=1   # from here on, every rig event also takes a sample (bring-up launches record their event only)
 # Node health (diag/health.py): a watcher notes every node process that ends without the rig stopping it (an `exit`
 # event and a line in the node's log); after the hook the node logs are read for those exits, OutOfMemoryError, JVM
@@ -1010,16 +987,16 @@ RIG_SAMPLING=1   # from here on, every rig event also takes a sample (bring-up l
 HEALTH_MODE="${PEERYARD_HEALTH:-report}"   # report until a hosted sweep has run in judge mode with no false positive
 [[ "$HEALTH_MODE" =~ ^(judge|report|0)$ ]] || { echo "[rig] PEERYARD_HEALTH '$HEALTH_MODE': judge, report or 0"; exit 2; }
 HEALTH_PID=""
-[[ "$HEALTH_MODE" != 0 ]] && { python3 "$(dirname "${BASH_SOURCE[0]}")/../diag/health.py" --watch "$RIG_LOG_DIR" & HEALTH_PID=$!; }
-trap 'kill "$DIAG_PID" $HEALTH_PID 2>/dev/null; stop_all' EXIT
+[[ "$HEALTH_MODE" != 0 ]] && { python3 "$(dirname "${BASH_SOURCE[0]}")/../diag/health.py" --watch "$RIG_LOG_DIR" & HEALTH_PID=$!; bg_register "$HEALTH_PID" health-watch; }
+# (the EXIT trap is stop_all, set above: its first walk stops the sampler and the watcher, both registered)
 
 echo "[rig] === handing off to hook: $HOOK ==="
 export NODES RIG_LOG_DIR
 # shellcheck disable=SC1090
 source "$HOOK"
-kill "$DIAG_PID" 2>/dev/null; wait "$DIAG_PID" 2>/dev/null
+kill "$DIAG_PID" 2>/dev/null; wait "$DIAG_PID" 2>/dev/null; bg_unregister "$DIAG_PID"
 if [[ -n "$HEALTH_PID" ]]; then
-  sleep "${PEERYARD_HEALTH_POLL_S:-1}"; kill "$HEALTH_PID" 2>/dev/null; wait "$HEALTH_PID" 2>/dev/null; HEALTH_PID=""   # one more poll first
+  sleep "${PEERYARD_HEALTH_POLL_S:-1}"; kill "$HEALTH_PID" 2>/dev/null; wait "$HEALTH_PID" 2>/dev/null; bg_unregister "$HEALTH_PID"; HEALTH_PID=""   # one more poll first
   health_args=(); for n in ${HEALTH_REPORT_ONLY:-}; do health_args+=(--report-only "$n"); done
   health_out="$(python3 "$(dirname "${BASH_SOURCE[0]}")/../diag/health.py" "$RIG_LOG_DIR" --json "$RIG_LOG_DIR/health.json" "${health_args[@]}" 2>&1)"; health_rc=$?
   while IFS= read -r l; do echo "[rig] $l"; done <<< "$health_out"

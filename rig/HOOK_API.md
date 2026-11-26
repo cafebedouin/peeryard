@@ -29,14 +29,14 @@ Used in: `bringup.sh`, `loss.sh`.
 
 ## partition
 
-`partition <a> <b>` sets `loss 100%` both ways. Success sets `PARTITIONED` for both orders of the pair, records a `partition` event (detail is `EVENT_DETAIL`, empty when unset) and prints `[rig] partition <a><-><b> (100% loss)`, plus ` (<detail>)` when `EVENT_DETAIL` is set. No link prints `[rig] HARNESS-FAIL partition <a> <b>: no such link` and returns 1. If either direction fails, the return is 1 and the event, the flag and the success line are skipped; a failure of the second leaves the first already at `loss 100%`.
+`partition <a> <b>` sets `loss 100%` both ways. Success sets `PARTITIONED` for both orders of the pair, records a `partition` event (detail is `EVENT_DETAIL`, empty when unset) and prints `[rig] partition <a><-><b> (100% loss)`, plus ` (<detail>)` when `EVENT_DETAIL` is set. No link prints `[rig] HARNESS-FAIL partition <a> <b>: no such link` and returns 1. `PARTITIONED` is per direction (`PARTITIONED[<a>,<b>]` is the `<a>` to `<b>` direction), each set right after its own change succeeds. If either direction fails, the return is 1 and the event and the success line are skipped; a failure of the second leaves the first already at `loss 100%` and flagged, the second not. `check_topology` and `relink` count a link as partitioned while either direction is flagged.
 
 `partition A B`
 Used in: `netsplit.sh`, `matrix-fork.sh`, `reorg-mempool.sh`.
 
 ## heal
 
-`heal <a> <b>` restores each direction's configured netem spec, unsets `PARTITIONED` both ways, records a `heal` event and prints `[rig] heal <a><-><b>`, plus ` (<detail>)` when `EVENT_DETAIL` is set. No link prints `[rig] HARNESS-FAIL heal <a> <b>: no such link` and returns 1. If either direction fails, the return is 1 and the event, the flag and the success line are skipped; a failure of the second leaves the first already restored.
+`heal <a> <b>` restores each direction's configured netem spec, unsets `PARTITIONED` both ways, records a `heal` event and prints `[rig] heal <a><-><b>`, plus ` (<detail>)` when `EVENT_DETAIL` is set. No link prints `[rig] HARNESS-FAIL heal <a> <b>: no such link` and returns 1. Each direction's flag is unset right after its own change succeeds. If either direction fails, the return is 1 and the event and the success line are skipped; a failure of the second leaves the first already restored and unflagged, the second still flagged.
 
 `heal A B`
 Used in: `netsplit.sh`, `matrix-fork.sh`, `three-body.sh`.
@@ -59,7 +59,7 @@ Used in: `bootstrap-modes.sh` (rig example and diffrun hook).
 
 `settle_follow <leader> <follower> <min_h> [window_s]` (the window defaults to 150). Call it directly, not in `$(...)`, so the relaunch bookkeeping (PID, mining overrides) stays in the caller's shell. Stdout from the two mining restarts is discarded. It returns 0 when `same_state` prints `SAME@<h>:<root>` with `<h>` at least `<min_h>` inside the window, and 1 on `DIFF@...` or when the window ends. `LAG@...`, `NOHEIGHT` and `NOROOT@...` keep the poll going, every 3 seconds. With `SETTLE_RELINK_S` set, each of the leader's two relaunches is followed by `relink` for up to that many seconds; unset, nothing is re-dialled.
 
-It restarts the leader with mining on at `${SETTLE_POLL:-20s}`, waits up to 60 seconds for a full height of at least 1, polls, then stops mining and waits for the height again. Each restart records a `relaunch` event and a `launch` event. It sets `SETTLE_STATE` to the deciding line, `SETTLE_TRICKLE` to the leader's full height at the decision minus the height taken before the first restart, `SETTLE_WAIT_S` to the seconds from the end of that first wait until the decision, and `SETTLE_AFTER` to `same_state` after the stop. Why the leader keeps mining is in [Hook helpers](README.md#hook-helpers).
+It restarts the leader with mining on at `${SETTLE_POLL:-20s}`, waits up to 60 seconds for a full height of at least 1, polls, then stops mining and waits for the height again. Each restart records a `relaunch` event and a `launch` event. It sets `SETTLE_STATE` to the deciding line, `SETTLE_TRICKLE` to the leader's full height at the decision minus the height taken before the first restart (each read retried every 2 s for up to 10 s while it is not a number; `-1`, with a `[rig] settle_follow: <leader>'s full height unread ...` line, when one stays unread), `SETTLE_WAIT_S` to the seconds from the end of that first wait until the decision, and `SETTLE_AFTER` to `same_state` after the stop. Why the leader keeps mining is in [Hook helpers](README.md#hook-helpers).
 
 `settle_follow A B 30 150`
 Used in: `loss.sh`, `flap.sh`, `three-body.sh`.
@@ -217,3 +217,10 @@ Used in: `flap.sh`, `loss.sh`, `matrix-paychain.sh`.
 
 `rent_box C 10000000 "$holder_address"`
 Used in: `storage-rent.sh`, `storage-rent-war.sh`, `storage-rent-2598.sh`.
+
+## bg_register
+
+`bg_register <pid> <label> [stop command...]` records a background process the hook started (`... & bg_register $! <label>`) in the rig's one registry of helpers (`rig/lib/bg.sh`), and prints nothing. At exit `stop_all` sends TERM to each helper registered without a stop command before it stops the nodes, waits up to `BG_STOP_GRACE_S` seconds (default 5), sends KILL, and prints `[rig] background helpers stopped (plain): <label>(<pid>) ...`; a helper registered with a stop command has that command run after the nodes are stopped (`... (own): ...`). A background job of the rig's shell that was never registered is then killed, with `[rig] WARN background job <pid> was not registered (bg_register): killed, so the final wait cannot hang on it`. `bg_unregister <pid>` removes a helper the hook stopped itself. The rig registers its own helpers the same way (solver loops, the blockwatch collector, rent bots, companions, wire captures, the sampler, the health watcher).
+
+`watch & WATCH_PID=$!; bg_register "$WATCH_PID" relay-floor-watch`
+Used in: `relay-floor.sh`, `peer-retain.sh`, `peer-retain-mech.sh`.

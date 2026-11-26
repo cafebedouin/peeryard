@@ -230,7 +230,7 @@ expect_in "mutate.sh: ... and says how many times" "occurs 2 times" "$M/err.txt"
 BW="$T/bw"; mkdir -p "$BW/out"
 bw_put(){ local h=$1 id=$2 par=$3; echo "$id" > "$BW/A.id.$h"; printf '{"header":{"id":"%s","height":%s,"parentId":"%s"},"blockTransactions":{"transactions":[{"id":"%s"}]}}' "$id" "$h" "$par" "$(printf 'c%063d' "$h")" > "$BW/blk.$id"; echo "$h" > "$BW/A.top"; }
 bwid(){ printf '%s%063d' "$1" "$2"; }
-( RIG_LOG_DIR="$BW/out"; BG_PIDS=(); export BLOCKWATCH_POLL_S=0.2 BLOCKWATCH_FROM=1
+( RIG_LOG_DIR="$BW/out"; source rig/lib/bg.sh; export BLOCKWATCH_POLL_S=0.2 BLOCKWATCH_FROM=1
   full_height(){ cat "$BW/$1.top"; }; header_at(){ cat "$BW/$1.id.$2" 2>/dev/null; }; mempool_ids(){ :; }; mark(){ :; }
   rest(){ case "$2" in /info) printf '{"fullHeight":%s,"bestFullHeaderId":"%s"}' "$(cat "$BW/$1.top")" "$(cat "$BW/$1.id.$(cat "$BW/$1.top")")" ;;
                        /blocks/*) cat "$BW/blk.${2#/blocks/}" ;; esac; }

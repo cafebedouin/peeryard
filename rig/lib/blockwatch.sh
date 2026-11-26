@@ -40,10 +40,10 @@ _bw_loop(){ local nodes=("$@") x info full top from h id blk depth="${BLOCKWATCH
   done; }
 blockwatch_start(){ [[ $# -ge 1 ]] || { echo "[blockwatch] needs at least one node"; return 1; }
   [[ -z "$BLOCKWATCH_PID" ]] || { echo "[blockwatch] already running (pid $BLOCKWATCH_PID)"; return 1; }
-  _bw_loop "$@" >> "$RIG_LOG_DIR/blocks.jsonl" 2>> "$RIG_LOG_DIR/blockwatch.err" & BLOCKWATCH_PID=$!; BG_PIDS+=("$BLOCKWATCH_PID")
+  _bw_loop "$@" >> "$RIG_LOG_DIR/blocks.jsonl" 2>> "$RIG_LOG_DIR/blockwatch.err" & BLOCKWATCH_PID=$!; bg_register "$BLOCKWATCH_PID" blockwatch
   mark blockwatch-start; echo "[blockwatch] started on $* (every ${BLOCKWATCH_POLL_S:-2} s, depth ${BLOCKWATCH_DEPTH:-6}; pid $BLOCKWATCH_PID)"; }
 blockwatch_stop(){ local args=() c out rc
-  if [[ -n "$BLOCKWATCH_PID" ]]; then kill "$BLOCKWATCH_PID" 2>/dev/null; wait "$BLOCKWATCH_PID" 2>/dev/null; BLOCKWATCH_PID=""; mark blockwatch-stop; fi
+  if [[ -n "$BLOCKWATCH_PID" ]]; then kill "$BLOCKWATCH_PID" 2>/dev/null; wait "$BLOCKWATCH_PID" 2>/dev/null; bg_unregister "$BLOCKWATCH_PID"; BLOCKWATCH_PID=""; mark blockwatch-stop; fi
   while [[ $# -gt 0 ]]; do case "$1" in --contract) args+=(--contract "$2"); shift 2 ;; *) echo "[blockwatch] blockwatch_stop: unknown argument $1"; return 2 ;; esac; done
   IFS=';' read -r -a c <<< "${BLOCKWATCH_CONTRACTS:-}"; for x in "${c[@]}"; do [[ -n "${x// /}" ]] && args+=(--contract "$x"); done
   out="$(python3 "$(dirname "${BASH_SOURCE[0]}")/../../diag/block_invariants.py" "$RIG_LOG_DIR/blocks.jsonl" --json "$RIG_LOG_DIR/invariants.json" "${args[@]}" 2>&1)"; rc=$?

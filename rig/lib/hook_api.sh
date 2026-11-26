@@ -22,12 +22,18 @@ _netem(){ have_link "$1" "$2" || { echo "[rig] no link $1<->$2" >&2; return 1; }
     || { harness_fail "netem '$3' on $1->$2 not applied"; return 1; }
 }
 # partition A B: drop 100% both directions (a soft cut that keeps the TCP sockets, unlike unplugging the link).
+# PARTITIONED["x,y"] is per direction: set right after that direction's netem change succeeds, so a change that failed
+# halfway (a harness failure, which makes the run INCONCLUSIVE) leaves the flags as the link really is. A link counts as
+# partitioned (check_topology, relink) while either of its directions is flagged.
 partition(){ have_link "$1" "$2" || { harness_fail "partition $1 $2: no such link"; return 1; }
-  _netem "$1" "$2" "loss 100%" && _netem "$2" "$1" "loss 100%" || return 1; PARTITIONED["$1,$2"]=1; PARTITIONED["$2,$1"]=1
+  _netem "$1" "$2" "loss 100%" || return 1; PARTITIONED["$1,$2"]=1
+  _netem "$2" "$1" "loss 100%" || return 1; PARTITIONED["$2,$1"]=1
   rig_event partition "$1" "$2" "" "${EVENT_DETAIL:-}"; echo "[rig] partition $1<->$2 (100% loss)${EVENT_DETAIL:+ ($EVENT_DETAIL)}"; }
 # heal A B: restore the link's configured shaping (delay/loss/jitter/rate), both directions; clean if it had none.
+# Each direction's flag is cleared right after its own netem change succeeds, as in partition.
 heal(){ have_link "$1" "$2" || { harness_fail "heal $1 $2: no such link"; return 1; }
-  _netem "$1" "$2" "${CONFIGURED["$1,$2"]}" && _netem "$2" "$1" "${CONFIGURED["$2,$1"]}" || return 1; unset 'PARTITIONED[$1,$2]' 'PARTITIONED[$2,$1]'
+  _netem "$1" "$2" "${CONFIGURED["$1,$2"]}" || return 1; unset 'PARTITIONED[$1,$2]'
+  _netem "$2" "$1" "${CONFIGURED["$2,$1"]}" || return 1; unset 'PARTITIONED[$2,$1]'
   rig_event heal "$1" "$2" "" "${EVENT_DETAIL:-}"; echo "[rig] heal $1<->$2${EVENT_DETAIL:+ ($EVENT_DETAIL)}"; }
 
 # same_state A B: the UTXO state root at the tip, compared only when both nodes are at the same full height
@@ -61,7 +67,8 @@ same_state(){
 # block and catches up; the check is taken at equal heights between blocks, then the leader pauses.
 # In practice the relaunched leader mines one block within seconds of starting, then waits for the next poll.
 # Sets SETTLE_STATE (the deciding same_state), SETTLE_TRICKLE (blocks the leader mined from the start of the settle,
-# including any at its fast poll just before the relaunch),
+# including any at its fast poll just before the relaunch; -1 when either of its two heights could not be read, each
+# re-read for up to 10 s: an unread height is not 0),
 # SETTLE_WAIT_S (seconds to decide) and SETTLE_AFTER (same_state right after the pause: a block mined in the last
 # seconds may leave the follower one behind, reported rather than failed). Returns 0 on SAME@>=min_h, 1 otherwise.
 # Call it directly, not in $(...), so the relaunch bookkeeping (PID, mining overrides) stays in the caller's shell.
@@ -71,7 +78,7 @@ settle_follow(){
   local m="$1" f="$2" t="$3" win="${4:-150}" end st h h0 rc=1 t0
   SETTLE_STATE=""; SETTLE_TRICKLE=0; SETTLE_AFTER=""
   # a relaunched node answers REST before its history is read (/info fullHeight 0 for a few seconds): wait for it
-  h0=$(full_height "$m"); start_mining "$m" "${SETTLE_POLL:-20s}" >/dev/null; settle_height_back "$m"; settle_relink "$m"
+  h0=$(settle_height_read "$m"); start_mining "$m" "${SETTLE_POLL:-20s}" >/dev/null; settle_height_back "$m"; settle_relink "$m"
   t0=$SECONDS; end=$((SECONDS + win))
   while [[ $SECONDS -lt $end ]]; do
     st=$(same_state "$m" "$f"); SETTLE_STATE="$st"
@@ -81,9 +88,15 @@ settle_follow(){
     esac
     sleep 3
   done
-  SETTLE_WAIT_S=$((SECONDS - t0)); SETTLE_TRICKLE=$(( $(full_height "$m") - h0 ))
+  SETTLE_WAIT_S=$((SECONDS - t0)); h=$(settle_height_read "$m")
+  if [[ -n "$h0" && -n "$h" ]]; then SETTLE_TRICKLE=$(( h - h0 ))
+  else SETTLE_TRICKLE=-1; echo "[rig] settle_follow: $m's full height unread $([[ -z "$h0" ]] && echo before || echo after) the settle; SETTLE_TRICKLE -1 (unknown)"; fi
   stop_mining "$m" >/dev/null; settle_height_back "$m"; settle_relink "$m"; SETTLE_AFTER=$(same_state "$m" "$f")
   return $rc; }
+# settle_height_read <node>: its full height, re-read every 2 s for up to 10 s while the answer is not a number (a REST miss
+# prints nothing); prints nothing when it stays unread
+settle_height_read(){ local h i; for i in 1 2 3 4 5 6; do h=$(full_height "$1"); [[ "$h" =~ ^[0-9]+$ ]] && { echo "$h"; return 0; }
+  (( i < 6 )) && sleep 2; done; return 1; }
 settle_relink(){ [[ -n "${SETTLE_RELINK_S:-}" ]] && declare -F relink >/dev/null || return 0
   relink "$SETTLE_RELINK_S" "$1" || echo "[rig] settle_follow: a link of $1 is still missing after its relaunch"; }
 settle_height_back(){ local end=$((SECONDS + ${2:-60})); while [[ $SECONDS -lt $end && "$(full_height "$1")" -lt 1 ]]; do sleep 1; done; }
@@ -101,7 +114,7 @@ companion_start(){ local name="$1"; shift; local ns=""
   mkdir -p "$SCRATCH/companions"; local log="$RIG_LOG_DIR/companion_$name.log"
   # setsid: the pid recorded is a process-group leader, so a launcher script's JVM children die with it on stop
   if [[ -n "$ns" ]]; then setsid ip netns exec "${NS[$ns]}" "$@" > "$log" 2>&1 & else setsid "$@" > "$log" 2>&1 & fi
-  echo $! > "$SCRATCH/companions/$name.pid"
+  echo $! > "$SCRATCH/companions/$name.pid"; bg_register "$!" "companion:$name" companion_stop "$name"   # stop_all runs companion_stop
   declare -F rig_event >/dev/null && rig_event companion "" "" "${ns:-host}" "start $name pid=$!" || true
   echo "[rig] companion $name started (pid $!, ${ns:+in $ns, }log $log)"; }
 companion_pid(){ cat "$SCRATCH/companions/$1.pid" 2>/dev/null; }
@@ -109,7 +122,7 @@ companion_log(){ echo "$RIG_LOG_DIR/companion_$1.log"; }
 companion_stop(){ local name="$1" pid; pid="$(companion_pid "$name")"; [[ -n "$pid" ]] || return 0
   kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null; local end=$((SECONDS + ${RIG_STOP_GRACE_S:-30}))
   while kill -0 "$pid" 2>/dev/null && [[ $SECONDS -lt $end ]]; do sleep 1; done
-  kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true; rm -f "$SCRATCH/companions/$name.pid"
+  kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true; rm -f "$SCRATCH/companions/$name.pid"; bg_unregister "$pid"
   declare -F rig_event >/dev/null && rig_event companion "" "" "" "stop $name" || true; echo "[rig] companion $name stopped"; }
 companions_stop_all(){ local f; for f in "$SCRATCH"/companions/*.pid; do [[ -f "$f" ]] && companion_stop "$(basename "$f" .pid)"; done; }
 # pruning_check PRUNED FULL TOP K: does the pruned node PRUNED (blocksToKeep K), settled at height TOP, prune at every

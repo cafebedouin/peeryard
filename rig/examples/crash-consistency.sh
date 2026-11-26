@@ -116,8 +116,13 @@ cc "floor: M=$(full_height M) R=$(full_height R) S=$(full_height S)"
 # shape_s: the M->S rate, at the start and after every heal (heal restores the topology's unshaped link)
 shape_s(){ [ "$RATE" -gt 0 ] 2>/dev/null && link_netem M S "rate ${RATE}kbit"; return 0; }
 shape_s
-# wait_backlog <base>: until M is BACKLOG blocks above <base> (at most 300 s)
-wait_backlog(){ local e=$((SECONDS + 300)); while [ $SECONDS -lt $e ] && [ "$(full_height M)" -lt $(( $1 + BACKLOG )) ]; do sleep 2; done; }
+# wait_backlog <base>: until M is BACKLOG blocks above <base> (at most 300 s). An unread height (no REST answer) is not
+# "reached": the wait goes on. A backlog not reached in time is a staging failure (the burst would be shorter than asked),
+# recorded with the heights; returns 1 then.
+wait_backlog(){ local e=$((SECONDS + 300)) h want=$(( $1 + BACKLOG ))
+  while :; do h=$(full_height M); [[ "$h" =~ ^[0-9]+$ ]] && [ "$h" -ge "$want" ] && return 0
+    [ $SECONDS -ge $e ] && break; sleep 2; done
+  stage_fail "backlog: M at full height ${h:-unread} after 300 s, below $want (base $1 + CC_BACKLOG $BACKLOG; S at $(h=$(full_height S); echo "${h:-unread (down or no answer)}"))"; return 1; }
 # wait_loaded: a restarted node answers REST before it has read its chain (fullHeight 0 or absent); up to 90 s
 wait_loaded(){ local e=$((SECONDS + 90)); while [ $SECONDS -lt $e ]; do [ "$(full_height S 2>/dev/null)" -ge 1 ] 2>/dev/null && return 0; sleep 0.25; done; return 1; }
 

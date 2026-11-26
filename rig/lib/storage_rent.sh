@@ -175,8 +175,8 @@ rent_bot(){ local label="$1" node="$2" bf="$3" lat="${4:-0}" bid="${5:-0}" poll=
       done < "$bf"
       sleep "$(awk -v m="$poll" 'BEGIN{printf "%.3f", m/1000}')"
     done ) &
-  # in BG_PIDS so stop_all (rig.sh) kills the bot before its `wait`, if the hook ends without rent_bots_stop
-  RENT_BOT_PID[$label]=$!; BG_PIDS+=("$!"); echo "[rent] bot $label -> $node latency ${lat}ms bid $bid (pid ${RENT_BOT_PID[$label]})"; }
+  # registered (lib/bg.sh) so stop_all (rig.sh) kills the bot before its `wait`, if the hook ends without rent_bots_stop
+  RENT_BOT_PID[$label]=$!; bg_register "$!" "rent-bot:$label"; echo "[rent] bot $label -> $node latency ${lat}ms bid $bid (pid ${RENT_BOT_PID[$label]})"; }
 # rent_bots_stop: stop all collector bots
 rent_bots_stop(){ : > "$RIG_LOG_DIR/rent_stop"; local l; for l in "${!RENT_BOT_PID[@]}"; do
-    kill "${RENT_BOT_PID[$l]}" 2>/dev/null; wait "${RENT_BOT_PID[$l]}" 2>/dev/null; done; echo "[rent] bots stopped"; }
+    kill "${RENT_BOT_PID[$l]}" 2>/dev/null; wait "${RENT_BOT_PID[$l]}" 2>/dev/null; bg_unregister "${RENT_BOT_PID[$l]}"; done; echo "[rent] bots stopped"; }

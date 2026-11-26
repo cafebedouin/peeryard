@@ -85,7 +85,7 @@ The same set `.github/workflows/checks.yml` runs on every push, from the peeryar
 ```
 python3 -m unittest discover -s tests -p '*_test.py'     # diagnose, features, sweep, logmap, aa_pool, queue, wire, matrix, ...
 bash tests/leakcheck.sh                                   # no register files or ids travel with peeryard
-for t in lint precheck sequential phases indexer_diff crash_consistency wallet_oracle wallet_workload pr_path tooling; do
+for t in lint precheck sequential phases indexer_diff crash_consistency wallet_oracle wallet_workload pr_path rig_checks tooling; do
   T=$(mktemp -d) bash "tests/$t.sh" || echo "FAILED: $t"
 done
 ```

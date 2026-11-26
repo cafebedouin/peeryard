@@ -94,7 +94,7 @@ peer_retain(){
   note "floor: A=$(full_height A) B=$(full_height B) C=$(full_height C) same_chain(A,C)=${sc:0:20} reached=$ok"
   [[ $ok == yes ]] || { retain_end INCONCLUSIVE "A did not reach C's chain at height $FLOOR or more"; return; }
   : > "$TSV"; rm -f "$STOPF"
-  ( while [[ ! -f "$STOPF" ]]; do retain_row >> "$TSV"; sleep 2; done ) & local SAMPLER=$!; BG_PIDS+=("$SAMPLER")
+  ( while [[ ! -f "$STOPF" ]]; do retain_row >> "$TSV"; sleep 2; done ) & local SAMPLER=$!; bg_register "$SAMPLER" peer-retain-sampler
   mech_start
   sleep 4
   read -r _ ball bconn call _ < <(tail -1 "$TSV")
@@ -138,7 +138,7 @@ peer_retain(){
 
   # 4. the window
   while [[ $(date +%s%3N) -lt $(( T0 + W * 1000 )) ]]; do sleep 1; done
-  t_end=$(date +%s%3N); touch "$STOPF"; sleep 3; kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null; mech_stop
+  t_end=$(date +%s%3N); touch "$STOPF"; sleep 3; kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null; bg_unregister "$SAMPLER"; mech_stop
   blog=$(lines_after B "$boff"); blog2=$(lines_after B "$boff2"); alog=$(lines_after A "$aoff"); clog=$(cat "$RIG_LOG_DIR/node_C.log")
   fails=$(grep -c -F "Failed to connect to /$A_ADDR" <<< "$blog")
   rm_l=$(grep -m1 -F "/$A_ADDR removed from peers database" <<< "$blog"); rm_ms=""; [[ -n "$rm_l" ]] && rm_ms=$(log_ms "${rm_l:0:12}")

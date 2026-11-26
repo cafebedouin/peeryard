@@ -12,10 +12,28 @@
 # gives the declines (its `Processing mempool transaction: <id>` lines for low-fee ids, repeats included) and its inv
 # processing from R, per interval. Env (defaults): RELAY_FLOOR_INTERVALS (8), RELAY_FLOOR_LOW (60), RELAY_FLOOR_VALID (10),
 # RELAY_FLOOR_QVALID (10), RELAY_FLOOR_LOW_FEE (500000), RELAY_FLOOR_VALID_FEE (1100000), RELAY_FLOOR_WAIT_S (120).
+# The valid payments are interleaved with the low ones (one after every LOW/VALID low payments, Q's after every
+# LOW/QVALID), so VALID and QVALID may be 0 (none sent; the 40-payment requirement below then does not apply to that
+# payer) but not above LOW. A combination the verdict cannot be reached with is refused before anything is sent:
+# INCONCLUSIVE, cause BAD_ENV (a value that is not a whole number, LOW or INTERVALS below 1, VALID or QVALID above
+# LOW, fewer than 4 intervals, or a non-zero VALID or QVALID that cannot add up to 40 payments over the intervals).
 # Records in $RIG_LOG_DIR: payments.jsonl, seen.jsonl, mined.jsonl, blocks.jsonl, s_declines.jsonl, s_invs.jsonl, summary.json.
 # The last line is machine-readable: RELAY-FLOOR <key=value ...> verdict=<PASS|FAIL>; under diffrun one RESULT_JSON.
 INTERVALS=${RELAY_FLOOR_INTERVALS:-8}; LOW=${RELAY_FLOOR_LOW:-60}; VALID=${RELAY_FLOOR_VALID:-10}; QVALID=${RELAY_FLOOR_QVALID:-10}
 LOW_FEE=${RELAY_FLOOR_LOW_FEE:-500000}; VALID_FEE=${RELAY_FLOOR_VALID_FEE:-1100000}; WAIT=${RELAY_FLOOR_WAIT_S:-120}
+# the env check (see the header): every refusal is listed, then the hook ends before it waits for a wallet
+bad_env=""
+for v in INTERVALS LOW VALID QVALID LOW_FEE VALID_FEE WAIT; do   # WAIT is RELAY_FLOOR_WAIT_S
+  [[ "${!v}" =~ ^[0-9]+$ ]] || bad_env+=" RELAY_FLOOR_${v/#WAIT/WAIT_S}='${!v}' is not a whole number;"; done
+if [[ -z "$bad_env" ]]; then
+  (( LOW >= 1 )) || bad_env+=" RELAY_FLOOR_LOW=$LOW: the valid payments are interleaved with low ones, so at least 1;"
+  (( VALID <= LOW )) || bad_env+=" RELAY_FLOOR_VALID=$VALID is above RELAY_FLOOR_LOW=$LOW (one valid payment after every LOW/VALID low ones);"
+  (( QVALID <= LOW )) || bad_env+=" RELAY_FLOOR_QVALID=$QVALID is above RELAY_FLOOR_LOW=$LOW (one Q payment after every LOW/QVALID low ones);"
+  (( INTERVALS >= 4 )) || bad_env+=" RELAY_FLOOR_INTERVALS=$INTERVALS: the activity floor needs 4 intervals with 50 declines;"
+  (( VALID == 0 || INTERVALS * VALID >= 40 )) || bad_env+=" RELAY_FLOOR_VALID=$VALID x $INTERVALS intervals is below the 40 valid payments the verdict needs;"
+  (( QVALID == 0 || INTERVALS * QVALID >= 40 )) || bad_env+=" RELAY_FLOOR_QVALID=$QVALID x $INTERVALS intervals is below the 40 Q payments the verdict needs;"
+fi
+if [[ -n "$bad_env" ]]; then echo "[relay-floor] INCONCLUSIVE: refused env:${bad_env%;}"; rig_verdict=INCONCLUSIVE; rig_cause=BAD_ENV; return; fi
 AMT=100000000; BOX=300000000; BOXQ=310000000   # Q's boxes differ in value so one funding transaction's outputs can be told apart
 PAY_LOG="$RIG_LOG_DIR/payments.jsonl"; SEEN_LOG="$RIG_LOG_DIR/seen.jsonl"; MINED_LOG="$RIG_LOG_DIR/mined.jsonl"
 : > "$PAY_LOG"; : > "$SEEN_LOG"; : > "$MINED_LOG"
@@ -76,7 +94,7 @@ watch(){ local id now; declare -A seenS=() seenA=()
     for id in $(mempool_ids S); do [[ -z "${seenS[$id]:-}" ]] && { seenS[$id]=1; printf '{"t_ms":%s,"node":"S","id":"%s"}\n' "$now" "$id" >> "$SEEN_LOG"; }; done
     for id in $(mempool_ids A); do [[ -z "${seenA[$id]:-}" ]] && { seenA[$id]=1; printf '{"t_ms":%s,"node":"A","id":"%s"}\n' "$now" "$id" >> "$SEEN_LOG"; }; done
     sleep 1; done; }
-rm -f "$RIG_LOG_DIR/watch.stop"; watch & WATCH_PID=$!
+rm -f "$RIG_LOG_DIR/watch.stop"; watch & WATCH_PID=$!; bg_register "$WATCH_PID" relay-floor-watch
 H0=$(full_height A); T0=$(date +%s%3N); mark load
 echo "[relay-floor] load from height $H0"
 rejected=0; lowsent=0; pvsent=0; qvsent=0; hprev=$H0; rlag_total=0; rlag_max=0
@@ -97,7 +115,7 @@ for ivl in $(seq 1 "$INTERVALS"); do
       if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then pvsent=$((pvsent + 1)); printf '{"t_ms":%s,"id":"%s","kind":"valid","from":"P","ivl":%s}\n' "$(date +%s%3N)" "$id" "$hnow" >> "$PAY_LOG"
       else rejected=$((rejected + 1)); echo "  valid $ivl rejected by R: ${id:0:100}"; fi
     fi
-    if (( k % (LOW / QVALID) == 0 )) && (( qvsent < ivl * QVALID )); then
+    if (( QVALID > 0 )) && (( k % (LOW / QVALID) == 0 )) && (( qvsent < ivl * QVALID )); then
       id=$(pay_from Q S "$AMT" "${QB[qb]}" "$VALID_FEE"); qb=$((qb + 1))
       if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then qvsent=$((qvsent + 1)); printf '{"t_ms":%s,"id":"%s","kind":"valid","from":"Q","ivl":%s}\n' "$(date +%s%3N)" "$id" "$hnow" >> "$PAY_LOG"
       else rejected=$((rejected + 1)); echo "  Q valid $ivl rejected: ${id:0:100}"; fi
@@ -107,7 +125,7 @@ for ivl in $(seq 1 "$INTERVALS"); do
 done
 mark load-done; H1=$(full_height A)
 echo "[relay-floor] load done at height $H1 (${rejected} rejected; sync lag per interval max ${rlag_max}s, total ${rlag_total}s); waiting ${WAIT}s"
-sleep "$WAIT"; touch "$RIG_LOG_DIR/watch.stop"; wait "$WATCH_PID" 2>/dev/null
+sleep "$WAIT"; touch "$RIG_LOG_DIR/watch.stop"; wait "$WATCH_PID" 2>/dev/null; bg_unregister "$WATCH_PID"
 H2=$(full_height A)
 : > "$RIG_LOG_DIR/blocks.jsonl"
 for ((h = H0; h <= H2; h++)); do hid=$(header_at A "$h"); [[ -n "$hid" ]] || continue
@@ -205,7 +223,7 @@ echo "[relay-floor] low: sent $(jq .low_sent <<< "$S") declined at S $(jq .low_d
 echo "[relay-floor] same_chain(A,S): $(same_chain A S); pools at end R $(mempool_size R) S $(mempool_size S) A $(mempool_size A)"
 # activity floor: at least 50 declines at S in at least 4 load intervals, and the sends happened
 floor_ok=$(jq '[.per_interval[] | select(.declines >= 50)] | length >= 4' <<< "$S")
-sends_ok=$(jq --argjson v "$VALID" '(($v == 0) or .p_valid_sent >= 40) and .q_valid_sent >= 40' <<< "$S")
+sends_ok=$(jq --argjson v "$VALID" --argjson q "$QVALID" '(($v == 0) or .p_valid_sent >= 40) and (($q == 0) or .q_valid_sent >= 40)' <<< "$S")
 res=FAIL
 if [[ "$floor_ok" == true && "$sends_ok" == true ]]; then [[ "$(jq '.p_missing == 0 and .q_missing == 0' <<< "$S")" == true ]] && res=PASS; fi
 rig_verdict=$res

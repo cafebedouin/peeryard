@@ -241,7 +241,8 @@ class Unknown(Exception):
 
 def evaluate(expr, inputs, results=None):
     """The value of a GitHub `if` expression at the input defaults; raises Unknown for anything it cannot know.
-    results: {job: 'success' or 'skipped'} for the needs.<job>.result it reads (a job not listed: success)."""
+    results: {job: 'success' or 'skipped'} for the job's direct needs; needs.<job>.result of a job not listed is null,
+    as on GitHub, where the needs context holds only the direct needs. Without results (a bare expression) it is success."""
     expr = re.sub(r"^\$\{\{(.*)\}\}$", r"\1", expr.strip()).strip()
     toks = re.findall(r"'(?:[^']|'')*'|==|!=|&&|\|\||[!()]|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*|\d+", expr)
     if re.sub(r"\s", "", expr) != "".join(toks):
@@ -273,7 +274,7 @@ def evaluate(expr, inputs, results=None):
             return "" if d is None else d
         m = re.fullmatch(r"needs\.([\w-]+)\.result", t)
         if m:
-            return (results or {}).get(m.group(1), "success")
+            return "success" if results is None else results.get(m.group(1))
         raise Unknown(t)
 
     def truthy(v):
@@ -365,7 +366,7 @@ def job_rows(w):
             runs, cond = False, None                      # GitHub skips a job whose need was skipped, unless its if says otherwise
         elif cond is not None:
             try:
-                runs, cond = evaluate(str(cond), inputs, results), None
+                runs, cond = evaluate(str(cond), inputs, {n: results.get(n, "success") for n in needs}), None
             except Unknown:
                 pass                                      # counted as running, marked "if"
         results[jid] = "success" if runs else "skipped"

@@ -119,6 +119,10 @@ class AtHead(unittest.TestCase):
         self.assertTrue(build.post_at_head(dict(before, at=ts("2026-11-11T00:00:00Z")), H, at))
         self.assertFalse(build.post_at_head(dict(before, at=ts("2026-11-11T00:00:00Z"), head=O), H, at))
         self.assertTrue(build.post_at_head(dict(before, head=H), H, at))
+        # a review submitted on the current head whose marker names an older one: not at this head (either way round)
+        self.assertFalse(build.post_at_head(dict(before, commit_id=H, head=O[:12]), H, at))
+        self.assertFalse(build.post_at_head(dict(before, commit_id=O, head=H[:12]), H, at))
+        self.assertTrue(build.post_at_head(dict(before, commit_id=H, head=H[:12]), H, at))
 
     def test_search_pages_until_a_short_page(self):
         pages = {1: list(range(100)), 2: list(range(100, 200)), 3: list(range(200, 250))}

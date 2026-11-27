@@ -292,7 +292,8 @@ printf 'yes\n' > "$P/yes.txt"
 expect_rc "post.sh: yes redirected from a file -> refused (exit 6)" 6 \
   "$(PATH="$GHPATH" PEERYARD_AGENT_FILES_CMD="$P/none.sh" bash review/post.sh o/r 1 "$P/unnamed.md" < "$P/yes.txt" > "$P/out-file.txt" 2>&1; echo $?)"
 expect_in "post.sh: ... names the command for the person to run" "bash review/post.sh o/r 1 $P/unnamed.md" "$P/out-piped.txt"
-[[ ! -s "$STUB_GH_LOG" ]] && ok "post.sh: ... gh never called" || bad "post.sh: piped yes" "gh called: $(cat "$STUB_GH_LOG")"
+# the detector is stubbed here; the real guard reads the PR's files through gh (read only), never `gh pr comment`
+! grep -q 'pr comment' "$STUB_GH_LOG" && ok "post.sh: ... gh pr comment never called" || bad "post.sh: piped yes" "gh called: $(cat "$STUB_GH_LOG")"
 [[ ! -e "$P/unnamed.posted.md" ]] && ok "post.sh: ... nothing saved as posted" || bad "post.sh: piped yes" "$P/unnamed.posted.md written"
 # yes typed on a terminal posts only the public part: the cut at "## Internal" keeps a lead written there off the thread
 { body 'none'; printf '\n<!-- peeryard {"head": "x"} -->\n\n## Internal\nSecurity lead: a neutral name; held with the person.\nINTERNAL-ONLY-LINE\n\n## Reviews\nREVIEWS-LINE\n\n## Upstream to peeryard\nnothing\n'; } > "$P/full.md"
@@ -312,6 +313,10 @@ expect_in "post.sh: ... contribution line counts the labelled block" "what it co
 expect_rc "post.sh: a Security lead line in the posted part -> refused (exit 3)" 3 "$(pst yes none lead)"
 expect_in "post.sh: ... says where a lead goes" "it goes only under '## Internal'" "$P/out-none-lead.txt"
 expect_rc "post.sh: an [Integration] block in a review body -> refused (exit 3)" 3 "$(pst yes none integ)"
+# ... in any Markdown dress: a numbered or + list item, a heading, italics
+i=0; for l in '1. **Security lead**: x' '+ Security lead: x' '### Security lead' '_Security lead_: x' '1. **[Integration] x**' '### [Integration] x'; do
+  i=$((i + 1)); { body 'none'; printf '\n%s\n' "$l"; } > "$P/dress$i.md"
+  expect_rc "post.sh: '$l' in the posted part -> refused (exit 3)" 3 "$(pst yes none "dress$i")"; done
 [[ ! -s "$STUB_GH_LOG" ]] && ok "post.sh: ... gh never called for a refused text" || bad "post.sh: refused text" "gh called: $(cat "$STUB_GH_LOG")"
 # queue.sh, in a copy of review/ (it rewrites <tree>/audits/QUEUE.tsv): a piped yes is refused and the item stays queued
 Q="$T/qtree"; mkdir -p "$Q/audits"; cp -r review "$Q/review"
@@ -362,6 +367,30 @@ unset PEERYARD_LOCK
 # ---- review/revert-check.sh refuses to run without --out (it would write a review's evidence to an unnamed /tmp dir)
 expect_rc "revert-check.sh: no --out -> exit 2" 2 "$(PATH="$GHPATH" bash review/revert-check.sh --pr 7 --clone "$C" > "$T/rc-noout.txt" 2>&1; echo $?)"
 expect_in "revert-check.sh: ... names the audit path" "--out audits/<date>_pr-7/captures/revert-check" "$T/rc-noout.txt"
+# two runs with one --out (stub JDK 8 and sbt, real with-lock on its own path): the run that waits for the lock must not
+# truncate the table of the run that holds it, and one run prints its header lines once
+pg checkout -qb rc master; mkdir -p "$C/src/test/scala"; printf 'package p\nclass RcSpec\n' > "$C/src/test/scala/RcSpec.scala"
+echo c >> "$C/src/main/A.scala"; pg add .; pg commit -qm rc; pg push -q origin rc:refs/pull/8/head; pg checkout -q master
+RJ="$T/rc-jdk8"; mkdir -p "$RJ/bin"
+cat > "$RJ/bin/java" <<'EOS'
+#!/bin/sh
+echo 'openjdk version "1.8.0_402"' >&2
+EOS
+cat > "$RJ/sbt" <<'EOS'
+#!/bin/sh
+grep -q "^class | with change | without change | verdict" "$RC_OUT/revert-check.txt" || echo "table cut" >> "$RC_OUT/../rc-gone.txt"
+sleep 2
+echo "[info] Tests: succeeded 1, failed 0"
+EOS
+chmod +x "$RJ/bin/java" "$RJ/sbt"; RCO="$T/rc-out/rc"; mkdir -p "$RCO"
+rcrun(){ env -u PEERYARD_LOCKED PEERYARD_LOCK="$T/rc.lock" JAVA8_HOME="$RJ" SBT="$RJ/sbt" RC_OUT="$RCO" PATH="$GHPATH" \
+  bash review/revert-check.sh --pr 8 --clone "$C" --base master --out "$RCO" > "$T/rc-$1.txt" 2>&1; echo $? > "$T/rc-$1.rc"; }
+rcrun one & r1=$!; sleep 1; rcrun two & r2=$!; wait "$r1" "$r2"
+expect_eq "revert-check.sh: two runs, one --out -> both exit 0" "0 0" "$(cat "$T/rc-one.rc") $(cat "$T/rc-two.rc")"
+if [[ ! -s "$T/rc-out/rc-gone.txt" ]]; then ok "revert-check.sh: ... the waiting run left the holder's table alone"
+else bad "revert-check.sh: concurrent runs" "$(cat "$T/rc-out/rc-gone.txt")"; fi
+expect_eq "revert-check.sh: ... one run prints 'changed:' once" "1" "$(grep -c '^changed:' "$T/rc-one.txt")"
+expect_eq "revert-check.sh: ... and its table holds one header" "1" "$(grep -c '^revert-check #8: head' "$RCO/revert-check.txt")"
 
 # ---- rig/suite-env.sh (sweep.yml's scenario_env): only keys an example's suite.tsv row declares, in that row only
 S="$T/suite.tsv"

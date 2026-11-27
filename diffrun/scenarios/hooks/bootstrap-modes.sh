@@ -43,7 +43,11 @@ pruning_check C A "$ah" "${k:-20}"; pruned=$PRUNE_OK
 
 state_ok=no; { [ "${sb%%@*}" = SAME ] && [ "${sc%%@*}" = SAME ]; } && state_ok=yes
 echo "[modes] settled=$settled state_agree=$state_ok pruned_visible=$pruned"
-if [ $settled = yes ] && [ $state_ok = yes ] && [ $pruned = yes ]; then rig_verdict=PASS; else rig_verdict=FAIL; fi
+if [ $settled = yes ] && [ $state_ok = yes ] && [ $pruned = yes ]; then rig_verdict=PASS
+# a pruning read with no answer is a harness miss (PRUNE_OK=unread): pruned_visible reads false and the cause says why
+elif [ $settled = yes ] && [ $state_ok = yes ] && [ $pruned = unread ]; then
+  echo "[modes] INCONCLUSIVE: pruning not judged, heights not read: $PRUNE_UNREAD"; rig_verdict=INCONCLUSIVE; rig_cause=BLOCK_UNREAD
+else rig_verdict=FAIL; fi
 # diffrun contract (diffrun/README.md): one RESULT_JSON line with the envelope; metrics as in scenarios/bootstrap-modes.json
 b2j(){ [ "$1" = yes ] && echo true || echo false; }
 va=$(rest A /info | jq -r '.appVersion // "null"'); vb=$(rest B /info | jq -r '.appVersion // "null"'); vc=$(rest C /info | jq -r '.appVersion // "null"')

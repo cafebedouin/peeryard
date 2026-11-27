@@ -3,7 +3,7 @@
 # rig_checks.sh: no-node tests of rig checks and helpers, each against stubs: rig.sh's topology validation
 # (rig/lib/topology.sh; rig.sh run on broken copies of a topology, with stub tools on PATH so a run that passes the
 # validation is caught at its first `unshare`, before any namespace), partition/heal's per-direction PARTITIONED flags
-# and check_topology's reading of them, settle_follow's SETTLE_TRICKLE on unread heights, the background-helper
+# and check_topology's reading of them, settle_follow's SETTLE_TRICKLE on unread heights, pruning_check's verdicts, the background-helper
 # registry (rig/lib/bg.sh) as stop_all walks it, and the example hooks relay-floor (env refusal), poscontrol (verdict
 # per same_chain token), crash-consistency (wait_backlog) and the foreign follow hooks (rig/lib/foreign_follow.sh).
 # Run from the peeryard root:
@@ -95,7 +95,7 @@ read -r ns nr < "$T/shipped.out"
   _netem(){ [[ "$1,$2" == "${FAIL_DIR:-}" ]] && { harness_fail "netem '$3' on $1->$2 not applied"; return 1; }; return 0; }
   flags(){ echo "$1 rc=$2 AB=${PARTITIONED[A,B]:-0} BA=${PARTITIONED[B,A]:-0}"; }
   FAIL_DIR=B,A partition A B > /dev/null; flags partition-half $?
-  FAIL_DIR=A,B partition A B > /dev/null; flags partition-first-fails $?   # nothing changed, A->B still flagged from before
+  PARTITIONED=(); FAIL_DIR=A,B partition A B > /dev/null; flags partition-first-fails $?   # from clear: nothing flagged
   partition A B > /dev/null; flags partition $?
   FAIL_DIR=B,A heal A B > /dev/null; flags heal-half $?
   heal A B > /dev/null; flags heal $?
@@ -104,7 +104,7 @@ read -r ns nr < "$T/shipped.out"
   LINK_A=(A); LINK_B=(B); NODES=(A B); peers_of(){ :; }
   PARTITIONED=([B,A]=1); check_topology; echo "check_topology rc=$?" ) > "$T/ph.out" 2>&1
 expect_in "partition: second direction fails -> only the first flagged" "partition-half rc=1 AB=1 BA=0" "$T/ph.out"
-expect_in "partition: first direction fails -> no flag changes" "partition-first-fails rc=1 AB=1 BA=0" "$T/ph.out"
+expect_in "partition: first direction fails -> nothing flagged" "partition-first-fails rc=1 AB=0 BA=0" "$T/ph.out"
 expect_in "partition: both directions -> both flagged" "partition rc=0 AB=1 BA=1" "$T/ph.out"
 expect_in "heal: second direction fails -> only the first cleared" "heal-half rc=1 AB=0 BA=1" "$T/ph.out"
 expect_in "heal: both directions -> both cleared" "heal rc=0 AB=0 BA=0" "$T/ph.out"
@@ -124,6 +124,31 @@ expect_eq "settle_follow: h0 missed once, re-read 30, ends at 32 -> trickle 2" "
 expect_eq "settle_follow: both heights read -> trickle 2" "trickle=2" "$(stf 30 32 | grep -o 'trickle=.*')"
 expect_eq "settle_follow: h0 never read -> trickle -1 (not 32)" "trickle=-1" "$(stf - - - - - - - 32 | grep -o 'trickle=.*')"
 expect_in "settle_follow: ... and says so" "L's full height unread before the settle" "$T/stf.out"
+
+# ---- pruning_check: yes / no / unread, and where each height is filed ----
+# rest stub: $T/pc.map lines "NODE HEIGHT ANSWER": a count (served, that many txs), 0 (pruned: a 404 JSON answer), nohdr
+# (no header) or err (no answer). Unlisted heights: the pruned node C serves 1 tx at 31 and above, nothing below; A
+# serves every height. top 40, k 5: 2..30 must be pruned on C, 36..40 kept.
+pc(){ ( # shellcheck source=rig/lib/hook_api.sh
+  source rig/lib/hook_api.sh
+  printf '%s\n' "$@" > "$T/pc.map"; sleep(){ :; }; PRUNE_WAIT_S=0
+  ans(){ local a; a=$(awk -v n="$1" -v h="$2" '$1 == n && $2 == h {print $3}' "$T/pc.map")
+    [[ -n "$a" ]] && { echo "$a"; return; }; [[ "$1" == A ]] && { echo 1; return; }; (( $2 >= 31 )) && echo 1 || echo 0; }
+  rest(){ local p="$2" a h id
+    if [[ "$p" == /blocks/at/* ]]; then h=${p#/blocks/at/}; a=$(ans "$1" "$h")
+      case "$a" in err) return 7 ;; nohdr) echo '[]' ;; *) echo "[\"id-$h\"]" ;; esac
+    else id=${p#/blocks/id-}; a=$(ans "$1" "$id")
+      case "$a" in err) return 7 ;; 0) echo '{"error":404,"reason":"not-found"}' ;; *) echo "{\"blockTransactions\":{\"transactions\":[$(seq -s, 1 "$a")]}}" ;; esac; fi; }
+  pruning_check C A 40 5 > /dev/null; echo "ok=$PRUNE_OK kept=${PRUNE_KEPT:-} missing=${PRUNE_MISSING:-} nohdr=${PRUNE_NOHDR:-} unread=${PRUNE_UNREAD:-}" ); }
+expect_eq "pruning_check: clean store -> yes" "ok=yes kept= missing= nohdr= unread=" "$(pc)"
+expect_eq "pruning_check: old height still served -> no, kept" "ok=no kept=7 missing= nohdr= unread=" "$(pc 'C 7 2')"
+expect_eq "pruning_check: old height unread -> unread, not no" "ok=unread kept= missing= nohdr= unread=7" "$(pc 'C 7 err')"
+expect_eq "pruning_check: recent height unread -> unread" "ok=unread kept= missing= nohdr= unread=38" "$(pc 'C 38 err')"
+expect_eq "pruning_check: recent header gone -> no, filed under nohdr" "ok=no kept= missing= nohdr=38 unread=" "$(pc 'C 38 nohdr')"
+expect_eq "pruning_check: recent block not served -> no, missing" "ok=no kept= missing=38 nohdr= unread=" "$(pc 'C 38 0')"
+expect_eq "pruning_check: kept and unread -> no (a wrong height wins)" "ok=no kept=7 missing= nohdr= unread=9" "$(pc 'C 7 2' 'C 9 err')"
+expect_eq "pruning_check: full node's read unread -> unread, named" "ok=unread kept= missing= nohdr= unread=A@2" "$(pc 'A 2 err')"
+expect_eq "pruning_check: full node does not serve a pruned height -> no" "ok=no kept= missing= nohdr= unread=" "$(pc 'A 30 0')"
 
 # ---- background-helper registry: stop_all stops every registered helper, then any unregistered job, and returns ----
 cat > "$T/sa.sh" <<'EOF'

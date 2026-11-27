@@ -45,5 +45,9 @@ echo "[modes] settled=$settled state_agree=$state_ok pruned_visible=$pruned"
 # the premise: B really runs in digest mode (the config override took effect)
 b_mode=$(rest B /info | jq -r '.stateType // empty'); echo "[modes] B reports stateType=${b_mode:-nothing}"
 if [ "$b_mode" != digest ]; then echo "[modes] INCONCLUSIVE: B is not in digest mode"; rig_verdict=INCONCLUSIVE; rig_cause=MODE_NOT_APPLIED
-elif [ $settled = yes ] && [ $state_ok = yes ] && [ $pruned = yes ]; then rig_verdict=PASS; else rig_verdict=FAIL; fi
+elif [ $settled = yes ] && [ $state_ok = yes ] && [ $pruned = yes ]; then rig_verdict=PASS
+# a pruning read with no answer is a harness miss, not a node verdict (PRUNE_OK=unread)
+elif [ $settled = yes ] && [ $state_ok = yes ] && [ $pruned = unread ]; then
+  echo "[modes] INCONCLUSIVE: pruning not judged, heights not read: $PRUNE_UNREAD"; rig_verdict=INCONCLUSIVE; rig_cause=BLOCK_UNREAD
+else rig_verdict=FAIL; fi
 echo "[modes] === BOOTSTRAP-MODES: $rig_verdict ==="; echo "MODES-DONE"

@@ -3,7 +3,10 @@
 # prints it, states what it contributes (the recipes and verdict lines it carries), and asks for a typed `yes`
 # before `gh pr comment`. Saves the posted text beside the report as <report>.posted.md with the comment URL.
 # The person runs it, in their own terminal: the answer is read only from a terminal (a piped or redirected stdin is
-# refused, exit 6), so neither an agent nor `yes |` can answer for them. Exit: 0 posted (or queued), 1 not posted,
+# refused, exit 6), so neither an agent nor `yes |` can answer for them. The lint and the agent-files guard run first,
+# whatever stdin is, so an agent's run shows a text that would be refused (exit 3 or 5) before it hands the command
+# over; the guard reads the PR's file list through gh (read only). Nothing is posted without the typed yes: `gh pr
+# comment` runs only after it. Exit: 0 posted (or queued), 1 not posted,
 # 2 usage, 3 lint FAIL, 4 gh failed, 5 agent-instruction files not named, 6 stdin not a terminal.
 # --queue: for an unattended run; instead of asking, appends the item to audits/QUEUE.tsv (repo, pr, kind,
 # file, contribution line) for review/queue.sh, which asks for each item when a person is back.
@@ -38,7 +41,7 @@ elif [[ -n "$flags" ]]; then
   fi
 fi
 echo "----- text to post to $REPO#$PR -----"; cat "$PUB"; echo "----- end -----"
-NF="$(grep -c -E '^(- )?\*\*\[' "$PUB")"   # labelled findings in the posted part (the template's blocks, or a list of them)
+NF="$(grep -c -E '^[[:space:]]*([-*+]|[0-9]+[.)])?[[:space:]]*\*\*\[' "$PUB")"   # labelled findings in the posted part (the template's blocks, or a list of them)
 echo "what it contributes: $NF finding(s); executed: $(grep -m1 -E '^Executed:' "$PUB" | cut -c1-160); verdict lines: $(grep -oE '[A-Z_-]+: (PASS|FAIL|SUPPORTS|AGAINST|NULL|DEGENERATE)[^`]*' "$PUB" | head -3 | tr '\n' ' ')"
 if [[ $QUEUE == 1 ]]; then
   q="$HERE/../audits/QUEUE.tsv"; mkdir -p "$(dirname "$q")"
@@ -50,7 +53,8 @@ fi
 # person to run in their own terminal (.claude/skills/review-pr/SKILL.md step 6); there is no override.
 if [[ ! -t 0 ]]; then
   echo "post: refused: stdin is not a terminal; the person posts, by running this command in their own terminal and typing yes:" >&2
-  echo "  bash review/post.sh $REPO $PR $FILE${KIND:+ --kind $KIND}$([[ $ACK == 1 ]] && echo ' --ack-agent-files')" >&2; exit 6
+  cmd=(bash review/post.sh "$REPO" "$PR" "$FILE" --kind "$KIND"); [[ $ACK == 1 ]] && cmd+=(--ack-agent-files)
+  line="$(printf '%q ' "${cmd[@]}")"; echo "  ${line% }" >&2; exit 6
 fi
 read -r -p "post this as a comment on $REPO#$PR? type yes to post: " ans
 [[ "$ans" == yes ]] || { echo "not posted"; exit 1; }

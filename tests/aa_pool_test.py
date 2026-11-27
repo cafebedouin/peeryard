@@ -36,6 +36,11 @@ with tempfile.TemporaryDirectory() as d, open(EX) as fh:
                        ("env", lambda w: w["provenance"]["env"].update(DELTA=9))]:
         r = pool(EX, copy(name + ".json", edit))
         assert r.returncode != 0 and "differ in jars or env" in r.stderr, (name, r.returncode, r.stdout, r.stderr)
+    # valid JSON that is not a verdict object: refused by name, no traceback
+    for name, text in [("list.json", "[]"), ("num.json", "3"), ("runs.json", '{"same_jar": true, "runs": 5}')]:
+        with open(os.path.join(d, name), "w") as o: o.write(text)
+        r = pool(os.path.join(d, name))
+        assert r.returncode != 0 and "is not a verdict.json" in r.stderr and "Traceback" not in r.stderr, (name, r.stderr)
     # the Python mirror agrees with the jq definition pool.sh uses
     jq = subprocess.run(["jq", "-cS", "-L", os.path.join(ROOT, "diffrun", "lib"), 'include "diffrun"; shard_identity', EX],
                         capture_output=True, text=True, check=True).stdout.strip()

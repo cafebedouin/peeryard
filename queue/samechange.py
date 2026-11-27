@@ -1,7 +1,7 @@
 """samechange.py: the same-change view: open pull requests whose production diffs are identical (git patch-id over
 src/main and */src/main, from one blobless bare clone), or that address one issue; and a review carried across a
 rebase or a tests-only push. Part of queue/build.py (see its docstring)."""
-import os, re, subprocess
+import os, re, subprocess, sys
 
 from ghapi import api
 
@@ -81,8 +81,11 @@ def production_diffs(repo, prs, gdir):
         except Exception as e:
             out[n] = {"files": None, "patch_id": None, "error": str(e)[:200]}
     if blobs:   # the same request git makes for one missing blob, made once for all of them
-        git(gdir, "-c", "fetch.negotiationAlgorithm=noop", "fetch", "-q", "origin", "--no-tags", "--no-write-fetch-head",
-            "--recurse-submodules=no", "--filter=blob:none", "--stdin", stdin="".join(o + "\n" for o in sorted(blobs)))
+        try:
+            git(gdir, "-c", "fetch.negotiationAlgorithm=noop", "fetch", "-q", "origin", "--no-tags", "--no-write-fetch-head",
+                "--recurse-submodules=no", "--filter=blob:none", "--stdin", stdin="".join(o + "\n" for o in sorted(blobs)))
+        except RuntimeError as e:              # slower, not wrong: each diff below fetches its own blobs, or reports its error
+            print(f"same change: the batched blob fetch failed, fetching per diff: {str(e)[:200]}", file=sys.stderr)
     for n, (mb, head, files) in ranges.items():
         try:
             pid = pid_ctx = None

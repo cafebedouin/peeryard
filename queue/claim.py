@@ -12,7 +12,7 @@ person's go). --by defaults to `gh api user`'s login,
 then $USER. Nothing is posted to GitHub. The page and queue/next.py read the file; a claim never hides a pull request,
 it tags it.
 """
-import argparse, datetime as dt, json, os, subprocess, sys
+import argparse, datetime as dt, json, os, shlex, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATH = os.path.join(HERE, "claims.json")
 
@@ -77,8 +77,9 @@ def main():
 
 def print_publish(what):
     root = os.path.dirname(HERE)
-    print("to publish, the person runs (an agent hands this over and does not run it):\n  git -C " + root
-          + f" commit -qm 'claims: {what}' queue/claims.json && git -C " + root + " push -q origin main")
+    r = shlex.quote(root)
+    print("to publish, the person runs (an agent hands this over and does not run it):\n  git -C " + r
+          + " commit -qm " + shlex.quote(f"claims: {what}") + " queue/claims.json && git -C " + r + " push -q origin main")
 
 
 if __name__ == "__main__":

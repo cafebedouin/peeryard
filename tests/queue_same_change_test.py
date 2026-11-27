@@ -101,6 +101,23 @@ class SameChange(unittest.TestCase):
         finally:
             samechange.api = old
 
+    def test_failed_batched_blob_fetch_is_not_fatal(self):
+        # one failed batched fetch (queue/samechange.py) must not escape production_diffs: each diff still gets its id
+        want = build.production_diffs(REPO, self.prs(), self.gdir)
+        real = samechange.git
+
+        def flaky(gdir, *args, **kw):
+            if "--stdin" in args:
+                raise RuntimeError("git fetch: simulated failure")
+            return real(gdir, *args, **kw)
+        samechange.git = flaky
+        try:
+            got = build.production_diffs(REPO, self.prs(), self.gdir)
+        finally:
+            samechange.git = real
+        self.assertEqual(got, want)
+        self.assertTrue(got[1]["patch_id"])
+
     def test_exact_group_earliest_first_draft_included(self):
         diffs, exact, related, meta = self.run_view({9: "issue", 8: "issue"})
         self.assertEqual(diffs[4], {"files": [], "patch_id": None, "patch_id_context": None, "changed_lines": 0})

@@ -134,9 +134,12 @@ companions_stop_all(){ local f; for f in "$SCRATCH"/companions/*.pid; do [[ -f "
 # applied, so heights still served are re-read for up to
 # PRUNE_WAIT_S (90) seconds; a removed height stays removed, so each pass re-reads only those. A read with no answer
 # (curl failed, an empty body, not JSON) proves nothing either way: that height is re-read like a served one, and one
-# still unread at the end goes to PRUNE_UNREAD, which keeps PRUNE_OK at no. Sets PRUNE_OK (yes/no), PRUNE_KEPT (heights
-# still served below the floor), PRUNE_MISSING (recent heights not served), PRUNE_NOHDR (heights whose header is gone)
-# and PRUNE_UNREAD, and prints one line. A served full block carries at least one (coinbase) transaction.
+# still unread at the end goes to PRUNE_UNREAD (as NODE@H for a read of the full node). Sets PRUNE_OK: yes, no (a height
+# kept, missing or headerless, or the full node not serving a pruned height), or unread (nothing wrong was seen but
+# some read got no answer: a harness miss, not a node verdict; callers end INCONCLUSIVE BLOCK_UNREAD). Also sets
+# PRUNE_KEPT (heights still served below the floor), PRUNE_MISSING (recent heights not served), PRUNE_NOHDR (heights
+# whose header is gone) and PRUNE_UNREAD, and prints one line. A served full block carries at least one (coinbase)
+# transaction.
 # _prune_txs NODE H prints the transaction count of the full block NODE serves at height H: 0 when the node answers
 # without one (a JSON error answer such as 404 not-found, which is how a pruned block reads), "nohdr" when it has no
 # header at H, "err" when either read got no usable answer (a timeout gives an empty body, which must not read as
@@ -150,7 +153,8 @@ _prune_txs(){ local b id
 pruning_check(){
   local c="$1" a="$2" top="$3" k="$4" lo=2 hi keep_lo h n end still unread a_lo a_hi
   hi=$((top - 2 * k)); keep_lo=$((top - k + 1)); PRUNE_KEPT=""; PRUNE_MISSING=""; PRUNE_NOHDR=""; PRUNE_UNREAD=""; PRUNE_OK=no
-  a_lo=$(_prune_txs "$a" "$lo"); a_hi=$(_prune_txs "$a" "$hi")
+  a_lo=$(_prune_txs "$a" "$lo"); [[ "$a_lo" == err ]] && { sleep 2; a_lo=$(_prune_txs "$a" "$lo"); }
+  a_hi=$(_prune_txs "$a" "$hi"); [[ "$a_hi" == err ]] && { sleep 2; a_hi=$(_prune_txs "$a" "$hi"); }
   PRUNE_KEPT=$(seq "$lo" "$hi" | tr '\n' ' '); end=$((SECONDS + ${PRUNE_WAIT_S:-90}))
   while :; do
     still=""; unread=""
@@ -161,9 +165,15 @@ pruning_check(){
   done
   # a recent height that does not answer gets one more read before it is judged
   for h in $(seq "$keep_lo" "$top"); do n=$(_prune_txs "$c" "$h"); [[ "$n" == err ]] && { sleep 2; n=$(_prune_txs "$c" "$h"); }
-    if [[ "$n" == err ]]; then PRUNE_UNREAD+=" $h"; elif ! { [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )); }; then PRUNE_MISSING+=" $h"; fi; done
+    case "$n" in err) PRUNE_UNREAD+=" $h" ;; nohdr) PRUNE_NOHDR+=" $h" ;;
+      *) [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )) || PRUNE_MISSING+=" $h" ;; esac; done
+  [[ "$a_lo" == err ]] && PRUNE_UNREAD+=" $a@$lo"; [[ "$a_hi" == err ]] && PRUNE_UNREAD+=" $a@$hi"
   PRUNE_MISSING="${PRUNE_MISSING# }"; PRUNE_NOHDR="${PRUNE_NOHDR# }"; PRUNE_UNREAD="${PRUNE_UNREAD# }"
   echo "[prune] $c (blocksToKeep $k) at $top: $lo..$hi pruned, $keep_lo..$top kept; $a serves $lo:${a_lo:-none} $hi:${a_hi:-none}; $c still serves below the floor: ${PRUNE_KEPT:-none}; lacks recent: ${PRUNE_MISSING:-none}; lacks headers: ${PRUNE_NOHDR:-none}; unread: ${PRUNE_UNREAD:-none}"
-  (( hi >= lo )) && [[ -z "$PRUNE_KEPT$PRUNE_MISSING$PRUNE_NOHDR$PRUNE_UNREAD" && "$a_lo" =~ ^[0-9]+$ && "$a_hi" =~ ^[0-9]+$ ]] && (( a_lo >= 1 && a_hi >= 1 )) && PRUNE_OK=yes
+  # the full node's reads: a count of at least 1 is served, err is unread, anything else (0, nohdr) is not served
+  local a_bad=no; for n in "$a_lo" "$a_hi"; do [[ "$n" == err ]] || { [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )); } || a_bad=yes; done
+  if (( hi >= lo )) && [[ -z "$PRUNE_KEPT$PRUNE_MISSING$PRUNE_NOHDR" && $a_bad == no ]]; then
+    if [[ -n "$PRUNE_UNREAD" ]]; then PRUNE_OK=unread; else PRUNE_OK=yes; fi
+  fi
   return 0
 }

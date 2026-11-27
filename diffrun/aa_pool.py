@@ -52,6 +52,8 @@ def main():
                 v = json.load(fh)
         except (OSError, ValueError) as e:
             sys.exit(f"aa_pool: cannot read {f}: {e}")
+        if not isinstance(v, dict) or not isinstance(v.get("runs", []), list):
+            sys.exit(f"aa_pool: {f} is not a verdict.json (an object with a runs list)")
         if not v.get("same_jar"):
             sys.exit(f"aa_pool: {f} is not an A/A control (same_jar is not true)")
         ident.setdefault(json.dumps(shard_identity(v), sort_keys=True), []).append(f)

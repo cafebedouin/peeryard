@@ -119,7 +119,13 @@ def head_push_time(repo, n, head_sha, head_commit, token):
     except Exception as e:
         print(f"warning: #{n}: timeline not read ({str(e)[:120]}); push time from the check suites or the commit", file=sys.stderr)
     try:
-        suites = api(f"/repos/{repo}/commits/{head_sha}/check-suites", {"per_page": 100}, token).get("check_suites", [])
+        suites, page = [], 1
+        while True:                    # an object ({total_count, check_suites}), so api(paginate=True) cannot page it
+            got = api(f"/repos/{repo}/commits/{head_sha}/check-suites", {"per_page": 100, "page": page}, token).get("check_suites", [])
+            suites += got
+            if len(got) < 100 or page >= 10:
+                break
+            page += 1
         cs = [parse_ts(s["created_at"]) for s in suites if s.get("created_at")]
         if cs:
             return min(cs), "check-suite"
@@ -139,9 +145,11 @@ def review_at_head(r, head_sha, head_at):
 
 
 def post_at_head(p, head_sha, head_at):
-    """A peeryard post (peeryard_posts) was made at the current head: by the head it names (a review's commit_id first,
-    then its marker's head), else, for a comment with no marker head, by its time against the head's push time."""
-    h = p.get("commit_id") or p.get("head")
-    if h:
-        return len(h) >= 7 and head_sha.startswith(h)
+    """A peeryard post (peeryard_posts) was made at the current head: by the heads it names (a review's commit_id and its
+    marker's head; when both are given, both must be the current head, since a review submitted on one head can carry
+    a marker for another, and peeryard_field reports the marker's), else, for a comment with no head named, by its
+    time against the head's push time."""
+    heads = [h for h in (p.get("commit_id"), p.get("head")) if h]
+    if heads:
+        return all(len(h) >= 7 and head_sha.startswith(h) for h in heads)
     return p["at"] > head_at

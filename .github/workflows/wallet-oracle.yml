@@ -98,7 +98,7 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           # every variant and repeat must have reported a row: a job that died before writing one is a gap, not a pass
           expected=$((VARIANTS * $(jq length <<< "$REPEATS_JSON"))); have=0
-          [ ${#tsv[@]} -gt 0 ] && have=$(cat "${tsv[@]}" | grep -c .)
+          [ ${#tsv[@]} -gt 0 ] && have=$(cat "${tsv[@]}" | grep -c . || true)   # grep -c exits 1 on 0 lines (bash -e)
           for d in rows/*/; do [ -f "$d/row.tsv" ] || echo "no row: $(basename "$d")"; done
           if [ "$have" != "$expected" ]; then echo "::error::$have of $expected variant runs reported a row"; exit 1; fi
           bad=$(cat "${tsv[@]}" | awk -F'\t' '$3 != "-" && $3 != $4' | wc -l)

@@ -54,12 +54,12 @@ prune_state(){
   done
   KEPT=$(echo "$list" | ranges); MISSING=""
   for h in $(seq "$fl" "$top"); do s=$(served "$n" "$h"); [[ "$s" == err ]] && { sleep 2; s=$(served "$n" "$h"); }
-    if [[ "$s" == err ]]; then unread+=" $h"; elif ! { [[ "$s" =~ ^[0-9]+$ ]] && (( s >= 1 )); }; then MISSING+=" $h"; fi; done
+    case "$s" in err) unread+=" $h" ;; nohdr) NOHDR+=" $h" ;; *) [[ "$s" =~ ^[0-9]+$ ]] && (( s >= 1 )) || MISSING+=" $h" ;; esac; done
   MISSING=$(echo "$MISSING" | ranges); NOHDR=$(echo "$NOHDR" | ranges); UNREAD=$(echo "$unread" | ranges)
 }
 
 pruned_restart(){
-  local cand base upgrade=no a c d hc st end top fl ver0 ver1 fails="" pre
+  local cand base upgrade=no a c d hc st end top fl ver0 ver1 fails="" unread="" pre
   K=$(k_of C); [[ -n "$K" && "$K" == "$(k_of D)" ]] || { pr_end INCONCLUSIVE "C and D must share one blocksToKeep (C=${K:-none} D=$(k_of D))" SETUP; return; }
   grep -q votingLength "$SCRATCH/conf_C.conf" && note "WARN: the topology overrides votingLength; PR_VOTING=$V must match it"
   cand="$(readlink -f "${PEERYARD_JAR:-}")"
@@ -84,7 +84,8 @@ pruned_restart(){
   # 2. before the restart: C's store is clean below its floor
   prune_state C "$(floor_at "$hc")" "$hc"; pre="kept below the floor: ${KEPT:-none}; missing: ${MISSING:-none}; headers gone: ${NOHDR:-none}; unread: ${UNREAD:-none}"
   note "before the restart, C at $hc, floor $(floor_at "$hc"): $pre"
-  [[ -z "$KEPT$MISSING$NOHDR$UNREAD" ]] || { pr_end INCONCLUSIVE "C's store was not clean before the restart ($pre)" PRE_DIRTY; return; }
+  [[ -z "$KEPT$MISSING$NOHDR" ]] || { pr_end INCONCLUSIVE "C's store was not clean before the restart ($pre)" PRE_DIRTY; return; }
+  [[ -z "$UNREAD" ]] || { pr_end INCONCLUSIVE "C's store could not be read before the restart ($pre)" BLOCK_UNREAD; return; }
 
   # 3. restart C (upgrade: on the candidate jar) while it is cut, so its headers stay marked unsynced
   ver0=$(ver C)
@@ -116,13 +117,15 @@ pruned_restart(){
   fl=$(floor_at "$top")
   (( fl > $(floor_at "$hc") )) || { pr_end INCONCLUSIVE "A's final height $top does not move the floor past $(floor_at "$hc")" NO_MOVE; return; }
 
-  # 6. the checks
+  # 6. the checks: a height kept, missing or headerless fails; a read with no answer proves nothing (INCONCLUSIVE)
   for n in D C; do
     prune_state "$n" "$fl" "$top"
     note "$n at $top, floor $fl: kept below the floor: ${KEPT:-none}; missing from the floor up: ${MISSING:-none}; headers gone: ${NOHDR:-none}; unread: ${UNREAD:-none}"
-    [[ -z "$KEPT$MISSING$NOHDR$UNREAD" ]] || fails+=" $n(kept ${KEPT:-none}; missing ${MISSING:-none}; nohdr ${NOHDR:-none}; unread ${UNREAD:-none})"
+    [[ -z "$KEPT$MISSING$NOHDR" ]] || fails+=" $n(kept ${KEPT:-none}; missing ${MISSING:-none}; nohdr ${NOHDR:-none})"
+    [[ -z "$UNREAD" ]] || unread+=" $n($UNREAD)"
   done
-  if [[ -z "$fails" ]]; then pr_end PASS "C ($ver0 -> $ver1) and D prune every height below $fl at $top"
-  else pr_end FAIL "still served below the floor or lost:$fails" PRUNE; fi
+  if [[ -n "$fails" ]]; then pr_end FAIL "still served below the floor or lost:$fails${unread:+; unread:$unread}" PRUNE
+  elif [[ -n "$unread" ]]; then pr_end INCONCLUSIVE "no wrong height seen, but heights were not read:$unread" BLOCK_UNREAD
+  else pr_end PASS "C ($ver0 -> $ver1) and D prune every height below $fl at $top"; fi
 }
 pruned_restart

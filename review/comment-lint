@@ -30,10 +30,13 @@ BANNED = [
 ]
 # A possible security lead is written only under "## Internal", on a line opening "Security lead:" (review/GATES.md,
 # private routing; templates/review.md): such a line anywhere in the posted part is a FAIL, whatever the kind.
-SECURITY_LEAD = re.compile(r"^\s*(?:[-*>]\s*)*(?:\*\*)?\s*security lead\b", re.I | re.M)
+# A line's Markdown lead-in, any mix of: list markers (- * + 1. 1)), quote markers, a heading's #s, then bold or italic
+# (** __ * _). The two checks below look for a label after it, so "1. **Security lead**" or "### [Integration]" counts.
+MD_LEAD = r"^[ \t]*(?:(?:[-*+>]|\d+[.)]|\#{1,6})[ \t]*)*(?:\*\*|__|\*|_)?[ \t]*"
+SECURITY_LEAD = re.compile(MD_LEAD + r"security lead(?![a-z0-9])", re.I | re.M)
 # In a review body an Integration item (vehicle, duplicates, scope, stray or agent-instruction files) is one
 # "Integration:" clause in the verdict paragraph, never a labelled block (review/GUIDE.md, Labels).
-INTEGRATION_BLOCK = re.compile(r"^\s*(?:- )?\*\*\[Integration\]", re.M)
+INTEGRATION_BLOCK = re.compile(MD_LEAD + r"\[Integration\](?!\()", re.M)
 HEDGES = re.compile(r"\b(might|may|could|possibly|perhaps|potentially|seems?|appears?)\b", re.I)
 
 

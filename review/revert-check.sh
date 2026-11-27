@@ -35,8 +35,12 @@ while [[ $# -gt 0 ]]; do case "$1" in
 [[ -n "$OUT" ]] || { echo "revert-check: --out <dir> is required (in a review: --out audits/<date>_pr-$PR/captures/revert-check)" >&2; exit 2; }
 mkdir -p "$OUT" || { echo "revert-check: cannot create $OUT" >&2; exit 2; }; OUT="$(readlink -f "$OUT")"
 [[ "${REVERT_CHECK_LOCKED:-0}" == 1 ]] || echo "revert-check: writing to $OUT" >&2
-[[ "${REVERT_CHECK_LOCKED:-0}" == 1 ]] || : > "$OUT/revert-check.txt"
-say(){ echo "$*" | tee -a "$OUT/revert-check.txt"; }
+# The table is opened (truncated) only by the run that goes on to the sbt runs, after it holds the host lock, or by an
+# early exit: until then say() keeps its lines, so a second run with the same --out that waits for the lock cannot
+# wipe the table of the run that holds it, and the half that only re-runs itself under the lock prints nothing.
+TABLE_OPEN=0; PRE=""
+say(){ if [[ $TABLE_OPEN == 1 ]]; then echo "$*" | tee -a "$OUT/revert-check.txt"; else PRE+="$*"$'\n'; fi; }
+open_table(){ printf '%s' "$PRE" | tee "$OUT/revert-check.txt"; TABLE_OPEN=1; }
 
 # JDK 8, as build.sh finds it: candidate names carry 8 or 1.8 in a fixed place, and `java -version` must say 1.8
 is_jdk8(){ local v; [[ -x "$1/bin/java" ]] && v="$("$1/bin/java" -version 2>&1)" && [[ "$v" =~ version\ \"1\.8\. ]]; }
@@ -66,7 +70,7 @@ if [[ -z "$BASE" ]]; then
   BASE="$(git -C "$CLONE" merge-base "origin/$bref" "pr-$PR")" || { echo "revert-check: no merge base with origin/$bref" >&2; exit 2; }
 fi
 BASE_SHA="$(git -C "$CLONE" rev-parse "$BASE^{commit}")"
-[[ "${REVERT_CHECK_LOCKED:-0}" == 1 ]] || say "revert-check #$PR: head ${HEAD_SHA:0:12} base ${BASE_SHA:0:12} ($(date -u +%FT%TZ)); JDK $J8"
+say "revert-check #$PR: head ${HEAD_SHA:0:12} base ${BASE_SHA:0:12} ($(date -u +%FT%TZ)); JDK $J8"
 
 # split the diff
 mapfile -t ALL < <(git -C "$CLONE" diff --name-only "$BASE_SHA" "$HEAD_SHA")
@@ -74,17 +78,18 @@ TESTS=(); PROD=()
 for f in "${ALL[@]}"; do if [[ "$f" =~ $TESTS_RE ]]; then TESTS+=("$f"); elif [[ -z "$REVERT_RE" || "$f" =~ $REVERT_RE ]]; then PROD+=("$f"); fi; done
 [[ -n "$REVERT_RE" ]] && say "reverting only production paths matching: $REVERT_RE"
 say "changed: ${#ALL[@]} files; tests matched: ${#TESTS[@]}; reverted without the change: ${#PROD[@]}"
-[[ ${#TESTS[@]} -gt 0 ]] || { say "no test file changed under $TESTS_RE: nothing to check"; echo "RESULT_JSON {\"pr\":$PR,\"tests\":0,\"guarding\":0,\"passes_both\":0,\"fails_both\":0,\"compile_error_without\":0}" | tee "$OUT/RESULT_JSON"; exit 0; }
-[[ ${#PROD[@]} -gt 0 ]] || { say "the PR changes only test files: a revert check has nothing to revert"; echo "RESULT_JSON {\"pr\":$PR,\"tests\":${#TESTS[@]},\"guarding\":0,\"passes_both\":0,\"fails_both\":0,\"compile_error_without\":0,\"nothing_to_revert\":true}" | tee "$OUT/RESULT_JSON"; exit 0; }
-printf '%s\n' "${TESTS[@]}" > "$OUT/test-files.txt"; printf '%s\n' "${PROD[@]}" > "$OUT/reverted-files.txt"
+[[ ${#TESTS[@]} -gt 0 ]] || { open_table; say "no test file changed under $TESTS_RE: nothing to check"; echo "RESULT_JSON {\"pr\":$PR,\"tests\":0,\"guarding\":0,\"passes_both\":0,\"fails_both\":0,\"compile_error_without\":0}" | tee "$OUT/RESULT_JSON"; exit 0; }
+[[ ${#PROD[@]} -gt 0 ]] || { open_table; say "the PR changes only test files: a revert check has nothing to revert"; echo "RESULT_JSON {\"pr\":$PR,\"tests\":${#TESTS[@]},\"guarding\":0,\"passes_both\":0,\"fails_both\":0,\"compile_error_without\":0,\"nothing_to_revert\":true}" | tee "$OUT/RESULT_JSON"; exit 0; }
 # The host lock is taken here, after the early exits, so a PR with no tests never queues for it; callers need not
 # wrap this script in with-lock. A caller that already holds the lock (with-lock exports PEERYARD_LOCKED=1) goes
 # straight on in this process; otherwise the script re-runs itself under with-lock, which exports PEERYARD_LOCKED=1 to
-# it. REVERT_CHECK_LOCKED=1 tells that second run it is the locked half (it keeps the table started above rather than
-# truncating it, and does not print the header twice); it gets --out "$OUT" appended (the parser keeps the last
-# --out), the resolved directory, so both halves write one directory.
+# it. REVERT_CHECK_LOCKED=1 tells that second run it is the locked half (it does not announce the directory again);
+# it gets --out "$OUT" appended (the parser keeps the last --out), the resolved directory, so both halves write one
+# directory. The locked half reads the refs again and opens the table here, under the lock.
 if [[ "${REVERT_CHECK_LOCKED:-0}" != 1 && "${PEERYARD_LOCKED:-0}" != 1 ]]; then
   export REVERT_CHECK_LOCKED=1; exec bash "$HERE/with-lock.sh" -- bash "$0" "${ORIG_ARGS[@]}" --out "$OUT"; fi
+open_table
+printf '%s\n' "${TESTS[@]}" > "$OUT/test-files.txt"; printf '%s\n' "${PROD[@]}" > "$OUT/reverted-files.txt"
 
 # worktrees
 WT_WITH="$OUT/with"; WT_WITHOUT="$OUT/without"

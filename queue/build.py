@@ -119,11 +119,13 @@ def main():
     rows, allprs = collect(a.repo, token, a.limit)
     by_number = {r["number"]: r for r in rows}
     t0, sc_error = time.time(), None
-    try:
-        diffs = production_diffs(a.repo, allprs, os.path.join(a.git_cache, a.repo.replace("/", "_") + ".git"))
+    gdir = os.path.join(a.git_cache, a.repo.replace("/", "_") + ".git")
+    diffs, exact, related, meta = {}, [], [], {}
+    try:                                         # the view is an extra: the pages still render without it
+        diffs = production_diffs(a.repo, allprs, gdir)
         exact, related, meta = same_change(a.repo, allprs, diffs, token, RULES)
-    except Exception as e:                       # the view is an extra: the pages still render without it
-        diffs, exact, related, meta, sc_error = {}, [], [], {}, str(e)[:200]
+    except Exception as e:                       # diffs already computed are kept (patch ids, carried reviews)
+        exact, related, meta, sc_error = [], [], {}, str(e)[:200]
     for n, d in diffs.items():
         if n in by_number:
             by_number[n]["production_patch_id"] = d.get("patch_id")
@@ -141,7 +143,9 @@ def main():
             if n in by_number:
                 others = sorted({m for p in g["pairs"] if n in p["prs"] for m in p["prs"]} - {n})
                 by_number[n].setdefault("same_issue", []).append({"issue": g["issue"], "with": others})
-    carried_reviews = carry_reviews(a.repo, rows, diffs, os.path.join(a.git_cache, a.repo.replace("/", "_") + ".git")) if diffs else 0
+    carried_reviews = carry_reviews(a.repo, rows, diffs, gdir) if diffs else 0
+    for r in rows:                               # internal: carry_reviews' input, never published
+        r.pop("peeryard_prior", None)
     claims = load_claims()
     for r in rows:
         c = claims.get(r["number"])

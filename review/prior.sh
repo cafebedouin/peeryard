@@ -29,8 +29,9 @@ fp="$(gh api "repos/$REPO/issues/$PR/timeline?per_page=100" --paginate \
         --jq '.[] | select(.event == "head_ref_force_pushed") | "\(.commit_id) \(.created_at)"' 2>/dev/null)" || unknown "cannot read the timeline of $REPO#$PR"
 push="$(awk -v h="$head_sha" '$1 == h {print $2}' <<< "$fp" | sort | tail -1)"; src=force-push
 if [[ -z "$push" ]]; then
-  push="$(gh api "repos/$REPO/commits/$head_sha/check-suites?per_page=100" --jq '[.check_suites[].created_at | select(. != null)] | min // empty' 2>/dev/null)" \
-    || unknown "cannot read the check suites of $head_sha"; src=check-suite
+  # every page (--jq runs once per page, so the earliest is taken after it)
+  push="$(gh api "repos/$REPO/commits/$head_sha/check-suites?per_page=100" --paginate --jq '.check_suites[].created_at | select(. != null)' 2>/dev/null)" \
+    || unknown "cannot read the check suites of $head_sha"; push="$(sort <<< "$push" | head -1)"; src=check-suite
 fi
 if [[ -z "$push" ]]; then
   # no push time on record: the committer date is the best left, and can be earlier than the push

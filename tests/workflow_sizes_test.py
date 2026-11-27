@@ -45,7 +45,7 @@ jobs:
         repeat: ${{ fromJSON(needs.plan.outputs.repeats) }}
         os: [ a, b ]
   fixed:
-    needs: [plan, arm]
+    needs: [plan, arm, extra]
     if: always() && needs.extra.result == 'skipped'
     timeout-minutes: 5
     strategy:
@@ -96,6 +96,17 @@ class Sizes(unittest.TestCase):
         self.assertFalse(ws.evaluate("always() && needs.b.result == 'success'", inputs, {"b": "skipped"}))
         with self.assertRaises(ws.Unknown):
             ws.evaluate("needs.plan.outputs.n != '0'", inputs)
+        # the needs context holds only the direct needs: any other job's result is null
+        self.assertFalse(ws.evaluate("always() && needs.b.result == 'skipped'", inputs, {}))
+
+    def test_needs_context_is_direct_needs_only(self):
+        wf = ("on:\n  workflow_dispatch:\n    inputs:\n      mode: { default: a }\njobs:\n  a:\n    if: inputs.mode == 'b'\n    steps: [ { run: 'true' } ]\n"
+              "  b:\n    needs: [ a ]\n    if: always()\n    steps: [ { run: 'true' } ]\n"
+              "  c:\n    needs: [ b ]\n    if: always() && needs.a.result == 'skipped'\n    steps: [ { run: 'true' } ]\n")
+        rows = {r["job"]: r for r in ws.job_rows(ws.load_yaml(wf))}
+        self.assertFalse(rows["a"]["runs"])
+        self.assertTrue(rows["b"]["runs"])
+        self.assertFalse(rows["c"]["runs"])                    # a is not c's direct need: needs.a.result is null
 
     def test_rows_and_bound(self):
         rows = {r["job"]: r for r in ws.job_rows(ws.load_yaml(WF))}

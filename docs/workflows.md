@@ -63,7 +63,7 @@ its input's documented range, and at a cap an input description states ("arms x 
 - **Does**: the no-node checks: `shellcheck -x` on every bash script (and `-s bash` on the sourced hooks), `bash -n`,
   the Python unit tests under `tests/`, `tests/leakcheck.sh`, the shell self-tests (`lint`, `precheck`, `sequential`,
   `phases`, `indexer_diff`, `crash_consistency`, `wallet_oracle`, `wallet_workload`, `pr_path`, `tooling`), and
-  `ci/export-workflows.sh --check`, and `ci/workflow-sizes.py --check` (the size table below). No node, no JDK 8. The script lists for `shellcheck` and `bash -n` are
+  `ci/workflow-sizes.py --check` (the size table below). No node, no JDK 8. The script lists for `shellcheck` and `bash -n` are
   NUL-separated (a path with a space stays one path), and an empty list fails the step instead of passing it.
 - **Trigger**: push (any branch), pull request, dispatch. **Inputs**: none.
 - **Size**: one job, `timeout-minutes: 20`. A push to a branch with an open pull request in this repository triggers it
@@ -115,7 +115,7 @@ its input's documented range, and at a cap an input description states ("arms x 
 ### `aa.yml`
 - **Does**: the A/A calibration of `fork-convergence` and `sibling-fork`: the same jar in both roles, a fixed number of
   pairs per shard with the sequential stop rule removed, each shard its own runner; the `pool` job reports each rate with
-  an exact 95% interval (`diffrun/aa_pool.py`). Exported by `ci/export-workflows.sh`. The `pool` job writes both
+  an exact 95% interval (`diffrun/aa_pool.py`). The `pool` job writes both
   pools, then fails when `aa_pool.py` refused either (no shards, a bad verdict): a missing rate is a red run, not a green
   one (`pooled.txt` is uploaded either way). The build job names the stack build that failed.
 - **Trigger**: dispatch; push to `ci/aa`; dispatched by `release-watch.yml` on a new release. **Inputs**: `tag`
@@ -129,7 +129,7 @@ its input's documented range, and at a cap an input description states ("arms x 
 - **Does**: the publication sweep. One job builds the reference nodes from `patches/` (release line, sibling-fork set,
   Matrix; Matrix is optional), then one job per rig example and repeat runs `rig/run-suite.sh` (the list is
   `rig/examples/suite.tsv`), plus one `fork-convergence` and one `sibling-fork` pair per repeat; a `summary` job
-  tabulates. Rust examples report SKIP (no binaries on the runner). Exported by `ci/export-workflows.sh`. Its first
+  tabulates. Rust examples report SKIP (no binaries on the runner). Its first
   step, before the build, checks the inputs: `repeats` 1-99, `node` `reference` or `release`, and each name in
   `examples` a row of `rig/examples/suite.tsv`; the inputs reach the scripts through `env`, never pasted into them.
 - **Trigger**: dispatch; push to `ci/sweep`. **Inputs**: `repeats` (default 1), `examples` (default all), `v4`, `node`
@@ -286,10 +286,10 @@ These run ergo's own test suites (or a spec copied into an ergo tree) with sbt a
 
 Not workflows themselves: the scripts some workflows call, and example workflow files to copy.
 
-- `ci/export-workflows.sh`: writes `sweep.yml` and `aa.yml` from their copies in the repository peeryard is developed in
-  (`../.github/workflows/peeryard-{sweep,aa}.yml`, where the tree sits under `peeryard/`); `--check` exits 1 when the
-  exported files are stale, and `checks.yml` runs it; its temporary file is removed on every exit. In a standalone clone there is no source directory and it does
-  nothing; the exported files are then the source (their headers say "if this repository is the source, edit here").
+Every workflow under `.github/workflows/` is edited here; none is generated. (Until 2026-11-05 `sweep.yml` and
+`aa.yml` were exported from copies in the repository peeryard was first developed in; that copy is gone and so is the
+export script.)
+
 - `ci/lib.sh`: shell helpers the workflows source after their checkout (`source ci/lib.sh`, or `peeryard/ci/lib.sh`
   where peeryard is checked out under `peeryard/`): `build` and `stack` (`diffrun/build.sh` and `patches/stack.sh` with
   one retry), `need_jar` (a jar checked before it is copied, under its own `::error::` line) and `is_idlike` (a label

@@ -9,7 +9,6 @@
 # and a summary job writes the table to the step summary and a draft results note (artifact release-check). A rate is
 # flagged when the candidate's exact 95% interval excludes the baseline's point estimate: a change, not a verdict.
 # Runs by hand only (docs/release-check.md); one dispatch is capped at 30 jobs, so a full check is split by `parts`.
-# Hand-maintained (not exported by ci/export-workflows.sh).
 #
 #   gh workflow run release-check.yml -f candidate=v6.0.9 -f baseline=v6.0.8 -f parts=suite,upgrade
 #   gh workflow run release-check.yml -f candidate=v6.0.9 -f baseline=v6.0.8 -f parts=rates -f rate_pairs=20

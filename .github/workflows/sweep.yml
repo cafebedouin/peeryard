@@ -1,5 +1,3 @@
-# Exported by ci/export-workflows.sh (same steps, paths from this repository's root); if this repository is the
-# source, edit here.
 # The publication sweep of peeryard on GitHub-hosted runners (a development machine discovers; the runs a claim rests
 # on are made where anyone can re-run them). One job builds the reference nodes from patches (release line, the sibling-fork set, Matrix);
 # then one job per rig example and repeat runs it through rig/run-suite.sh (the list is rig/examples/suite.tsv, and a

@@ -1,6 +1,5 @@
 # The no-node checks, on every push and pull request: seconds, no node, no JDK 8. The node runs are sweep.yml and aa.yml.
-# Hand-maintained (the development repository runs the same steps under its own checks workflow); keep the step list
-# equal to CONTRIBUTING.md's "Before a pull request".
+# Keep the step list equal to CONTRIBUTING.md's "Before a pull request".
 name: checks
 on:
   push:
@@ -57,7 +56,5 @@ jobs:
           git config --global user.email ci@example.invalid
           git config --global user.name ci
           T=$(mktemp -d) bash tests/tooling.sh
-      - name: exported workflows in step with their source (no-op in a standalone clone)
-        run: bash ci/export-workflows.sh --check
       - name: the size table in docs/workflows.md in step with the workflows (ci/workflow-sizes.py)
         run: python3 ci/workflow-sizes.py --check

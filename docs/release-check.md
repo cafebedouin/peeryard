@@ -136,7 +136,7 @@ with `release_check: { description: 'also dispatch release-check.yml', default: 
 
 | file | role |
 |---|---|
-| `.github/workflows/release-check.yml` | the workflow (hand-maintained, not exported by `ci/export-workflows.sh`) |
+| `.github/workflows/release-check.yml` | the workflow |
 | `ci/build-ref.sh` | build any ergo ref with `diffrun/build.sh` (the generalized build step) |
 | `ci/release-check/catalog.tsv` | the scenarios: part, core, baseline arm, rate condition and pairs per shard |
 | `ci/release-check/path-map.tsv` | changed path -> scenarios |

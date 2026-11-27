@@ -97,7 +97,7 @@ done
 identity (`checks.yml` sets one), and util-linux's `script` and `flock` (it runs `review/post.sh` on a pseudo-terminal
 against a stub `gh`, and `review/with-lock.sh` on its own lock path). `tests/diffrun_pool.sh` (the sharded-verdict pooler) runs the same way but is not
 in `checks.yml`. Each shell test exits non-zero on a `MISMATCH`. `checks.yml` also runs `shellcheck -x` and `bash -n`
-over every bash script and `ci/export-workflows.sh --check`.
+over every bash script and `ci/workflow-sizes.py --check`.
 
 ## Test values in the tree
 

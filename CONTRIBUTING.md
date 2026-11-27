@@ -28,7 +28,6 @@ says in its description which side it is on and why.
   `T=$(mktemp -d) bash tests/<name>.sh` (the loop is in [`docs/running.md`](docs/running.md#self-tests-no-node-seconds));
   each exits non-zero on a `MISMATCH`. `T` must be a fresh empty directory: each test deletes it first. A new test
   goes into `checks.yml` too.
-- `bash ci/export-workflows.sh --check` (a no-op in a standalone clone; `docs/workflows.md`, *ci/*).
 - `python3 ci/workflow-sizes.py --check` (after a workflow change, `--write` regenerates the size table in
   `docs/workflows.md`).
 - If you added a scenario, a rig example, a repro or a workflow: its row in the catalog that lists it
